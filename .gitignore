@@ -1,0 +1,17 @@
+# Only our own sources are published. Firmware, voices, generated engine code
+# and build output stay on your machine (or in your own GitHub Actions run).
+/*
+!/.gitignore
+!/.github/
+!/core/
+!/ios/
+!/tools/
+!/tests/
+!/third_party/
+!/README.md
+!/NOTES.md
+!/LICENSE
+
+ios/*.xcodeproj/
+.DS_Store
+__pycache__/

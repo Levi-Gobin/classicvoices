@@ -1,0 +1,46 @@
+// Runs Apple's iOS 6 Nuance Vocalizer engine (from the `voiced` daemon) in a
+// Thumb-2 interpreter and streams 16-bit mono PCM.
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct Vx Vx;
+
+// Receives PCM as soon as the engine finishes each buffer. Return nonzero to
+// cancel the rest of the utterance.
+typedef int (*VxPcmCallback)(void *ctx, const int16_t *samples, size_t count);
+
+// voiced_path: the iOS 6 voiced binary. lang_dir: e.g. TTSResources/en-US.
+// common_dir: TTSResources/common. Returns NULL and fills err on failure.
+Vx *vx_open(const char *voiced_path, const char *lang_dir, const char *common_dir,
+            char *err, size_t errlen);
+void vx_close(Vx *vx);
+
+// 0 on success (including cancellation), engine error code otherwise.
+int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb, void *ctx);
+int vx_speak_utf8(Vx *vx, const char *text, VxPcmCallback cb, void *ctx);
+
+// Set a numeric VE_PARAM (e.g. rate/volume/pitch) on the open instance.
+int vx_set_param(Vx *vx, uint32_t id, uint32_t value);
+
+int vx_sample_rate(Vx *vx);           // 22050 for iOS 6 voices, 16000 for iOS 3
+const char *vx_build_name(Vx *vx);   // e.g. "iOS 3.1.3 (7E18)"
+const char *vx_voice_name(Vx *vx);    // e.g. "Samantha"
+const char *vx_language_name(Vx *vx); // e.g. "American English"
+uint64_t vx_instruction_count(Vx *vx);
+const char *vx_last_error(Vx *vx);
+
+// Development hooks: block-start profiling (bitmap of 2 MB, one byte per
+// halfword below guest 4 MB) and installing recompiled code tables.
+void vx_enable_profile(Vx *vx, uint8_t *bitmap);
+void vx_set_native(Vx *vx, const void *entries, size_t n);
+void vx_set_budget(Vx *vx, long long n);  // debug builds of recompiled code only
+uint32_t vx_budget_exit_pc(Vx *vx);
+
+#ifdef __cplusplus
+}
+#endif

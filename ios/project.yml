@@ -1,0 +1,224 @@
+name: ClassicVoices
+options:
+  bundleIdPrefix: com.levigobin
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+settings:
+  base:
+    DEVELOPMENT_TEAM: 7WV49AN2BX
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    GCC_OPTIMIZATION_LEVEL: "3"          # the engine must be fast even in Debug
+    GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)"]
+    HEADER_SEARCH_PATHS: ["$(SRCROOT)/../core"]
+    SWIFT_OBJC_BRIDGING_HEADER: Shared/Bridging.h
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    WARNING_CFLAGS: ["-Wno-unused-label", "-Wno-unused-variable", "-Wno-unused-function"]
+targets:
+  ClassicVoices:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+      - path: ../core
+        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
+      - path: ../build/gen
+      - path: ../build/gen3
+      - path: ../build/gen4
+      - path: ../build/gen5
+      - path: ../build/gen7
+      - path: ../build/gen10
+      - path: ../core/x86
+        includes: ["x86.c"]
+      - path: ../core/mt
+        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
+      - path: ../third_party/glint
+        includes: ["aac_decoder.cpp"]
+    entitlements:
+      path: App/ClassicVoices.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
+    dependencies:
+      - target: Synth
+      - sdk: Accelerate.framework
+      - sdk: AudioToolbox.framework
+      - sdk: libsqlite3.tbd
+  Synth:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Synth
+      - Shared
+      - path: ../core
+        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
+      - path: ../build/gen
+      - path: ../build/gen3
+      - path: ../build/gen4
+      - path: ../build/gen5
+      - path: ../build/gen7
+      - path: ../build/gen10
+      - path: ../core/x86
+        includes: ["x86.c"]
+      - path: ../core/mt
+        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
+      - path: ../third_party/glint
+        includes: ["aac_decoder.cpp"]
+    dependencies:
+      - sdk: Accelerate.framework
+      - sdk: AudioToolbox.framework
+      - sdk: libsqlite3.tbd
+    entitlements:
+      path: Synth/Synth.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.Synth
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Synth/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
+    postBuildScripts:
+      - name: Bundle firmware voices
+        script: |
+          set -e
+          for B in ios7 ios6 ios5 ios4 ios3; do
+            SRC="$SRCROOT/../extracted/$B/VoiceServices.framework"
+            DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$B"
+            mkdir -p "$DST"
+            cp "$SRC/Support/voiced" "$DST/voiced"
+            rsync -a --delete "$SRC/TTSResources/" "$DST/TTSResources/"
+          done
+          # iOS 10's speech bundle: only the engine for Mavericks premium voices
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10"
+          cp "$SRCROOT/../extracted/ios10/TTSSpeechBundle.speechbundle/TTSSpeechBundle" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10/voiced"
+          # MacinTalk generations (Alex is copied onto each device separately: ~400-670 MB)
+          for G in mt104 mt105 mt106 mt107; do
+            if [ -e "$SRCROOT/../extracted/$G/MacinTalk" ]; then
+              rsync -aL --delete --exclude Alex.SpeechVoice --exclude Alex-sequoia.SpeechVoice "$SRCROOT/../extracted/$G/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$G/"
+            fi
+          done
+          # Mac OS X compact voices and the common data the downloadable ones
+          # use (iOS 7 is only the engine for Mavericks voices)
+          for M in mac107 mac108 mac109; do
+            if [ -d "$SRCROOT/../extracted/$M" ]; then
+              rsync -a --delete "$SRCROOT/../extracted/$M/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$M/"
+            fi
+          done
+        basedOnDependencyAnalysis: false
+  ClassicVoicesMac:
+    type: application
+    platform: macOS
+    sources:
+      - App
+      - Shared
+      - path: ../core
+        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
+      - path: ../build/gen
+      - path: ../build/gen3
+      - path: ../build/gen4
+      - path: ../build/gen5
+      - path: ../build/gen7
+      - path: ../build/gen10
+      - path: ../core/x86
+        includes: ["x86.c"]
+      - path: ../core/mt
+        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
+      - path: ../third_party/glint
+        includes: ["aac_decoder.cpp"]
+    entitlements:
+      path: App/ClassicVoicesMac.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        com.apple.security.application-groups: [7WV49AN2BX.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_NAME: Classic Voices
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
+    dependencies:
+      - target: SynthMac
+      - sdk: Accelerate.framework
+      - sdk: AudioToolbox.framework
+      - sdk: libsqlite3.tbd
+  SynthMac:
+    type: app-extension
+    platform: macOS
+    sources:
+      - Synth
+      - Shared
+      - path: ../core
+        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
+      - path: ../build/gen
+      - path: ../build/gen3
+      - path: ../build/gen4
+      - path: ../build/gen5
+      - path: ../build/gen7
+      - path: ../build/gen10
+      - path: ../core/x86
+        includes: ["x86.c"]
+      - path: ../core/mt
+        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
+      - path: ../third_party/glint
+        includes: ["aac_decoder.cpp"]
+    dependencies:
+      - sdk: Accelerate.framework
+      - sdk: AudioToolbox.framework
+      - sdk: libsqlite3.tbd
+    entitlements:
+      path: Synth/SynthMac.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups: [7WV49AN2BX.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_NAME: Synth
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac.Synth
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Synth/Info.plist
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "2"
+    postBuildScripts:
+      - name: Bundle firmware voices
+        script: |
+          set -e
+          for B in ios7 ios6 ios5 ios4 ios3; do
+            SRC="$SRCROOT/../extracted/$B/VoiceServices.framework"
+            DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$B"
+            mkdir -p "$DST"
+            cp "$SRC/Support/voiced" "$DST/voiced"
+            rsync -a --delete "$SRC/TTSResources/" "$DST/TTSResources/"
+          done
+          # iOS 10's speech bundle: only the engine for Mavericks premium voices
+          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10"
+          cp "$SRCROOT/../extracted/ios10/TTSSpeechBundle.speechbundle/TTSSpeechBundle" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10/voiced"
+          # MacinTalk generations (Alex is copied onto each device separately: ~400-670 MB)
+          for G in mt104 mt105 mt106 mt107; do
+            if [ -e "$SRCROOT/../extracted/$G/MacinTalk" ]; then
+              rsync -aL --delete --exclude Alex.SpeechVoice --exclude Alex-sequoia.SpeechVoice "$SRCROOT/../extracted/$G/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$G/"
+            fi
+          done
+          # Mac OS X compact voices and the common data the downloadable ones
+          # use (iOS 7 is only the engine for Mavericks voices)
+          for M in mac107 mac108 mac109; do
+            if [ -d "$SRCROOT/../extracted/$M" ]; then
+              rsync -a --delete "$SRCROOT/../extracted/$M/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$M/"
+            fi
+          done
+        basedOnDependencyAnalysis: false
