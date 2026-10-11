@@ -51,6 +51,10 @@ fetch() {
     else
         ditto "$mnt/System/Library/PrivateFrameworks/VoiceServices.framework" "$out/VoiceServices.framework"
     fi
+    # iOS 7 is only the engine for the Mavericks voices; its own voices aren't used
+    if [ "$b" = ios7 ]; then
+        find "$out/VoiceServices.framework/TTSResources" -mindepth 1 -maxdepth 1 -type d ! -name common -exec rm -rf {} +
+    fi
     hdiutil detach "$mnt" >/dev/null
     rm -rf "$dir"
     echo "   -> extracted/$b ($(du -sh "$out" | cut -f1))"
