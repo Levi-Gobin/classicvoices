@@ -18,3 +18,5 @@
 ios/*.xcodeproj/
 .DS_Store
 __pycache__/
+
+nvda/addon/synthDrivers/_classicvoices/*.dll

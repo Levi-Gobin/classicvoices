@@ -4,9 +4,9 @@
 # each segment is its own engine utterance with the engine's natural
 # end-of-utterance silence kept (vxstream does the same on iOS).
 import ctypes
-import os
 import queue
 import threading
+import time
 
 from . import lib
 
@@ -90,7 +90,7 @@ class Speaker:
             if done.value:
                 return pending
             if not n:
-                threading.Event().wait(0.004)
+                time.sleep(0.004)
         return b""
 
     def _run(self):
