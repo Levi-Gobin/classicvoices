@@ -8,21 +8,40 @@ private final class BundleMarker {}
 #if os(macOS)
 let appGroup = "7WV49AN2BX.com.levigobin.ClassicVoices"  // team-prefixed groups need no portal setup on macOS
 #else
-/// AltStore and SideStore rename App Groups when they re-sign the app with
-/// someone's own Apple ID, and list the new names under ALTAppGroups in
-/// Info.plist. The extension looks in the containing app's Info.plist too.
+/// Sideloading tools rename App Groups when they re-sign the app with
+/// someone's own Apple ID. AltStore and SideStore list the new names under
+/// ALTAppGroups in Info.plist; others (Sideloadly) only put them in the
+/// provisioning profile they embed, so read that too. The extension looks at
+/// the containing app as well.
 let appGroup: String = {
     let fallback = "group.com.levigobin.ClassicVoices"
-    var plists = [Bundle.main.infoDictionary]
-    let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()  // X.app/PlugIns/Synth.appex
-    if Bundle.main.bundleURL.pathExtension == "appex" { plists.append(Bundle(url: app)?.infoDictionary) }
-    for info in plists {
-        if let groups = info?["ALTAppGroups"] as? [String], !groups.isEmpty {
-            return groups.first { $0.contains("ClassicVoices") } ?? groups[0]
+    var bundles = [Bundle.main.bundleURL]
+    if Bundle.main.bundleURL.pathExtension == "appex" {  // X.app/PlugIns/Synth.appex
+        bundles.append(Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent())
+    }
+    let pick = { (groups: [String]) in groups.first { $0.contains("ClassicVoices") } ?? groups[0] }
+    for url in bundles {
+        if let groups = Bundle(url: url)?.infoDictionary?["ALTAppGroups"] as? [String], !groups.isEmpty {
+            return pick(groups)
+        }
+    }
+    for url in bundles {
+        if let groups = profileAppGroups(url.appendingPathComponent("embedded.mobileprovision")), !groups.isEmpty {
+            return pick(groups)
         }
     }
     return fallback
 }()
+
+/// App Groups granted by a provisioning profile (a signed plist).
+func profileAppGroups(_ url: URL) -> [String]? {
+    guard let data = try? Data(contentsOf: url),
+          let start = data.range(of: Data("<?xml".utf8)),
+          let end = data.range(of: Data("</plist>".utf8), in: start.lowerBound..<data.endIndex),
+          let plist = try? PropertyListSerialization.propertyList(from: data[start.lowerBound..<end.upperBound], format: nil) as? [String: Any],
+          let ents = plist["Entitlements"] as? [String: Any] else { return nil }
+    return (ents["com.apple.security.application-groups"] as? [String])?.filter { !$0.contains("*") }
+}
 #endif
 
 /// Voices from each bundled firmware (Voices/<build>/ inside the Synth

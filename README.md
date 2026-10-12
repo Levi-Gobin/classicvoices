@@ -27,9 +27,9 @@ or Sideloadly; these work from Windows or a Mac). You don't need a Mac or Xcode.
    download a public fork's build files.
 3. Open the "Actions" tab. GitHub turns workflows off in new forks, so first
    press "I understand my workflows, go ahead and enable them". Then choose
-   "Build Classic Voices" and press "Run workflow". The build takes roughly 30 to 60 minutes.
+   "Build Classic Voices" an				d press "Run workflow". The build takes roughly 30 to 60 minutes.
 4. When it finishes, download "ClassicVoices" from the run's page, unzip it
-   with your password, and sideload `ClassicVoices.ipa` with your sideloading
+   with your password, and sideload `ClassicVoices.ipa` 	with your sideloading
    tool.
 5. Open Classic Voices once. The voices then appear in "Settings ›
    Accessibility › VoiceOver › Speech › Voice" and under "Spoken Content".

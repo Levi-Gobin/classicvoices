@@ -8,6 +8,7 @@ struct ClassicVoicesApp: App {
         if !imported.isEmpty { print("IMPORTED \(imported)") }
         if CommandLine.arguments.contains("-benchmark") { Benchmark.run() }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
+        if CommandLine.arguments.contains("-report") { print(Diagnostics.report(downloadErrors: [:])); fflush(stdout) }
         if let i = CommandLine.arguments.firstIndex(of: "-voicetest"), i + 1 < CommandLine.arguments.count {
             VoiceTest.run(keys: CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
