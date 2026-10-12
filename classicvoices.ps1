@@ -26,12 +26,16 @@
     function Fail($text) { throw "Stopped: $text" }
 
     try {
-        Say 'What should be built?'
-        Say '  1. The iPhone app and the NVDA add-on'
-        Say '  2. The iPhone app only'
-        Say '  3. The NVDA add-on only'
-        $choice = Read-Host 'Type 1, 2 or 3 and press Enter (Enter alone means 1)'
-        $targets = switch ($choice.Trim()) { '2' { 'iphone' } '3' { 'nvda' } default { 'iphone nvda' } }
+        # $env:CLASSICVOICES_TARGETS = 'iphone nvda' skips the question.
+        $targets = $env:CLASSICVOICES_TARGETS
+        if (-not $targets) {
+            Say 'What should be built?'
+            Say '  1. The iPhone app and the NVDA add-on'
+            Say '  2. The iPhone app only'
+            Say '  3. The NVDA add-on only'
+            $choice = Read-Host 'Type 1, 2 or 3 and press Enter (Enter alone means 1)'
+            $targets = switch ("$choice".Trim()) { '2' { 'iphone' } '3' { 'nvda' } default { 'iphone nvda' } }
+        }
         $wantIphone = $targets -match 'iphone'
         $wantNvda = $targets -match 'nvda'
 

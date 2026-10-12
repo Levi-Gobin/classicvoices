@@ -40,12 +40,16 @@ gh_tool() {
     rm -rf "$tmp"
 }
 
-say "Which apps should be built?"
-say "  1. iPhone and Mac"
-say "  2. iPhone only"
-say "  3. Mac only"
-read -r -p "Type 1, 2 or 3 and press Return (Return alone means 1): " choice </dev/tty || choice=1
-case "$choice" in 2) TARGETS="iphone" ;; 3) TARGETS="mac" ;; *) TARGETS="iphone mac" ;; esac
+# CLASSICVOICES_TARGETS="iphone mac" skips the question.
+TARGETS=${CLASSICVOICES_TARGETS:-}
+if [ -z "$TARGETS" ]; then
+    say "Which apps should be built?"
+    say "  1. iPhone and Mac"
+    say "  2. iPhone only"
+    say "  3. Mac only"
+    read -r -p "Type 1, 2 or 3 and press Return (Return alone means 1): " choice </dev/tty || choice=1
+    case "$choice" in 2) TARGETS="iphone" ;; 3) TARGETS="mac" ;; *) TARGETS="iphone mac" ;; esac
+fi
 has() { case " $TARGETS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 gh_tool
@@ -116,9 +120,8 @@ CONCLUSION=$(gh run view "$RUN" -R "$REPO" --json conclusion --jq .conclusion)
 say "Downloading."
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
-gh run download "$RUN" -R "$REPO" -n ClassicVoices -D "$TMP" || fail "couldn't download the build."
-
 if has mac; then
+    gh run download "$RUN" -R "$REPO" -n ClassicVoicesMac -D "$TMP" || fail "couldn't download the Mac app."
     unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-mac-locked.zip" -d "$TMP" || fail "couldn't open the Mac app download."
     APPS=/Applications
     [ -w "$APPS" ] || { APPS="$HOME/Applications"; mkdir -p "$APPS"; }
@@ -138,6 +141,7 @@ if has mac; then
 fi
 
 if has iphone; then
+    gh run download "$RUN" -R "$REPO" -n ClassicVoices -D "$TMP" || fail "couldn't download the iPhone app."
     unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-ipa.zip" -d "$TMP" || fail "couldn't open the iPhone app download."
     mv -f "$TMP/ClassicVoices.ipa" "$OUT/ClassicVoices.ipa"
     say "Saved $OUT/ClassicVoices.ipa"
