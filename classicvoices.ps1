@@ -126,7 +126,7 @@
         # One line per finished step, read from GitHub every 30 seconds.
         $names = @{ 'Fetch firmware from Apple' = 'Firmware downloaded from Apple'; 'Generate the fast engines' = 'Engines generated';
                     'Build the app' = 'iPhone app built'; 'Build the NVDA add-on' = 'NVDA add-on built';
-                    'Fetch firmware and build NVDA''s fast engines' = 'NVDA voices and fast engines built' }
+                    'Build NVDA''s voices and fast engines' = 'NVDA voices and fast engines built' }
         $seen = @{}
         while ($true) {
             $json = GH run view $run -R $repo --json 'status,conclusion,jobs'

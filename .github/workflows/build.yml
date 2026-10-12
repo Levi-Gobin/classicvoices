@@ -98,14 +98,15 @@ jobs:
 
   # NVDA's engines, voices and fast engine code, all made from the firmware:
   # zipped with your password, and unpacked into NVDA's classicvoices folder.
+  # Built on a Mac, which reads every firmware's disk image (iOS 10.3 uses
+  # APFS), cross-compiling the Windows DLLs with llvm-mingw.
   nvda-data:
     if: contains(inputs.targets, 'nvda')
-    runs-on: windows-latest
+    runs-on: macos-15
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - name: Check the password secret
-        shell: bash
         env:
           IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
         run: |
@@ -113,21 +114,26 @@ jobs:
             echo "::error::Add a repository secret named IPA_PASSWORD first (Settings > Secrets and variables > Actions)."
             exit 1
           fi
-      - name: Install llvm-mingw (clang and llvm-objdump)
-        shell: bash
+      - name: Tools
         run: |
-          curl -sL -o llvm-mingw.zip https://github.com/mstorsjo/llvm-mingw/releases/download/20250528/llvm-mingw-20250528-ucrt-x86_64.zip
-          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP"
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet cryptography
+          curl -sL https://github.com/mstorsjo/llvm-mingw/releases/download/20250528/llvm-mingw-20250528-ucrt-macos-universal.tar.xz | tar -xJ -C "$RUNNER_TEMP"
           echo "$RUNNER_TEMP"/llvm-mingw-*/bin >> "$GITHUB_PATH"
-      - name: Fetch firmware and build NVDA's fast engines
-        run: python nvda/ci_native.py
+      - name: Fetch firmware from Apple
+        env:
+          PYTHON: .venv/bin/python
+        run: tools/fetch_firmware.sh
+      - name: Build NVDA's voices and fast engines
+        run: |
+          python3 -c "import sys; sys.path.insert(0, 'nvda/addon/synthDrivers'); from _classicvoices import firmware; firmware.import_extracted('extracted', 'build/nvda-data/Voices', lambda m, f: None)"
+          python3 nvda/build_native.py --source extracted --out build/nvda-data/Native
       - name: Protect the download
-        shell: bash
         env:
           IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
         run: |
-          cd build/ci-native
-          7z a -tzip -mem=ZipCrypto -p"$IPA_PASSWORD" ../ClassicVoicesNVDA-data.zip Voices Native > /dev/null
+          cd build/nvda-data
+          zip -q -r -P "$IPA_PASSWORD" ../ClassicVoicesNVDA-data.zip Voices Native
       - uses: actions/upload-artifact@v4
         with:
           name: ClassicVoicesNVDAData
