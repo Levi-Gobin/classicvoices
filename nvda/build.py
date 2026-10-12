@@ -104,7 +104,9 @@ def package():
     with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as z:
         for base, _dirs, files in os.walk(addon_dir):
             for f in files:
-                if f.endswith((".pyc", ".pyo")):
+                # DLLs are added from the build output below, even if a test
+                # left copies in the addon tree
+                if f.endswith((".pyc", ".pyo", ".dll")):
                     continue
                 p = os.path.join(base, f)
                 rel = os.path.relpath(p, addon_dir)
