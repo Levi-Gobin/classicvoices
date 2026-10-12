@@ -11,6 +11,8 @@
 !/README.md
 !/NOTES.md
 !/LICENSE
+!/classicvoices.sh
+!/classicvoices.ps1
 
 ios/*.xcodeproj/
 .DS_Store

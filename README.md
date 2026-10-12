@@ -17,8 +17,32 @@ never published.
 
 ## installing
 
-You need a free GitHub account and a way to sideload apps (AltStore, SideStore
-or Sideloadly; these work from Windows or a Mac). You don't need a Mac or Xcode.
+You need a free GitHub account and a way to sideload apps (Sideloadly,
+AltStore or SideStore; these work from Windows or a Mac). You don't need a Mac
+or Xcode.
+
+### The easy way: one line
+
+On Windows, open PowerShell (Start menu, type PowerShell, press Enter) and
+paste:
+
+```powershell
+irm https://raw.githubusercontent.com/Levi-Gobin/classicvoices/main/classicvoices.ps1 | iex
+```
+
+On a Mac, open Terminal and paste:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/main/classicvoices.sh)
+```
+
+It signs you in to GitHub in your browser (the one-time code is copied for
+you), makes your own copy of this repository, builds the app there, and
+reads out each step as it finishes. About half an hour later it saves
+`ClassicVoices.ipa` in your Downloads folder and opens Sideloadly, if you have
+it, so you can install the app. Run the same line again any time to update.
+
+### By hand on GitHub
 
 1. Fork this repository (the Fork button at the top of the page).
 2. In your fork, open "Settings › Secrets and variables › Actions" and add a
@@ -27,12 +51,17 @@ or Sideloadly; these work from Windows or a Mac). You don't need a Mac or Xcode.
    download a public fork's build files.
 3. Open the "Actions" tab. GitHub turns workflows off in new forks, so first
    press "I understand my workflows, go ahead and enable them". Then choose
-   "Build Classic Voices" an				d press "Run workflow". The build takes roughly 30 to 60 minutes.
+   "Build Classic Voices" and press "Run workflow". The build takes about
+   half an hour.
 4. When it finishes, download "ClassicVoices" from the run's page, unzip it
-   with your password, and sideload `ClassicVoices.ipa` 	with your sideloading
+   with your password, and sideload `ClassicVoices.ipa` with your sideloading
    tool.
-5. Open Classic Voices once. The voices then appear in "Settings ›
-   Accessibility › VoiceOver › Speech › Voice" and under "Spoken Content".
+
+### Then
+
+Open Classic Voices once. The voices then appear in "Settings › Accessibility ›
+VoiceOver › Speech › Voice" and under "Spoken Content". If they don't speak,
+open "Diagnostics" at the bottom of the app's first page and send the report.
 
 With a free Apple ID, sideloaded apps must be refreshed every 7 days (AltStore
 and SideStore can do it automatically), and Classic Voices counts as two of
