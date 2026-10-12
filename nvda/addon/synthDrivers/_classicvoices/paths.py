@@ -26,6 +26,12 @@ def downloads_root():
     return os.path.join(data_root(), "Downloads")
 
 
+def native_root():
+    # cvnative_<build>_<bits>.dll, built from the user's firmware by
+    # nvda/build_native.py; the engine falls back to the interpreter without.
+    return os.path.join(data_root(), "Native")
+
+
 def ensure_dirs():
     for p in (voices_root(), downloads_root()):
         os.makedirs(p, exist_ok=True)

@@ -10,6 +10,7 @@
 #include <windows.h>
 
 size_t cv_read_s16(VxStream *s, int16_t *out, size_t frames, int *done);
+void cv_set_native_dir(const char *utf8);
 
 static void wav_header(FILE *f, uint32_t data_bytes) {
     uint32_t rate = 22050, byterate = rate * 2;
@@ -29,6 +30,8 @@ static void wav_header(FILE *f, uint32_t data_bytes) {
 
 int main(int argc, char **argv) {
     if (argc < 6) { fprintf(stderr, "usage: %s root assets|- key text out.wav [rate] [pitch]\n", argv[0]); return 2; }
+    const char *nd = getenv("CV_NATIVE_DIR");
+    if (nd && *nd) cv_set_native_dir(nd);
     VxStream *s = vxs_create(argv[1]);
     if (strcmp(argv[2], "-") != 0) vxs_set_asset_root(s, argv[2]);
     int rate = argc > 6 ? atoi(argv[6]) : 100, pitch = argc > 7 ? atoi(argv[7]) : 100;

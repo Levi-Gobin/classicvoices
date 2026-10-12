@@ -3,11 +3,11 @@
 The iOS 3–6 Vocalizer voices (Samantha, Daniel, Karen …) and the Mac OS X
 Lion / Mountain Lion / Mavericks voices, as an NVDA add-on. The voices run on
 Apple's original ARM engines, executed by the same bit-exact emulator the iOS
-app uses — interpreter-only on Windows, since the recompiled fast paths are
-generated from firmware and never distributed. The CPU hooks (`vx_set_native`)
-remain, so a JIT backend can be added later for speed; today the interpreter
-runs ~2× real time on a desktop CPU with ~80 ms to first audio, and premium
-(concatenative) voices run far faster.
+app uses. The add-on itself ships interpreter-only (~2× real time, ~80 ms to
+first audio), because the recompiled fast paths are generated from firmware
+and are never distributed — but you can build them yourself, see **Fast
+engine code** below; with them iOS 6 Samantha reaches first audio in ~14 ms
+and runs ~10× real time, matching the iPhone app.
 
 MacinTalk is deliberately out of scope: [Panthera Speech]
 (https://github.com/tgeczy/panthera-speech) by Tamas Geczy already runs
@@ -51,7 +51,31 @@ caches one engine (address space is scarce under WOW64), so the largest Mac
 premium voices (~750 MB data) need 64-bit NVDA; everything else works on
 both.
 
-## Building
+## Fast engine code (optional, recommended)
+
+`tools/recomp.py` — the same static recompiler the iOS app uses — turns each
+engine's hot functions into C that calls the interpreter's own instruction
+semantics with constant encodings; clang folds that into real native code, so
+the output is bit-identical to the interpreter by construction (verified:
+same WAV bytes). After importing firmware with the add-on:
+
+```
+python nvda/build_native.py        # needs clang (scoop install llvm) —
+                                   # MSVC can't fold this code, gcc takes hours
+```
+
+reads `<NVDA config>/classicvoices/Voices` and drops
+`cvnative_<build>_<bits>.dll` into `<NVDA config>/classicvoices/Native`,
+where the engine picks them up on the next synthesizer load (the data-manager
+status shows which builds have them). The stripped engines (iOS 3/4/5) also
+need `llvm-objdump` on PATH, or prebuilt disassemblies via `--dis-dir`.
+
+These DLLs derive from Apple's code: keep them on your machine. The
+`nvda-native.yml` workflow builds them in your own fork instead (set a
+`NATIVE_PASSWORD` secret; the artifact is encrypted with it, like the iOS
+app's IPA).
+
+## Building the add-on
 
 ```
 python nvda/build.py           # DLLs (MinGW-w64 gcc, x64 + i686) + .nvda-addon

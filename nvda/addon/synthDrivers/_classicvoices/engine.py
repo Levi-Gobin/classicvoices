@@ -27,8 +27,11 @@ class Speaker:
     """Owns the VxStream and the worker thread. Callbacks are invoked on the
     worker thread; the caller (the synth driver) forwards them to NVDA."""
 
-    def __init__(self, voices_root, downloads_root, on_index, on_done, feed, idle):
+    def __init__(self, voices_root, downloads_root, on_index, on_done, feed, idle,
+                 native_root=None):
         self._lib = lib.load()
+        if native_root:
+            self._lib.cv_set_native_dir(native_root.encode("utf-8"))
         self._s = self._lib.vxs_create(voices_root.encode("utf-8"))
         if not self._s:
             raise OSError("vxs_create failed")

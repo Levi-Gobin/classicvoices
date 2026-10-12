@@ -3,6 +3,7 @@
 # Apple's servers once the matching engine is in place. All slow work runs on
 # a background thread; the dialog stays usable and announces progress.
 import os
+import struct
 import threading
 
 import globalPluginHandler
@@ -25,13 +26,21 @@ except Exception:
 
 def _status_lines():
     vr, dr = cv_paths.voices_root(), cv_paths.downloads_root()
+    nr = cv_paths.native_root()
+    bits = 64 if struct.calcsize("P") == 8 else 32
     lines = []
     for build, label in (("ios3", "iPhone OS 3.1.3"), ("ios4", "iOS 4.3.5"),
                          ("ios5", "iOS 5.1.1"), ("ios6", "iOS 6.1.6"),
                          ("ios7", "iOS 7.1.2 (engine only)"),
                          ("ios10", "iOS 10.3.4 (engine only)")):
-        lines.append("%s: %s" % (label, "imported" if cv_voices.has_engine(vr, build)
-                                 else "not imported"))
+        if not cv_voices.has_engine(vr, build):
+            lines.append("%s: not imported" % label)
+            continue
+        fast = os.path.isfile(os.path.join(nr, "cvnative_%s_%d.dll" % (build, bits)))
+        lines.append("%s: imported%s" % (
+            label,
+            ", with fast engine code" if fast
+            else " (interpreter; build fast code with nvda/build_native.py)"))
     n = len(cv_voices.scan(vr, dr))
     lines.append("Voices available to NVDA: %d" % n)
     return lines
