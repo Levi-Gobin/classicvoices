@@ -8,6 +8,7 @@ import threading
 import globalPluginHandler
 import gui
 import wx
+from gui import nvdaControls
 from logHandler import log
 
 from synthDrivers._classicvoices import download as cv_download
@@ -51,7 +52,9 @@ class DataDialog(wx.Dialog):
         # Translators: label of the downloadable-voices list.
         main.Add(wx.StaticText(self, label=_("Downloadable &voices (needs the matching firmware first):")),
                  flag=wx.ALL, border=5)
-        self.dl = wx.CheckListBox(self, size=(480, 200))
+        # CustomCheckListBox is NVDA's accessible checkbox list: check state
+        # is announced properly, unlike a bare wx.CheckListBox.
+        self.dl = nvdaControls.CustomCheckListBox(self, size=(480, 200))
         main.Add(self.dl, flag=wx.EXPAND | wx.ALL, border=5)
         self.progress = wx.StaticText(self, label="")
         main.Add(self.progress, flag=wx.EXPAND | wx.ALL, border=5)
