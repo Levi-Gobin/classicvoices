@@ -31,6 +31,12 @@ NATIVE_TABLE(ios7)
 NATIVE_TABLE(ios10)
 
 static void install_native(Vx *vx, const char *build) {
+#ifdef VX_DYNAMIC_NATIVE
+    // Windows: recompiled code arrives as per-firmware DLLs built on the
+    // user's machine (nvda/build_native.py) rather than linked in.
+    extern int vx_try_native_dll(Vx *vx, const char *build);
+    if (vx_try_native_dll(vx, build)) return;
+#endif
     struct { const char *name; const NativeEntry *t; const size_t *n; } tabs[] = {
         {"ios3", vx_native_ios3, &vx_native_ios3_count}, {"ios4", vx_native_ios4, &vx_native_ios4_count},
         {"ios5", vx_native_ios5, &vx_native_ios5_count}, {"ios6", vx_native_ios6, &vx_native_ios6_count},

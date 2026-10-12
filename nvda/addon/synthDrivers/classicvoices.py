@@ -74,7 +74,8 @@ class SynthDriver(SynthDriver):
         self._speaker = cv_engine.Speaker(
             cv_paths.voices_root(), cv_paths.downloads_root(),
             on_index=self._on_index, on_done=self._on_done,
-            feed=self._feed, idle=self._idle)
+            feed=self._feed, idle=self._idle,
+            native_root=cv_paths.native_root())
         self._speaker.preload(self._voice)
 
     def _make_player(self):

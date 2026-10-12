@@ -37,6 +37,12 @@ def load():
     lib.cv_read_s16.restype = c.c_size_t
     lib.cv_read_s16.argtypes = [c.c_void_p, c.POINTER(c.c_int16), c.c_size_t,
                                 c.POINTER(c.c_int)]
+    # Recompiled (fast) engine DLLs, built from the user's firmware by
+    # nvda/build_native.py; without them the interpreter is used.
+    lib.cv_set_native_dir.restype = None
+    lib.cv_set_native_dir.argtypes = [c.c_char_p]
+    lib.cv_native_status.restype = c.c_longlong
+    lib.cv_native_status.argtypes = [c.c_char_p]
     if lib.cv_abi_version() != 1:
         raise OSError("cvengine ABI mismatch")
     _lib = lib

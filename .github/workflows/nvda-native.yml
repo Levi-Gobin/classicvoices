@@ -1,0 +1,43 @@
+name: Build NVDA fast engine code
+# The recompiled engine DLLs are generated from Apple firmware and are never
+# published. This workflow builds them in YOUR fork from firmware fetched off
+# Apple's servers, and uploads them zipped with a password of your choosing
+# (repository secret NATIVE_PASSWORD), because anyone signed in to GitHub can
+# download a public fork's build files - the same arrangement as the iOS
+# app's IPA_PASSWORD. Unzip into <NVDA user configuration>/classicvoices/Native.
+on:
+  workflow_dispatch:
+    inputs:
+      builds:
+        description: "Firmware builds (space-separated)"
+        default: "ios3 ios4 ios5 ios6 ios7 ios10"
+
+jobs:
+  native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the artifact password
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.NATIVE_PASSWORD }}" ]; then
+            echo "Set a NATIVE_PASSWORD repository secret first (Settings >"
+            echo "Secrets and variables > Actions); the built DLLs derive from"
+            echo "Apple firmware and must not be downloadable by anyone else."
+            exit 1
+          fi
+      - name: Install llvm-mingw (clang + llvm-objdump)
+        shell: bash
+        run: |
+          curl -sL -o llvm-mingw.zip https://github.com/mstorsjo/llvm-mingw/releases/download/20250528/llvm-mingw-20250528-ucrt-x86_64.zip
+          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP"/llvm-mingw-*/bin >> "$GITHUB_PATH"
+      - name: Fetch firmware and build the DLLs
+        run: python nvda/ci_native.py --builds ${{ github.event.inputs.builds }}
+      - name: Encrypt
+        shell: bash
+        run: 7z a -p"${{ secrets.NATIVE_PASSWORD }}" ClassicVoicesNative.zip ./build/ci-native/Native/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClassicVoicesNative
+          path: ClassicVoicesNative.zip
