@@ -27,9 +27,11 @@ enum Diagnostics {
         #endif
         let ext = Bundle.main.builtInPlugInsURL?.appendingPathComponent("Synth.appex")
         out.append("Speech extension: \(ext.map { FileManager.default.fileExists(atPath: $0.path) ? "present" : "MISSING" } ?? "MISSING")")
+        #if os(iOS)
         if let ext, let groups = profileAppGroups(ext.appendingPathComponent("embedded.mobileprovision")) {
             out.append("Extension profile App Groups: \(groups.isEmpty ? "none" : groups.joined(separator: ", "))")
         }
+        #endif
 
         // Each engine, run here in the app as Try It does.
         if let root = VoiceCatalog.root {
