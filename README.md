@@ -66,7 +66,7 @@ Run the same line again any time to update.
    to build everything. The build takes about half an hour.
 4. When it finishes, download from the run's page and unzip with your
    password: "ClassicVoices" holds the iPhone app (sideload
-   `ClassicVoices.ipa`) and the Mac app; "ClassicVoicesNVDA" is the add-on, and
+   `ClassicVoices.ipa`), "ClassicVoicesMac" the Mac app, "ClassicVoicesNVDA" is the add-on, and
    "ClassicVoicesNVDAData" holds its voices, which go in
    `%APPDATA%\nvda\classicvoices`.
 

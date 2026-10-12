@@ -19,8 +19,8 @@ on:
         default: "iphone mac nvda"
 
 jobs:
-  apple:
-    if: contains(inputs.targets, 'iphone') || contains(inputs.targets, 'mac')
+  iphone:
+    if: contains(inputs.targets, 'iphone')
     runs-on: macos-15
     timeout-minutes: 150
     steps:
@@ -52,25 +52,69 @@ jobs:
         run: tools/build_engines.sh
 
       - name: Build the app
-        if: contains(inputs.targets, 'iphone')
         run: tools/package_ipa.sh
 
+      - name: Protect the download
+        env:
+          IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
+        run: |
+          mkdir build/upload
+          cd build
+          zip -q -P "$IPA_PASSWORD" upload/ClassicVoices-ipa.zip ClassicVoices.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClassicVoices
+          path: build/upload/*
+          retention-days: 3
+          compression-level: 0
+
+  mac:
+    if: contains(inputs.targets, 'mac')
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the password secret
+        env:
+          IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
+        run: |
+          if [ -z "$IPA_PASSWORD" ]; then
+            echo "::error::Add a repository secret named IPA_PASSWORD first (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - name: Tools
+        run: |
+          brew install xcodegen
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet cryptography
+
+      - name: Fetch firmware from Apple
+        env:
+          PYTHON: .venv/bin/python
+        run: tools/fetch_firmware.sh
+
+      - name: Generate the fast engines
+        env:
+          PYTHON: .venv/bin/python
+        run: tools/build_engines.sh
+
       - name: Build the Mac app
-        if: contains(inputs.targets, 'mac')
         run: tools/package_mac.sh
 
       - name: Protect the download
         env:
           IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
         run: |
+          mkdir build/upload
           cd build
-          mkdir upload
-          [ ! -f ClassicVoices.ipa ] || zip -q -P "$IPA_PASSWORD" upload/ClassicVoices-ipa.zip ClassicVoices.ipa
-          [ ! -f ClassicVoices-mac.zip ] || zip -q -0 -P "$IPA_PASSWORD" upload/ClassicVoices-mac-locked.zip ClassicVoices-mac.zip
+          zip -q -0 -P "$IPA_PASSWORD" upload/ClassicVoices-mac-locked.zip ClassicVoices-mac.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ClassicVoices
+          name: ClassicVoicesMac
           path: build/upload/*
           retention-days: 3
           compression-level: 0
