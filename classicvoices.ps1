@@ -186,10 +186,10 @@
             try {
                 Start-Process $addonOut
                 Say 'NVDA will ask whether to install the Classic Voices add-on: choose Yes, then restart NVDA.'
+                Say 'Then pick Classic Voices in NVDA settings, Speech, Synthesizer (NVDA+Control+S).'
             } catch {
-                Say 'Open that file with NVDA running to install the add-on, then restart NVDA.'
+                Say 'Install NVDA (nvaccess.org), then open that file with NVDA running to install the add-on.'
             }
-            Say 'Then pick Classic Voices in NVDA settings, Speech, Synthesizer (NVDA+Control+S).'
         }
 
         if ($wantIphone) {
