@@ -9,7 +9,9 @@
 #define VX_OPS_INLINE static inline
 #endif
 
+#ifndef GUEST_MEM_SIZE
 #define GUEST_MEM_SIZE 0x40000000u  // 1 GB flat guest address space (mostly unbacked)
+#endif
 
 typedef struct Core {
     uint32_t r[16];

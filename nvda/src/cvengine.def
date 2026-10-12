@@ -1,0 +1,16 @@
+EXPORTS
+    cv_abi_version
+    cv_read_s16
+    vxs_create
+    vxs_destroy
+    vxs_set_asset_root
+    vxs_start
+    vxs_cancel
+    vxs_read
+    vxs_preload
+    vxs_engine_pitch
+    vxs_last_first_audio_ms
+    vxs_last_synth_ms
+    vxs_last_audio_ms
+    vxs_last_error
+    vxs_benchmark
