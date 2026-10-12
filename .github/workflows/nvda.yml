@@ -1,0 +1,25 @@
+name: Build NVDA add-on
+on:
+  workflow_dispatch:
+  push:
+    branches: [nvda-addon]
+    paths: ["nvda/**", "core/**", ".github/workflows/nvda.yml"]
+
+jobs:
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 cross compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+      - name: Build DLLs and package the add-on
+        run: |
+          python3 nvda/build.py all \
+            --cc-x64 x86_64-w64-mingw32-gcc-posix \
+            --cc-x86 i686-w64-mingw32-gcc-posix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: classicvoices-nvda-addon
+          path: build/*.nvda-addon
