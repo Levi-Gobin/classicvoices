@@ -208,6 +208,7 @@ struct RootView: View {
 enum BrowserRoute: Hashable {
     case language(String)
     case voice(String)  // VoiceItem.id
+    case diagnostics
 }
 
 /// One tab, as a drill-down: version menu and languages (or the voices, when
@@ -263,6 +264,7 @@ struct PlatformTab: View {
             let detail: String
             switch new.last {
             case .voice?: detail = "voice"
+            case .diagnostics?: detail = ""
             case .language(let lang)?: detail = "\(items(language: lang).count) voices"
             case nil: detail = ""
             }
@@ -288,6 +290,7 @@ struct PlatformTab: View {
         switch route {
         case .language(let lang): VoiceItem.languageName(lang)
         case .voice(let id): library.item(id)?.name ?? "Voice"
+        case .diagnostics: "Diagnostics"
         }
     }
 
@@ -297,6 +300,7 @@ struct PlatformTab: View {
         case .language(let lang)?:
             Page { VoiceButtons(items: items(language: lang), groupByVersion: versionID == "all", open: open) }
         case .voice(let id)?: VoiceDetail(id: id)
+        case .diagnostics?: DiagnosticsView()
         }
     }
 
@@ -328,6 +332,9 @@ struct PlatformTab: View {
             }
             if let note = alexNote {
                 Text(note).font(.footnote).foregroundStyle(.secondary)
+            }
+            PageSection(nil) {
+                OpenButton(title: "Diagnostics", detail: "a report to send if voices don\u{2019}t work") { open(.diagnostics) }
             }
         }
     }
