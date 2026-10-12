@@ -13,7 +13,9 @@
 #include <unistd.h>
 
 #define RING_FRAMES (1u << 20)  // ~47 s at 22.05 kHz
+#ifndef MAX_ENGINES
 #define MAX_ENGINES 3
+#endif
 
 // Recompiled engine code (build/gen*/) is linked in when available; each table
 // is weak so a build without it falls back to the interpreter.

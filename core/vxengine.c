@@ -24,7 +24,7 @@
 #define TRAP_MAPPING   0x0030F100u  // 5 consecutive slots
 #define DATA_SYMS      0x00380000u
 #define MAP_LO         0x04000000u  // file mappings: 960 MB (Mac premium voices reach ~750 MB)
-#define MAP_HI         0x40000000u
+#define MAP_HI         GUEST_MEM_SIZE
 #define HEAP_LO        0x01400000u
 #define HEAP_HI        0x03C00000u
 #define STACK_TOP      0x04000000u
