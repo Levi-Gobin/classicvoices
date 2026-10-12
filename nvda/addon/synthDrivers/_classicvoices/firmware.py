@@ -254,6 +254,76 @@ def assemble_mac_common(voices_root):
                 shutil.copyfile(p, dest)
 
 
+def _copy_build_dir(src, voices_root, build_key, progress):
+    """One extracted build -> Voices/<build>/. `src` may be shaped like
+    tools/fetch_firmware.sh output (VoiceServices.framework/... or
+    TTSSpeechBundle.speechbundle/...) or already like Voices/<build>."""
+    fw = os.path.join(src, "VoiceServices.framework")
+    bundle = os.path.join(src, "TTSSpeechBundle.speechbundle", "TTSSpeechBundle")
+    if os.path.isfile(os.path.join(src, "voiced")):
+        voiced, res = os.path.join(src, "voiced"), os.path.join(src, "TTSResources")
+    elif os.path.isfile(bundle):
+        voiced, res = bundle, None
+    elif os.path.isdir(fw):
+        voiced = os.path.join(fw, "Support", "voiced")
+        res = os.path.join(fw, "TTSResources")
+    else:
+        raise ImportError_("%s has neither VoiceServices.framework, a TTSSpeechBundle, "
+                           "nor a voiced binary" % src)
+    if not os.path.isfile(voiced):
+        raise ImportError_("no voiced binary under %s" % src)
+    progress("Copying %s" % build_key, None)
+    dest = os.path.join(voices_root, build_key)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    os.makedirs(dest)
+    shutil.copyfile(voiced, os.path.join(dest, "voiced"))
+    if res and os.path.isdir(res):
+        shutil.copytree(res, os.path.join(dest, "TTSResources"))
+        if build_key == "ios7":  # engine only; its own voices are not wanted
+            res_dir = os.path.join(dest, "TTSResources")
+            for name in os.listdir(res_dir):
+                p = os.path.join(res_dir, name)
+                if name != "common" and os.path.isdir(p):
+                    shutil.rmtree(p)
+
+
+def import_extracted(path, voices_root, progress):
+    """Import a folder in the shape tools/fetch_firmware.sh leaves behind:
+    either extracted/ itself (ios3 ... ios10, and optionally mac10x/common),
+    or a single build folder named after its build (e.g. .../ios6).
+    Returns the list of builds imported."""
+    builds = [v[0] for v in SUPPORTED.values()]
+    name = os.path.basename(os.path.normpath(path))
+    done = []
+    os.makedirs(voices_root, exist_ok=True)
+    if name in builds:
+        _copy_build_dir(path, voices_root, name, progress)
+        done.append(name)
+    else:
+        for build in sorted(builds):
+            sub = os.path.join(path, build)
+            if os.path.isdir(sub):
+                _copy_build_dir(sub, voices_root, build, progress)
+                done.append(build)
+        for era in MAC_COMMON:  # the fetch script also leaves mac10x/common
+            src = os.path.join(path, era, "common")
+            if os.path.isdir(src):
+                dest = os.path.join(voices_root, era, "common")
+                if os.path.isdir(dest):
+                    shutil.rmtree(dest)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copytree(src, dest)
+    if not done:
+        raise ImportError_(
+            "%s has no firmware builds. Expected a folder named after a build "
+            "(%s) or a folder containing them, in the shape "
+            "tools/fetch_firmware.sh produces." % (path, ", ".join(sorted(builds))))
+    assemble_mac_common(voices_root)
+    progress("Imported %s" % ", ".join(done), 1.0)
+    return done
+
+
 def identify_ipsw(path):
     """-> (build_key, build_number, device, nice_name). Raises on unsupported."""
     with zipfile.ZipFile(path) as z:

@@ -60,6 +60,10 @@ class DataDialog(wx.Dialog):
         self.importBtn = wx.Button(self, label=_("&Import firmware (IPSW)..."))
         self.importBtn.Bind(wx.EVT_BUTTON, self.onImport)
         btns.Add(self.importBtn)
+        # Translators: button that imports an already-extracted firmware folder.
+        self.importDirBtn = wx.Button(self, label=_("Import extracted &folder..."))
+        self.importDirBtn.Bind(wx.EVT_BUTTON, self.onImportFolder)
+        btns.Add(self.importDirBtn)
         # Translators: button that downloads the checked voices.
         self.dlBtn = wx.Button(self, label=_("&Download checked voices"))
         self.dlBtn.Bind(wx.EVT_BUTTON, self.onDownload)
@@ -68,8 +72,13 @@ class DataDialog(wx.Dialog):
         openBtn = wx.Button(self, label=_("&Open data folder"))
         openBtn.Bind(wx.EVT_BUTTON, lambda evt: os.startfile(cv_paths.data_root()))
         btns.Add(openBtn)
-        btns.Add(wx.Button(self, wx.ID_CLOSE))
+        closeBtn = wx.Button(self, wx.ID_CLOSE)
+        btns.Add(closeBtn)
         self.Bind(wx.EVT_BUTTON, lambda evt: self.Close(), id=wx.ID_CLOSE)
+        # Enter and Escape both land on Close.
+        closeBtn.SetDefault()
+        self.SetAffirmativeId(wx.ID_CLOSE)
+        self.SetEscapeId(wx.ID_CLOSE)
         self.Bind(wx.EVT_CLOSE, self.onClose)
         main.Add(btns, flag=wx.ALL, border=5)
         self.SetSizerAndFit(main)
@@ -105,6 +114,7 @@ class DataDialog(wx.Dialog):
     def _start(self, fn):
         self._busy = True
         self.importBtn.Disable()
+        self.importDirBtn.Disable()
         self.dlBtn.Disable()
 
         def run():
@@ -120,6 +130,7 @@ class DataDialog(wx.Dialog):
                     return
                 self._busy = False
                 self.importBtn.Enable()
+                self.importDirBtn.Enable()
                 self.dlBtn.Enable()
                 self.refresh()
                 if error:
@@ -140,6 +151,17 @@ class DataDialog(wx.Dialog):
             path = fd.GetPath()
         self._start(lambda: cv_firmware.import_ipsw(path, cv_paths.voices_root(),
                                                     self._progress))
+
+    def onImportFolder(self, evt):
+        # Translators: title of the extracted-firmware folder picker.
+        with wx.DirDialog(self, _("Choose an extracted firmware folder "
+                                  "(e.g. extracted/ or extracted/ios6)"),
+                          style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST) as dd:
+            if dd.ShowModal() != wx.ID_OK:
+                return
+            path = dd.GetPath()
+        self._start(lambda: cv_firmware.import_extracted(path, cv_paths.voices_root(),
+                                                         self._progress))
 
     def onDownload(self, evt):
         checked = [self._downloads[i] for i in self.dl.GetCheckedItems()]
