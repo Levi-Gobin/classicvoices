@@ -5,10 +5,10 @@
 #   bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/main/classicvoices.sh)
 #
 # It signs you in to GitHub (in your browser), makes or updates your copy
-# (fork) of Classic Voices, runs the build there, waits for it, and saves
-# ClassicVoices.ipa in your Downloads folder. Then it opens Sideloadly if you
-# have it, so you can install the app on your iPhone. Running it again later
-# updates your copy and builds the newest version.
+# (fork) of Classic Voices, runs the build there and waits for it. Then it
+# installs the Mac app, and saves ClassicVoices.ipa in your Downloads folder
+# and opens Sideloadly if you have it, so you can install the iPhone app.
+# Running it again later updates your copy and builds the newest version.
 #
 # Everything it prints is plain lines, so it reads well with VoiceOver.
 set -euo pipefail
@@ -39,6 +39,14 @@ gh_tool() {
     mv "$tmp/gh_${tag}_macOS_${arch}" "$HOME_DIR/gh"
     rm -rf "$tmp"
 }
+
+say "Which apps should be built?"
+say "  1. iPhone and Mac"
+say "  2. iPhone only"
+say "  3. Mac only"
+read -r -p "Type 1, 2 or 3 and press Return (Return alone means 1): " choice </dev/tty || choice=1
+case "$choice" in 2) TARGETS="iphone" ;; 3) TARGETS="mac" ;; *) TARGETS="iphone mac" ;; esac
+has() { case " $TARGETS " in *" $1 "*) return 0 ;; esac; return 1; }
 
 gh_tool
 gh() { "$GH" "$@"; }
@@ -77,7 +85,7 @@ printf '%s' "$PASSWORD" | gh secret set IPA_PASSWORD -R "$REPO" >/dev/null || fa
 
 # --- Build -------------------------------------------------------------------
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-gh workflow run "$WORKFLOW" -R "$REPO" >/dev/null 2>&1 \
+gh workflow run "$WORKFLOW" -R "$REPO" -f targets="$TARGETS" >/dev/null 2>&1 \
     || fail "couldn't start the build. Open https://github.com/$REPO/actions, turn workflows on if asked, and run this again."
 say "Build started. It takes about half an hour; you'll hear each step as it finishes."
 RUN=""
@@ -90,7 +98,7 @@ done
 [ -n "$RUN" ] || fail "the build didn't appear. See https://github.com/$REPO/actions."
 
 # One line per finished step, read from GitHub every 30 seconds.
-STEPS='.jobs[].steps[] | select(.status == "completed") | {"Fetch firmware from Apple": "Firmware downloaded from Apple", "Generate the fast engines": "Engines generated", "Build the app": "App built", "Run actions/upload-artifact@v4": "Upload finished"}[.name] as $n | select($n) | $n + (if .conclusion == "success" then "" else " (" + .conclusion + ")" end)'
+STEPS='.jobs[].steps[] | select(.status == "completed") | {"Fetch firmware from Apple": "Firmware downloaded from Apple", "Generate the fast engines": "Engines generated", "Build the app": "iPhone app built", "Build the Mac app": "Mac app built", "Run actions/upload-artifact@v4": "Upload finished"}[.name] as $n | select($n) | $n + (if .conclusion == "success" then "" else " (" + .conclusion + ")" end)'
 seen=""
 while true; do
     steps=$(gh run view "$RUN" -R "$REPO" --json jobs --jq "$STEPS" 2>/dev/null) || { sleep 20; continue; }
@@ -105,21 +113,41 @@ CONCLUSION=$(gh run view "$RUN" -R "$REPO" --json conclusion --jq .conclusion)
 [ "$CONCLUSION" = success ] || fail "the build didn't finish ($CONCLUSION). Details: https://github.com/$REPO/actions/runs/$RUN"
 
 # --- Download ----------------------------------------------------------------
-say "Downloading the app."
+say "Downloading."
 TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 gh run download "$RUN" -R "$REPO" -n ClassicVoices -D "$TMP" || fail "couldn't download the build."
-unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-ipa.zip" -d "$TMP" || fail "couldn't open the download."
-mv -f "$TMP/ClassicVoices.ipa" "$OUT/ClassicVoices.ipa"
-rm -rf "$TMP"
-say "Saved $OUT/ClassicVoices.ipa"
 
-# --- Install -----------------------------------------------------------------
-printf '%s' "$OUT/ClassicVoices.ipa" | pbcopy
-if open -a Sideloadly 2>/dev/null; then
-    say "Sideloadly is open. Connect your iPhone, choose ClassicVoices.ipa from your"
-    say "Downloads folder (its full path is on the clipboard), and press Start."
-else
-    say "Install it on your iPhone with Sideloadly (sideloadly.io), AltStore or SideStore:"
-    say "choose ClassicVoices.ipa from your Downloads folder."
+if has mac; then
+    unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-mac-locked.zip" -d "$TMP" || fail "couldn't open the Mac app download."
+    APPS=/Applications
+    [ -w "$APPS" ] || { APPS="$HOME/Applications"; mkdir -p "$APPS"; }
+    LS=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+    osascript -e 'quit app "Classic Voices"' >/dev/null 2>&1 || true
+    rm -rf "$APPS/Classic Voices.app"
+    ditto -x -k "$TMP/ClassicVoices-mac.zip" "$APPS" || fail "couldn't install the Mac app."
+    "$LS" -f "$APPS/Classic Voices.app" >/dev/null 2>&1 || true
+    # macOS keeps a list of speech voices; restart it so the new ones appear.
+    killall axassetsd >/dev/null 2>&1 || true
+    sleep 2
+    open "$APPS/Classic Voices.app"
+    say "Installed the Mac app in $APPS and opened it."
+    say "If macOS asks whether to open Classic Voices Synthesizer, choose Open Anyway:"
+    say "that is its speech part, which the build signed without an Apple developer account."
+    say "The voices then appear in System Settings, Accessibility, Spoken Content and VoiceOver."
 fi
-say "Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content."
+
+if has iphone; then
+    unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-ipa.zip" -d "$TMP" || fail "couldn't open the iPhone app download."
+    mv -f "$TMP/ClassicVoices.ipa" "$OUT/ClassicVoices.ipa"
+    say "Saved $OUT/ClassicVoices.ipa"
+    printf '%s' "$OUT/ClassicVoices.ipa" | pbcopy
+    if open -a Sideloadly 2>/dev/null; then
+        say "Sideloadly is open. Connect your iPhone, choose ClassicVoices.ipa from your"
+        say "Downloads folder (its full path is on the clipboard), and press Start."
+    else
+        say "Install it on your iPhone with Sideloadly (sideloadly.io), AltStore or SideStore:"
+        say "choose ClassicVoices.ipa from your Downloads folder."
+    fi
+    say "Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content."
+fi

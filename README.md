@@ -36,11 +36,22 @@ On a Mac, open Terminal and paste:
 bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/main/classicvoices.sh)
 ```
 
-It signs you in to GitHub in your browser (the one-time code is copied for
-you), makes your own copy of this repository, builds the app there, and
-reads out each step as it finishes. About half an hour later it saves
-`ClassicVoices.ipa` in your Downloads folder and opens Sideloadly, if you have
-it, so you can install the app. Run the same line again any time to update.
+It asks what to build: on Windows, the iPhone app and the NVDA add-on; on a
+Mac, the iPhone app and the Mac app. Then it signs you in to GitHub in your
+browser (the one-time code is copied for you), makes your own copy of this
+repository, builds there, and reads out each step as it finishes. About half
+an hour later:
+
+- **NVDA**: the voices go into NVDA's settings folder and NVDA offers to
+  install the add-on. Choose Yes, restart NVDA, and pick Classic Voices as the
+  synthesizer.
+- **Mac**: the app is installed in Applications and opened. Because it's built
+  without an Apple developer account, macOS may ask whether to open "Classic
+  Voices Synthesizer": choose Open Anyway.
+- **iPhone**: `ClassicVoices.ipa` is saved in your Downloads folder and
+  Sideloadly opens, if you have it, so you can install it.
+
+Run the same line again any time to update.
 
 ### By hand on GitHub
 
@@ -51,11 +62,13 @@ it, so you can install the app. Run the same line again any time to update.
    download a public fork's build files.
 3. Open the "Actions" tab. GitHub turns workflows off in new forks, so first
    press "I understand my workflows, go ahead and enable them". Then choose
-   "Build Classic Voices" and press "Run workflow". The build takes about
-   half an hour.
-4. When it finishes, download "ClassicVoices" from the run's page, unzip it
-   with your password, and sideload `ClassicVoices.ipa` with your sideloading
-   tool.
+   "Build Classic Voices" and press "Run workflow". Leave "targets" as it is
+   to build everything. The build takes about half an hour.
+4. When it finishes, download from the run's page and unzip with your
+   password: "ClassicVoices" holds the iPhone app (sideload
+   `ClassicVoices.ipa`) and the Mac app; "ClassicVoicesNVDA" is the add-on, and
+   "ClassicVoicesNVDAData" holds its voices, which go in
+   `%APPDATA%\nvda\classicvoices`.
 
 ### Then
 

@@ -4,10 +4,11 @@
 #   irm https://raw.githubusercontent.com/Levi-Gobin/classicvoices/main/classicvoices.ps1 | iex
 #
 # It signs you in to GitHub (in your browser), makes or updates your copy
-# (fork) of Classic Voices, runs the build there, waits for it, and saves
-# ClassicVoices.ipa in your Downloads folder. Then it opens Sideloadly if you
-# have it, so you can install the app on your iPhone. Running it again later
-# updates your copy and builds the newest version.
+# (fork) of Classic Voices, runs the build there and waits for it. Then it
+# sets up the NVDA add-on with its voices, and saves ClassicVoices.ipa in your
+# Downloads folder and opens Sideloadly if you have it, so you can install the
+# iPhone app. Running it again later updates your copy and builds the newest
+# version.
 #
 # Everything it prints is plain lines, so it reads well with a screen reader.
 
@@ -25,6 +26,15 @@
     function Fail($text) { throw "Stopped: $text" }
 
     try {
+        Say 'What should be built?'
+        Say '  1. The iPhone app and the NVDA add-on'
+        Say '  2. The iPhone app only'
+        Say '  3. The NVDA add-on only'
+        $choice = Read-Host 'Type 1, 2 or 3 and press Enter (Enter alone means 1)'
+        $targets = switch ($choice.Trim()) { '2' { 'iphone' } '3' { 'nvda' } default { 'iphone nvda' } }
+        $wantIphone = $targets -match 'iphone'
+        $wantNvda = $targets -match 'nvda'
+
         # --- GitHub's command line tool, kept in %LOCALAPPDATA%\ClassicVoices ---
         $gh = (Get-Command gh -ErrorAction SilentlyContinue).Source
         if (-not $gh) {
@@ -99,7 +109,7 @@
 
         # --- Build ---------------------------------------------------------------
         $started = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        GH workflow run $Workflow -R $repo | Out-Null
+        GH workflow run $Workflow -R $repo -f "targets=$targets" | Out-Null
         if (-not $ghOk) { Fail "couldn't start the build. Open https://github.com/$repo/actions, turn workflows on if asked, and run this again." }
         Say "Build started. It takes about half an hour; you'll hear each step as it finishes."
         $run = $null
@@ -115,14 +125,15 @@
 
         # One line per finished step, read from GitHub every 30 seconds.
         $names = @{ 'Fetch firmware from Apple' = 'Firmware downloaded from Apple'; 'Generate the fast engines' = 'Engines generated';
-                    'Build the app' = 'App built'; 'Run actions/upload-artifact@v4' = 'Upload finished' }
+                    'Build the app' = 'iPhone app built'; 'Build the NVDA add-on' = 'NVDA add-on built';
+                    'Fetch firmware and build NVDA''s fast engines' = 'NVDA voices and fast engines built' }
         $seen = @{}
         while ($true) {
             $json = GH run view $run -R $repo --json 'status,conclusion,jobs'
             if ($ghOk -and $json) {
                 $view = -join $json | ConvertFrom-Json
                 foreach ($step in @($view.jobs | ForEach-Object { $_.steps })) {
-                    if ($step.status -eq 'completed' -and $names.ContainsKey($step.name) -and -not $seen.ContainsKey($step.name)) {
+                    if ($step.status -eq 'completed' -and $step.conclusion -ne 'skipped' -and $names.ContainsKey($step.name) -and -not $seen.ContainsKey($step.name)) {
                         $line = $names[$step.name]
                         if ($step.conclusion -ne 'success') { $line += " ($($step.conclusion))" }
                         Say "  $line"; $seen[$step.name] = $true
@@ -134,41 +145,75 @@
         }
         if ($conclusion -ne 'success') { Fail "the build didn't finish ($conclusion). Details: https://github.com/$repo/actions/runs/$run" }
 
-        # --- Download --------------------------------------------------------------
-        Say 'Downloading the app.'
+        # --- Download and install ------------------------------------------------
+        Say 'Downloading.'
         $tmp = Join-Path $env:TEMP ("ClassicVoices-" + [guid]::NewGuid())
         New-Item -ItemType Directory $tmp | Out-Null
-        GH run download $run -R $repo -n ClassicVoices -D $tmp | Out-Null
-        if (-not $ghOk) { Fail "couldn't download the build." }
         # Windows' own tar opens password-protected zips.
-        Push-Location $tmp
-        & tar.exe -xf ClassicVoices-ipa.zip --passphrase $password
-        $tarOk = ($LASTEXITCODE -eq 0)
-        Pop-Location
-        if (-not $tarOk) { Fail "couldn't open the download." }
-        $ipa = Join-Path $Out 'ClassicVoices.ipa'
-        Move-Item -Force (Join-Path $tmp 'ClassicVoices.ipa') $ipa
-        Remove-Item -Recurse -Force $tmp
-        Say "Saved $ipa"
+        function Unlock($zip, $dest) {
+            New-Item -ItemType Directory -Force $dest | Out-Null
+            & tar.exe -xf $zip -C $dest --passphrase $password
+            if ($LASTEXITCODE -ne 0) { Fail "couldn't open $(Split-Path -Leaf $zip)." }
+        }
 
-        # --- Install ---------------------------------------------------------------
-        Set-Clipboard -Value $ipa
-        $sideloadly = @("$env:ProgramFiles\Sideloadly\sideloadly.exe", "${env:ProgramFiles(x86)}\Sideloadly\sideloadly.exe",
-                        "$env:LOCALAPPDATA\Sideloadly\sideloadly.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $sideloadly) {  # or wherever its Start menu shortcut points
-            $sideloadly = @("$env:ProgramData\Microsoft\Windows\Start Menu", "$env:APPDATA\Microsoft\Windows\Start Menu") |
-                Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse -Filter 'Sideloadly*.lnk' -ErrorAction SilentlyContinue } |
-                Select-Object -First 1 -ExpandProperty FullName
+        if ($wantNvda) {
+            GH run download $run -R $repo -n ClassicVoicesNVDA -D (Join-Path $tmp 'addon') | Out-Null
+            if (-not $ghOk) { Fail "couldn't download the NVDA add-on." }
+            GH run download $run -R $repo -n ClassicVoicesNVDAData -D $tmp | Out-Null
+            if (-not $ghOk) { Fail "couldn't download the NVDA voices." }
+            # The add-on reads its voices and fast engines from NVDA's settings folder.
+            $data = Join-Path $env:APPDATA 'nvda\classicvoices'
+            Unlock (Join-Path $tmp 'ClassicVoicesNVDA-data.zip') (Join-Path $tmp 'data')
+            New-Item -ItemType Directory -Force $data | Out-Null
+            foreach ($part in 'Voices', 'Native') {
+                $dest = Join-Path $data $part
+                try {
+                    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+                    Move-Item (Join-Path $tmp "data\$part") $dest
+                } catch {
+                    Fail "couldn't replace $dest, probably because NVDA is using it. Switch NVDA to another synthesizer, or exit NVDA, then run this again."
+                }
+            }
+            Say "NVDA voices and fast engines are in $data"
+            $addon = Get-ChildItem (Join-Path $tmp 'addon') -Filter '*.nvda-addon' | Select-Object -First 1
+            $addonOut = Join-Path $Out $addon.Name
+            Copy-Item -Force $addon.FullName $addonOut
+            Say "Saved $addonOut"
+            try {
+                Start-Process $addonOut
+                Say 'NVDA will ask whether to install the Classic Voices add-on: choose Yes, then restart NVDA.'
+            } catch {
+                Say 'Open that file with NVDA running to install the add-on, then restart NVDA.'
+            }
+            Say 'Then pick Classic Voices in NVDA settings, Speech, Synthesizer (NVDA+Control+S).'
         }
-        if ($sideloadly) {
-            Start-Process $sideloadly
-            Say 'Sideloadly is open. Connect your iPhone, choose ClassicVoices.ipa from your'
-            Say 'Downloads folder (its full path is on the clipboard), and press Start.'
-        } else {
-            Say 'Install it on your iPhone with Sideloadly (sideloadly.io), AltStore or SideStore:'
-            Say 'choose ClassicVoices.ipa from your Downloads folder.'
+
+        if ($wantIphone) {
+            GH run download $run -R $repo -n ClassicVoices -D $tmp | Out-Null
+            if (-not $ghOk) { Fail "couldn't download the iPhone app." }
+            Unlock (Join-Path $tmp 'ClassicVoices-ipa.zip') $tmp
+            $ipa = Join-Path $Out 'ClassicVoices.ipa'
+            Move-Item -Force (Join-Path $tmp 'ClassicVoices.ipa') $ipa
+            Say "Saved $ipa"
+            Set-Clipboard -Value $ipa
+            $sideloadly = @("$env:ProgramFiles\Sideloadly\sideloadly.exe", "${env:ProgramFiles(x86)}\Sideloadly\sideloadly.exe",
+                            "$env:LOCALAPPDATA\Sideloadly\sideloadly.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $sideloadly) {  # or wherever its Start menu shortcut points
+                $sideloadly = @("$env:ProgramData\Microsoft\Windows\Start Menu", "$env:APPDATA\Microsoft\Windows\Start Menu") |
+                    Where-Object { Test-Path $_ } | ForEach-Object { Get-ChildItem $_ -Recurse -Filter 'Sideloadly*.lnk' -ErrorAction SilentlyContinue } |
+                    Select-Object -First 1 -ExpandProperty FullName
+            }
+            if ($sideloadly) {
+                Start-Process $sideloadly
+                Say 'Sideloadly is open. Connect your iPhone, choose ClassicVoices.ipa from your'
+                Say 'Downloads folder (its full path is on the clipboard), and press Start.'
+            } else {
+                Say 'Install it on your iPhone with Sideloadly (sideloadly.io), AltStore or SideStore:'
+                Say 'choose ClassicVoices.ipa from your Downloads folder.'
+            }
+            Say 'Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content.'
         }
-        Say 'Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content.'
+        Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     } catch {
         Write-Host $_.Exception.Message
     }
