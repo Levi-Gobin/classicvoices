@@ -53,6 +53,7 @@ typedef struct {
     char key[96];  // "<build>/<lang>" ("ios3/en-US") or "<mac era>/<voice>" ("mac107/KarenCompact")
     Vx *vx;
     uint64_t last_used;
+    int failures;  // utterances in a row the engine refused
 } EngineSlot;
 
 struct VxStream {
@@ -176,6 +177,7 @@ static Vx *engine_for(VxStream *s, const char *key) {
     if (!vx) return NULL;
     snprintf(lru->key, sizeof lru->key, "%s", key);
     lru->vx = vx;
+    lru->failures = 0;
     lru->last_used = ++s->tick;
     return vx;
 }
@@ -407,11 +409,12 @@ static int pitch_value_to_percent(int v) {
     return 158;
 }
 
-static void speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch) {
+static int speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch) {
     static const char kEos[] = "\x1b\\eos=1\\", kPitch[] = "\x1b\\pitch=";
     size_t n = strlen(text);
     char *seg = malloc(n + 1);
     size_t m = 0;
+    int rc = 0;
     const char *p = text;
     for (;;) {
         int at_end = *p == 0;
@@ -424,7 +427,7 @@ static void speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int in
             if (has_text) {
                 int prc = vx_set_param(vx, 4, (uint32_t)(percent_pitch ? pitch_value_to_percent(pitch) : pitch));
                 if (getenv("VX_SEGDEBUG")) fprintf(stderr, "segment pitch=%d rc=%x [%s]\n", pitch, prc, seg);
-                if (vx_speak_utf8(vx, seg, on_pcm, k)) break;
+                if ((rc = vx_speak_utf8(vx, seg, on_pcm, k))) break;
                 // between utterances keep the engine's natural silence; inside a
                 // sentence (pitch change only) join tightly
                 k->cap_quiet = is_pitch ? (size_t)k->rate / 10 : 0;
@@ -453,6 +456,7 @@ static void speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int in
         seg[m++] = *p++;
     }
     free(seg);
+    return rc;
 }
 
 // ---- MacinTalk (Mac OS X 10.4-10.6): keys "mt104/Fred", "mt105/Alex" ...
@@ -568,8 +572,22 @@ static void *worker(void *arg) {
             char eb[16];
             engine_build(lang, eb, sizeof eb);
             int percent = strcmp(eb, "ios7") == 0 || strcmp(eb, "ios10") == 0;
-            speak_segmented(vx, &k, text, vxs_engine_pitch(pitch),
-                            percent || strcmp(eb, "ios5") == 0 || strcmp(eb, "ios6") == 0, percent);
+            int rc = speak_segmented(vx, &k, text, vxs_engine_pitch(pitch),
+                                     percent || strcmp(eb, "ios5") == 0 || strcmp(eb, "ios6") == 0, percent);
+            // One refused phrase is usually the text (e.g. a lone "(" for some
+            // voices); two in a row means the engine itself is stuck, so start
+            // it again rather than stay silent.
+            for (int i = 0; i < MAX_ENGINES; i++) {
+                EngineSlot *e = &s->engines[i];
+                if (e->vx != vx) continue;
+                if (!rc || atomic_load(&s->cancel)) { e->failures = 0; break; }
+                if (++e->failures < 2) break;
+                os_log_error(OS_LOG_DEFAULT, "CLASSICVOICES %{public}s failed twice (%{public}s); restarting it", lang, vx_last_error(vx));
+                vx_close(vx);
+                e->vx = NULL;
+                e->key[0] = 0;
+                break;
+            }
         }
         if (!atomic_load(&s->cancel)) finish(&k, pause);
         else { free(k.quiet); free(k.rin); }
