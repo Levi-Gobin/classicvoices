@@ -7,6 +7,7 @@
 #include "x86.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +15,23 @@
 
 #pragma clang fp contract(off)
 
+// Guest threads run on host threads, so lock-prefixed instructions (and xchg
+// with memory, always locked on x86) take one lock for the whole
+// read-modify-write: the C++ runtime's reference counts depend on them.
+static pthread_mutex_t g_atomic = PTHREAD_MUTEX_INITIALIZER;
+static _Thread_local int g_in_atomic;
+static void exec(X86 *c);
+static void exec_atomic(X86 *c, uint32_t start) {
+    pthread_mutex_lock(&g_atomic);
+    g_in_atomic = 1;
+    c->eip = start;
+    exec(c);
+    g_in_atomic = 0;
+    pthread_mutex_unlock(&g_atomic);
+}
+
 void x86_fault(X86 *c, const char *fmt, ...) {
+    if (g_in_atomic) { g_in_atomic = 0; pthread_mutex_unlock(&g_atomic); }
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(c->err, sizeof c->err, fmt, ap);
@@ -1097,6 +1114,7 @@ static void exec(X86 *c) {
         op = fetch8(c);
         if (op == 0x66) { d.opsz = 16; d.has66 = 1; continue; }
         if (op == 0xF3 || op == 0xF2) { d.rep = op; continue; }
+        if (op == 0xF0 && !g_in_atomic) { exec_atomic(c, d.start); return; }
         if (op == 0xF0 || op == 0x2E || op == 0x3E || op == 0x26 || op == 0x36) continue;  // lock / flat segments
         if (op == 0x64) { d.seg = c->fs_base; continue; }
         if (op == 0x65) { d.seg = c->gs_base; continue; }
@@ -1163,6 +1181,7 @@ static void exec(X86 *c) {
     case 0x86: case 0x87: {
         int s = (op & 1) ? sz : 8;
         modrm(c, &d);
+        if (d.mod != 3 && !g_in_atomic) { exec_atomic(c, d.start); return; }
         uint32_t a = rm_get(c, &d, s), b = reg_get(c, d.reg, s);
         rm_set(c, &d, s, b);
         reg_set(c, d.reg, s, a);

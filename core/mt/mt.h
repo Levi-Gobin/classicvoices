@@ -64,6 +64,7 @@ struct Mt {
 
     volatile int dying;      // shutting down: guest threads fault out
     volatile int live;       // guest threads other than the caller's
+    volatile int broken;     // one of them faulted: its locks and state are lost
 };
 
 Mt *mt_create(char *err, size_t errlen);

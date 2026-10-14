@@ -31,6 +31,10 @@ struct ClassicVoicesApp: App {
             DownloadTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
         if CommandLine.arguments.contains("-report") { print(Diagnostics.report(downloadErrors: [:])); fflush(stdout) }
+        if let i = CommandLine.arguments.firstIndex(of: "-stress"), i + 1 < CommandLine.arguments.count {
+            let a = CommandLine.arguments[i + 1].split(separator: ",").map(String.init)
+            StressTest.shared.run(key: a[0], count: a.count > 1 ? Int(a[1]) ?? 300 : 300)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "-voicetest"), i + 1 < CommandLine.arguments.count {
             VoiceTest.run(keys: CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
@@ -156,6 +160,80 @@ enum VoiceTest {
         synth.speak(u)
         print("VOICETEST \(key): speaking"); fflush(stdout)
         DispatchQueue.main.asyncAfter(deadline: .now() + 4) { next(keys, i + 1) }
+    }
+}
+
+/// Speaks short phrases through the system with one voice as VoiceOver does,
+/// cutting most of them off, at volume 0, and reports any that never start or
+/// finish: `-stress mt106/Alex,500`.
+final class StressTest: NSObject, AVSpeechSynthesizerDelegate {
+    static let shared = StressTest()
+    private let synth = AVSpeechSynthesizer()
+    private var voice: AVSpeechSynthesisVoice?
+    private var count = 0, started = 0, finished = 0, stalls = 0
+    private var current: AVSpeechUtterance?
+    private var didStart = false, didEnd = false
+    private let phrases = ["Settings", "Button", "Double tap to open.", "Messages, 3 new items", "Wi-Fi, on, button",
+                           "Battery 85 percent", "12:42 PM", "Mail. Inbox, 1,204 unread. Heading.", "Back",
+                           "Search field. Double tap to edit.", "Selected. Classic Voices, 2 of 14.", "Control Center. 4 items.",
+                           "Hello, this is a longer sentence that keeps the voice talking for a little while longer than the rest."]
+
+    func run(key: String, count: Int) {
+        self.count = count
+        synth.delegate = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
+            guard let e = VoiceCatalog.entries.first(where: { $0.key == key }), let v = VoiceCatalog.systemVoice(for: e) else {
+                print("STRESS \(key): no system voice"); fflush(stdout); return
+            }
+            voice = v
+            step(0)
+        }
+    }
+
+    private func step(_ i: Int) {
+        guard i < count else {
+            print("STRESS done: \(count) phrases, \(started) started, \(finished) finished, \(stalls) never started"); fflush(stdout)
+            return
+        }
+        let u = AVSpeechUtterance(string: phrases.randomElement()!)
+        u.voice = voice
+        u.volume = 0
+        u.rate = Float.random(in: 0.4...0.65)
+        current = u
+        didStart = false
+        didEnd = false
+        synth.speak(u)
+        let cut = Int.random(in: 0..<3) > 0
+        let t0 = Date()
+        func check() {
+            let waited = Date().timeIntervalSince(t0)
+            if cut && didStart && waited > Double.random(in: 0.05...0.5) {
+                synth.stopSpeaking(at: .immediate)
+            } else if !(didEnd || (cut && didStart)) && waited < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { check() }
+                return
+            }
+            if !didStart {
+                stalls += 1
+                print("STRESS \(i): never started after \(Int(waited)) s"); fflush(stdout)
+                synth.stopSpeaking(at: .immediate)
+            }
+            if i % 50 == 0 { print("STRESS \(i): \(started) started, \(finished) finished, \(stalls) never started"); fflush(stdout) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { self.step(i + 1) }
+        }
+        check()
+    }
+
+    func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart u: AVSpeechUtterance) {
+        if u === current { didStart = true }
+        started += 1
+    }
+    func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
+        if u === current { didEnd = true }
+        finished += 1
+    }
+    func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) {
+        if u === current { didEnd = true }
     }
 }
 

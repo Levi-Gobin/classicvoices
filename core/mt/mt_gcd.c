@@ -1,8 +1,8 @@
 // Just enough Grand Central Dispatch for Snow Leopard's MacinTalk, whose back
-// end runs on timer sources instead of MP tasks. Semantics follow
-// panthera-speech's tiger_host_gcd.c: each source gets its own thread; 10.6
-// computes its deadlines from gettimeofday, so the start time of a timer is a
-// (sped-up) wall-clock nanosecond count.
+// end runs on timer sources instead of MP tasks. Timer semantics follow
+// panthera-speech's tiger_host_gcd.c; 10.6 computes its deadlines from
+// gettimeofday, so the start time of a timer is a (sped-up) wall-clock
+// nanosecond count.
 #include "mt_internal.h"
 
 #include <math.h>
@@ -56,21 +56,29 @@ static void h_sleep(Mt *m, X86 *c) {
 
 // ---------------------------------------------------------------- objects
 
+// Each queue is serial and has one thread, which runs its sources' timers in
+// deadline order. 10.6 starts a one-shot source per back-end task, several
+// per utterance; a thread for each source would leave interrupted work
+// queued up on threads until the engine ran out of them.
 #define MAX_Q 64
 #define MAX_SRC 128
-typedef struct { pthread_mutex_t mu; int used; } DQueue;
 typedef struct {
-    int used, retired, running, armed, cancel_delivered, thread_live;
-    uint32_t guest, queue, handler, cancel_handler, ctx;
-    double delay_s, period_s;
-    pthread_mutex_t mu;
+    int used, started;
     pthread_cond_t cv;
-    int rearm;
+} DQueue;
+typedef struct {
+    int used, resumed, armed, retired, cancel_done, busy;
+    int q;  // index into g_q
+    uint32_t guest, handler, cancel_handler, ctx;
+    double deadline, period_s;  // monotonic seconds
+    unsigned gen;  // bumped by each set_timer
     int reaps_graph;  // handler is MacinTalk's deferred AUGraph stop
 } DSource;
 static DQueue g_q[MAX_Q];
 static DSource g_src[MAX_SRC];
-static pthread_mutex_t g_pool = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t g_qguest[MAX_Q];
+static int g_default_q = -1;
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;  // all queue and source state
 
 #define QMAGIC 0x45555144u  // 'DQUE'
 #define SMAGIC 0x43525344u  // 'DSRC'
@@ -81,45 +89,46 @@ static DSource *src_of(Mt *m, X86 *c, uint32_t o) {
     uint32_t i = rd32(c, o + 4);
     return i < MAX_SRC ? &g_src[i] : NULL;
 }
-static DQueue *queue_of(Mt *m, X86 *c, uint32_t o) {
-    (void)m;
-    if (!o || rd32(c, o) != QMAGIC) return NULL;
-    uint32_t i = rd32(c, o + 4);
-    return i < MAX_Q ? &g_q[i] : NULL;
+
+// with g_mu held; -1 when full
+static int new_queue(Mt *m, X86 *c) {
+    int i;
+    for (i = 0; i < MAX_Q && g_q[i].used; i++) {}
+    if (i == MAX_Q) return -1;
+    g_q[i].used = 1;
+    g_q[i].started = 0;
+    pthread_cond_init(&g_q[i].cv, NULL);
+    if (!g_qguest[i]) { g_qguest[i] = mt_static(m, 16); wr32(c, g_qguest[i], QMAGIC); wr32(c, g_qguest[i] + 4, (uint32_t)i); }
+    return i;
 }
 
 static void h_dispatch_queue_create(Mt *m, X86 *c) {
-    pthread_mutex_lock(&g_pool);
-    int i;
-    for (i = 0; i < MAX_Q && g_q[i].used; i++) {}
-    if (i == MAX_Q) { pthread_mutex_unlock(&g_pool); x86_fault(c, "too many dispatch queues"); }
-    g_q[i].used = 1;
-    pthread_mutexattr_t at;
-    pthread_mutexattr_init(&at);
-    pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&g_q[i].mu, &at);
-    pthread_mutex_unlock(&g_pool);
-    uint32_t o = mt_static(m, 16);
-    wr32(c, o, QMAGIC);
-    wr32(c, o + 4, (uint32_t)i);
-    R(c, o);
+    pthread_mutex_lock(&g_mu);
+    int i = new_queue(m, c);
+    pthread_mutex_unlock(&g_mu);
+    if (i < 0) x86_fault(c, "too many dispatch queues");
+    R(c, g_qguest[i]);
 }
 static void h_noop(Mt *m, X86 *c) { (void)m; (void)c; }
 
 static void h_dispatch_source_create(Mt *m, X86 *c) {
-    pthread_mutex_lock(&g_pool);
+    uint32_t qo = A(c, 3);
+    pthread_mutex_lock(&g_mu);
+    int qi = -1;
+    if (qo && rd32(c, qo) == QMAGIC && rd32(c, qo + 4) < MAX_Q) qi = (int)rd32(c, qo + 4);
+    else {  // a global queue: one shared serial queue stands in
+        if (g_default_q < 0) g_default_q = new_queue(m, c);
+        qi = g_default_q;
+    }
     int i;
-    for (i = 0; i < MAX_SRC; i++) if (!g_src[i].used || (g_src[i].retired && !g_src[i].thread_live)) break;
-    if (i == MAX_SRC) { pthread_mutex_unlock(&g_pool); fprintf(stderr, "mt: all dispatch sources in use\n"); R(c, 0); return; }
+    for (i = 0; i < MAX_SRC && g_src[i].used; i++) {}
+    if (i == MAX_SRC || qi < 0) { pthread_mutex_unlock(&g_mu); mt_log("mt: all dispatch sources in use"); R(c, 0); return; }
     DSource *s = &g_src[i];
     uint32_t guest = s->guest;
-    if (s->used) { pthread_mutex_destroy(&s->mu); pthread_cond_destroy(&s->cv); }
     memset(s, 0, sizeof *s);
     s->used = 1;
-    pthread_mutex_init(&s->mu, NULL);
-    pthread_cond_init(&s->cv, NULL);
-    s->queue = A(c, 3);
-    pthread_mutex_unlock(&g_pool);
+    s->q = qi;
+    pthread_mutex_unlock(&g_mu);
     if (!guest) { guest = mt_static(m, 16); wr32(c, guest, SMAGIC); wr32(c, guest + 4, (uint32_t)i); }
     s->guest = guest;
     R(c, guest);
@@ -158,25 +167,29 @@ static void h_dispatch_source_set_timer(Mt *m, X86 *c) {
         // end-of-speech signal. Firing it would stop the graph and wedge the
         // engine (panthera-speech), so it never fires.
         extern void mt_audio_mark_done(void);
-        const uint64_t NEAR2 = 3600ull * 24 * 1000000000ull;
-        uint64_t w = mt_wall_us() * 1000ull;
-        if (start != ~0ull && start != 0x7FFFFFFFFFFFFFFFull && start < w + NEAR2) mt_audio_mark_done();
-        pthread_mutex_lock(&s->mu);
+        if (start != ~0ull && start != 0x7FFFFFFFFFFFFFFFull && start < wall + NEAR) mt_audio_mark_done();
+        pthread_mutex_lock(&g_mu);
         s->armed = 0;
-        pthread_mutex_unlock(&s->mu);
+        pthread_mutex_unlock(&g_mu);
         return;
     }
-    pthread_mutex_lock(&s->mu);
+    pthread_mutex_lock(&g_mu);
     s->period_s = (interval == 0 || interval > 3600ull * 1000000000ull) ? 0 : interval / 1e9 / mt_speed();
-    int near_wall = start < wall + NEAR && start + NEAR > wall;
-    if (start == 0) { s->delay_s = 0; s->armed = 1; }
-    else if (near_wall) { s->delay_s = start <= wall ? 0 : (double)(start - wall) / 1e9 / mt_speed(); s->armed = 1; }
-    else if (start < NEAR) { s->delay_s = start / 1e9 / mt_speed(); s->armed = 1; }  // relative-looking
+    double delay = 0;
+    s->armed = 1;
+    if (start == 0) delay = 0;
+    else if (start < NEAR) delay = start / 1e9 / mt_speed();  // relative-looking
+    // Already due, however long ago: 10.6 adds its delays to times it took
+    // earlier, and the guest clock runs fast, so a day-old base is a few
+    // minutes of speech away.
+    else if (start <= wall) delay = 0;
+    else if (start - wall < NEAR) delay = (double)(start - wall) / 1e9 / mt_speed();
     else s->armed = 0;  // DISPATCH_TIME_FOREVER: disarm
-    if (s->delay_s > 60) s->delay_s = 60;
-    s->rearm = 1;
-    pthread_cond_broadcast(&s->cv);
-    pthread_mutex_unlock(&s->mu);
+    if (delay > 60) delay = 60;
+    s->deadline = mono_s() + delay;
+    s->gen++;
+    pthread_cond_broadcast(&g_q[s->q].cv);
+    pthread_mutex_unlock(&g_mu);
 }
 static void h_dispatch_walltime(Mt *m, X86 *c) {
     (void)m;
@@ -192,63 +205,82 @@ static void h_dispatch_time(Mt *m, X86 *c) {  // monotonic-ish: same wall clock,
     R64(c, mt_wall_us() * 1000ull + (uint64_t)delta);
 }
 
-typedef struct { Mt *m; DSource *s; MtThread *t; } SrcThread;
+typedef struct { Mt *m; int q; MtThread *t; } QueueThread;
 
-static void deliver(Mt *m, X86 *c, DSource *s, uint32_t fn) {
-    DQueue *q = queue_of(m, c, s->queue);
-    if (q) pthread_mutex_lock(&q->mu);
-    uint32_t a = s->ctx;
-    mt_call_on(m, c, fn, 1, &a);
-    if (q) pthread_mutex_unlock(&q->mu);
+static void wait_until(pthread_cond_t *cv, double deadline) {
+    double left = deadline - mono_s();
+    if (left <= 0) return;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    double t = ts.tv_sec + ts.tv_nsec / 1e9 + left;
+    ts.tv_sec = (time_t)t;
+    ts.tv_nsec = (long)((t - (double)ts.tv_sec) * 1e9);
+    pthread_cond_timedwait(cv, &g_mu, &ts);
 }
 
-static void *source_main(void *arg) {
-    SrcThread *k = arg;
+static void *queue_main(void *arg) {
+    QueueThread *k = arg;
     Mt *m = k->m;
-    DSource *s = k->s;
     X86 *c = &k->t->cpu;
+    DQueue *q = &g_q[k->q];
     c->fault = &k->t->fault;
+    DSource *volatile running = NULL;
     if (setjmp(k->t->fault)) {
-        if (!m->dying) mt_log("dispatch source handler faulted: %s", c->err);
-        goto out;
+        // The handler faulted. Log it and carry on with the queue's other work.
+        char at[160], hn[160];
+        if (!m->dying) m->broken = 1;
+        if (!m->dying) mt_log("dispatch source handler %s faulted: %s in %s", running ? mt_symbolize(m, running->handler, hn, sizeof hn) : "?",
+                              c->err, mt_symbolize(m, c->eip, at, sizeof at));
+        pthread_mutex_lock(&g_mu);
+        if (running) { running->busy = 0; if (running->retired && running->cancel_done) running->used = 0; }
+        running = NULL;
+        pthread_mutex_unlock(&g_mu);
+        if (m->dying) goto out;
+        c->r[ESP] = k->t->stack_top - 16;
     }
-    for (;;) {
-        pthread_mutex_lock(&s->mu);
-        while (s->running && !m->dying && !s->armed) pthread_cond_wait(&s->cv, &s->mu);
-        if (!s->running || m->dying) { pthread_mutex_unlock(&s->mu); break; }
-        if (s->delay_s > 0) {
-            s->rearm = 0;
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            double t = ts.tv_sec + ts.tv_nsec / 1e9 + s->delay_s;
-            ts.tv_sec = (time_t)t;
-            ts.tv_nsec = (long)((t - (double)ts.tv_sec) * 1e9);
-            int r = 0;
-            while (!s->rearm && s->running && !m->dying && r == 0) r = pthread_cond_timedwait(&s->cv, &s->mu, &ts);
-            if (!s->running || m->dying) { pthread_mutex_unlock(&s->mu); break; }
-            if (s->rearm) { pthread_mutex_unlock(&s->mu); continue; }  // re-armed: re-read the delay
+    pthread_mutex_lock(&g_mu);
+    while (!m->dying) {
+        // a cancelled source's cancel handler first, then the earliest due timer
+        DSource *pick = NULL;
+        uint32_t fn = 0;
+        unsigned gen = 0;
+        double now = mono_s(), soonest = INFINITY;
+        for (int i = 0; i < MAX_SRC; i++) {
+            DSource *s = &g_src[i];
+            if (!s->used || s->q != k->q || s->busy) continue;
+            if (s->retired) {
+                if (!s->cancel_done) { s->cancel_done = 1; pick = s; fn = s->cancel_handler; break; }
+                continue;
+            }
+            if (!s->resumed || !s->armed || !s->handler) continue;
+            if (s->deadline <= now) { if (!pick || s->deadline < pick->deadline) pick = s; }
+            else if (s->deadline < soonest) soonest = s->deadline;
         }
-        s->armed = 0;
-        uint32_t h = s->handler;
-        pthread_mutex_unlock(&s->mu);
-        if (h) deliver(m, c, s, h);
-        pthread_mutex_lock(&s->mu);
-        if (s->period_s > 0 && !s->armed) { s->delay_s = s->period_s; s->armed = 1; }
-        pthread_mutex_unlock(&s->mu);
-        sched_yield();
+        if (!pick) {
+            if (soonest == INFINITY) pthread_cond_wait(&q->cv, &g_mu);
+            else wait_until(&q->cv, soonest);
+            continue;
+        }
+        if (!pick->retired) { fn = pick->handler; pick->armed = 0; gen = pick->gen; }
+        if (pick->retired && !fn) { pick->used = 0; continue; }
+        pick->busy = 1;
+        running = pick;
+        uint32_t a = pick->ctx;
+        pthread_mutex_unlock(&g_mu);
+#ifdef MT_TEST_HOOKS
+        if (getenv("MT_TEST_BREAK") && !strcmp(getenv("MT_TEST_BREAK"), "fault")) x86_fault(c, "test fault");
+#endif
+        mt_call_on(m, c, fn, 1, &a);
+        pthread_mutex_lock(&g_mu);
+        running = NULL;
+        pick->busy = 0;
+        if (pick->retired && pick->cancel_done) pick->used = 0;
+        else if (pick->period_s > 0 && pick->gen == gen && !pick->retired) { pick->deadline = mono_s() + pick->period_s; pick->armed = 1; }
     }
-    // cancellation handler, on the source's queue, once
-    pthread_mutex_lock(&g_pool);
-    uint32_t ch = 0;
-    if (s->retired && !s->cancel_delivered && !m->dying) { s->cancel_delivered = 1; ch = s->cancel_handler; }
-    pthread_mutex_unlock(&g_pool);
-    if (ch && !setjmp(k->t->fault)) deliver(m, c, s, ch);
+    pthread_mutex_unlock(&g_mu);
 out:
-    pthread_mutex_lock(&g_pool);
-    s->thread_live = 0;
-    pthread_mutex_unlock(&g_pool);
     __sync_fetch_and_sub(&m->live, 1);
-    free(k->t);
+    mt_thread_free(k->t);
     free(k);
     return NULL;
 }
@@ -256,44 +288,58 @@ out:
 static void h_dispatch_resume(Mt *m, X86 *c) {
     DSource *s = src_of(m, c, A(c, 0));
     if (!s) return;
-    pthread_mutex_lock(&g_pool);
-    if (s->running || s->thread_live) { pthread_mutex_unlock(&g_pool); return; }
-    s->running = 1;
-    s->thread_live = 1;
-    pthread_mutex_unlock(&g_pool);
-    SrcThread *k = calloc(1, sizeof *k);
+    pthread_mutex_lock(&g_mu);
+    s->resumed = 1;
+    DQueue *q = &g_q[s->q];
+    int start = !q->started;
+    q->started = 1;
+    pthread_cond_broadcast(&q->cv);
+    pthread_mutex_unlock(&g_mu);
+    if (!start) return;
+    QueueThread *k = calloc(1, sizeof *k);
     k->m = m;
-    k->s = s;
+    k->q = s->q;
     k->t = mt_thread_new(m);
+    if (!k->t) {
+        free(k);
+        pthread_mutex_lock(&g_mu);
+        q->started = 0;
+        pthread_mutex_unlock(&g_mu);
+        x86_fault(c, "too many engine threads");
+    }
     __sync_fetch_and_add(&m->live, 1);
     pthread_t th;
     pthread_attr_t at;
     pthread_attr_init(&at);
     pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    pthread_create(&th, &at, source_main, k);
+    pthread_create(&th, &at, queue_main, k);
+    pthread_attr_destroy(&at);
 }
 static void h_dispatch_source_cancel(Mt *m, X86 *c) {
     DSource *s = src_of(m, c, A(c, 0));
     if (!s) return;
-    pthread_mutex_lock(&g_pool);
-    s->retired = 1;
-    pthread_mutex_unlock(&g_pool);
-    pthread_mutex_lock(&s->mu);
-    s->running = 0;
-    s->armed = 0;
-    pthread_cond_broadcast(&s->cv);
-    pthread_mutex_unlock(&s->mu);
+    pthread_mutex_lock(&g_mu);
+    if (!s->retired) {
+        s->retired = 1;
+        s->armed = 0;
+        // never resumed: no queue thread will look at it
+        if (!s->resumed && !s->busy) s->used = 0;
+        pthread_cond_broadcast(&g_q[s->q].cv);
+    }
+    pthread_mutex_unlock(&g_mu);
 }
 
 void mt_gcd_wake(void) {
-    for (int i = 0; i < MAX_SRC; i++)
-        if (g_src[i].used) { pthread_mutex_lock(&g_src[i].mu); pthread_cond_broadcast(&g_src[i].cv); pthread_mutex_unlock(&g_src[i].mu); }
+    pthread_mutex_lock(&g_mu);
+    for (int i = 0; i < MAX_Q; i++) if (g_q[i].used) pthread_cond_broadcast(&g_q[i].cv);
+    pthread_mutex_unlock(&g_mu);
 }
 void mt_gcd_reset(void) {
-    for (int i = 0; i < MAX_SRC; i++) if (g_src[i].used) { pthread_mutex_destroy(&g_src[i].mu); pthread_cond_destroy(&g_src[i].cv); }
-    for (int i = 0; i < MAX_Q; i++) if (g_q[i].used) pthread_mutex_destroy(&g_q[i].mu);
+    for (int i = 0; i < MAX_Q; i++) if (g_q[i].used) pthread_cond_destroy(&g_q[i].cv);
     memset(g_src, 0, sizeof g_src);
     memset(g_q, 0, sizeof g_q);
+    memset(g_qguest, 0, sizeof g_qguest);
+    g_default_q = -1;
 }
 
 const MtHleEntry mt_hle_gcd[] = {

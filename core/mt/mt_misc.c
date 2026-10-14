@@ -205,34 +205,46 @@ static void h_regfree(Mt *m, X86 *c) {
 }
 
 // ---------------------------------------------------------------- SQLite
-// Handles are small integers in guest variables.
+// Handles are small integers in guest variables, tagged with what they hold
+// so a stale one can't pass a statement where a connection belongs. The
+// engine's threads share a connection, as Mac OS X's serialized SQLite
+// allowed, so connections open with FULLMUTEX.
 
 #define MAX_SQL 256
 static void *g_sql[MAX_SQL];
+static char g_sql_db[MAX_SQL];  // 1: connection, 0: statement
 static pthread_mutex_t g_sql_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint32_t sql_put(void *p) {
+static uint32_t sql_put(void *p, int db) {
     pthread_mutex_lock(&g_sql_mu);
     uint32_t i;
     for (i = 1; i < MAX_SQL && g_sql[i]; i++) {}
-    if (i < MAX_SQL) g_sql[i] = p;
+    if (i < MAX_SQL) { g_sql[i] = p; g_sql_db[i] = (char)db; }
     pthread_mutex_unlock(&g_sql_mu);
     return i < MAX_SQL ? i : 0;
 }
-static void *sql_get(uint32_t h) { return h && h < MAX_SQL ? g_sql[h] : NULL; }
+static void *sql_take(uint32_t h, int db, int remove) {
+    if (!h || h >= MAX_SQL) return NULL;
+    pthread_mutex_lock(&g_sql_mu);
+    void *p = g_sql_db[h] == db ? g_sql[h] : NULL;
+    if (p && remove) g_sql[h] = NULL;
+    pthread_mutex_unlock(&g_sql_mu);
+    return p;
+}
+static void *sql_get(uint32_t h) { return sql_take(h, 0, 0); }  // statements
 
 static void h_sqlite3_open(Mt *m, X86 *c) {
     sqlite3 *db = NULL;
-    int rc = sqlite3_open_v2(mt_str(m, A(c, 0)), &db, SQLITE_OPEN_READONLY, NULL);
-    wr32(c, A(c, 1), db ? sql_put(db) : 0);
+    int rc = sqlite3_open_v2(mt_str(m, A(c, 0)), &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, NULL);
+    wr32(c, A(c, 1), db ? sql_put(db, 1) : 0);
     R(c, (uint32_t)rc);
 }
-static void h_sqlite3_close(Mt *m, X86 *c) { (void)m; uint32_t h = A(c, 0); sqlite3 *db = sql_get(h); if (db) { sqlite3_close(db); g_sql[h] = NULL; } R(c, 0); }
+static void h_sqlite3_close(Mt *m, X86 *c) { (void)m; sqlite3 *db = sql_take(A(c, 0), 1, 1); if (db) sqlite3_close(db); R(c, 0); }
 static void h_sqlite3_prepare(Mt *m, X86 *c) {
-    sqlite3 *db = sql_get(A(c, 0));
+    sqlite3 *db = sql_take(A(c, 0), 1, 0);
     sqlite3_stmt *st = NULL;
     const char *sql = mt_str(m, A(c, 1)), *tail = NULL;
     int rc = db ? sqlite3_prepare_v2(db, sql, (int)A(c, 2), &st, &tail) : SQLITE_MISUSE;
-    wr32(c, A(c, 3), st ? sql_put(st) : 0);
+    wr32(c, A(c, 3), st ? sql_put(st, 0) : 0);
     if (A(c, 4)) wr32(c, A(c, 4), tail ? A(c, 1) + (uint32_t)(tail - sql) : 0);
     R(c, (uint32_t)rc);
 }
@@ -244,7 +256,7 @@ static void h_sqlite3_step(Mt *m, X86 *c) { (void)m; sqlite3_stmt *st = sql_get(
 static void h_sqlite3_column_int(Mt *m, X86 *c) { (void)m; sqlite3_stmt *st = sql_get(A(c, 0)); R(c, st ? (uint32_t)sqlite3_column_int(st, (int)A(c, 1)) : 0); }
 int64_t mt_sqlite_col64(uint32_t h, int col) { sqlite3_stmt *st = sql_get(h); return st ? sqlite3_column_int64(st, col) : 0; }
 static void h_sqlite3_reset(Mt *m, X86 *c) { (void)m; sqlite3_stmt *st = sql_get(A(c, 0)); R(c, st ? (uint32_t)sqlite3_reset(st) : SQLITE_MISUSE); }
-static void h_sqlite3_finalize(Mt *m, X86 *c) { (void)m; uint32_t h = A(c, 0); sqlite3_stmt *st = sql_get(h); if (st) { sqlite3_finalize(st); g_sql[h] = NULL; } R(c, 0); }
+static void h_sqlite3_finalize(Mt *m, X86 *c) { (void)m; sqlite3_stmt *st = sql_take(A(c, 0), 0, 1); if (st) sqlite3_finalize(st); R(c, 0); }
 
 // ---------------------------------------------------------------- C++ exceptions
 // The engine is not expected to throw; if it does, that is the error.
