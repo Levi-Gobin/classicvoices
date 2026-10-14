@@ -329,6 +329,13 @@ the same Vocalizer 5.2.3 family as iOS, so the iOS ARM engines run them.
   1–100 values (param and inline `ESC\pitch=N\`) for those engines.
 - Engine per key (vxstream.c `engine_build`): mac107/mac108 → ios6;
   mac109/*Compact → ios7; other mac109 (premium) → ios10.
+- Lion Karen/Lee compacts (en-AU, FE 5.2.3.10238 cfg2) mispronounce on
+  purpose: words found in `sysdct_ena_cfg2` lose `A`/`A+` (car, park, hot)
+  and keep a final `R+` (here, door). Letter-to-sound, phonmap and the voice
+  are fine (`ESC\toi=lhp\` input speaks correctly); real Lion did the same,
+  so it stays. Lion Lee's select/synth files are identical to Mountain Lion
+  Lee's; Lion Karen's select file is iOS 5 Karen's (ML Karen = iOS 6 Karen).
+  The voice page says so (VoiceDetail.note).
 - Korean/Chinese Mavericks compacts reject an input that is only "(" or ")"
   (pp/sent_parser 0x8d402000); the utterance is silent, nothing crashes.
 - Guest address space is 1 GB (MAP region 0x04000000–0x40000000) so the
