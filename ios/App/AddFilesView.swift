@@ -16,7 +16,7 @@ struct AddFilesView: View {
     var body: some View {
         Page {
             PageSection(nil) {
-                Text("MacinTalk voices (Fred, Victoria, Alex and the rest) run on Apple\u{2019}s own MacinTalk engine from Mac OS X, which Classic Voices can\u{2019}t download for you. Add it from a Mac OS X 10.4 to 10.7 install you have: choose a speech data folder, a copy of the disk\u{2019}s System/Library/Speech folder with the files listed below, or single .SpeechVoice voices.")
+                Text("MacinTalk voices (Fred, Victoria, Alex and the rest) run on Apple\u{2019}s own MacinTalk engine from Mac OS X, which Classic Voices can\u{2019}t download for you. Add it from a Mac OS X 10.4 to 10.6 install disc you have: choose its disk image (.dmg or .iso) or the disc itself, a speech data folder, a copy of a Mac\u{2019}s System/Library/Speech folder with the files listed below, or single .SpeechVoice voices such as Alex.")
                     .font(.callout)
                 OpenButton(title: working ? "Adding\u{2026}" : "Choose Files or Folders\u{2026}", opens: false) { picking = true }
                     .disabled(working)
@@ -72,7 +72,9 @@ struct AddFilesView: View {
             let text: String
             var ask = false
             do {
-                let o = try SpeechDataImport.install(found, gen: gen, from: urls)
+                let o = try SpeechDataImport.install(found, gen: gen, from: urls) { step in
+                    Task { @MainActor in result = step }
+                }
                 if o.needsRelease {
                     ask = true
                     text = ""

@@ -102,10 +102,10 @@ rest, not Alex) from the Lion installer Apple offers as a free download.
 
 Apple doesn't host the older Mac OS X releases, so Tiger's, Leopard's and Snow
 Leopard's MacinTalk voices, and Alex, come from installation media you already
-have. In the app's macOS tab, choose "Add from Files" and pick a folder copied
-from that disk (its System/Library/Speech folder with the files the page
-lists, a speech data folder like panthera-speech's, or single .SpeechVoice
-voices). The page says which files each release still needs. Classic Voices
+have. In the app's macOS tab, choose "Add from Files" and pick the install disc's
+image (.dmg or .iso; it's read in place, on iPhone too), the disc itself, a
+speech data folder like panthera-speech's, or single .SpeechVoice voices. The
+page says which files each release still needs. Classic Voices
 was tested with these:
 
 - Mac OS X 10.4.1 Tiger (8B1025). Later Tiger discs carry MacinTalk 3.4, which

@@ -20,7 +20,23 @@ enum SpeechDataImport {
         var libraries: [URL] = []
         var voices: [URL] = []      // MacinTalk .SpeechVoice folders
         var otherVoices: [String] = []  // Nuance .SpeechVoice folders, which come from Apple's servers instead
-        var isEmpty: Bool { engine == nil && dictionary == nil && libraries.isEmpty && voices.isEmpty }
+        var packages: [URL] = []    // an install disc's packages, read when installing
+        var diskImages: [URL] = []  // install discs as .dmg/.iso files, read when installing
+        var dictionaryOverlay: URL? // the dictionary's programs from those packages
+        var isEmpty: Bool { engine == nil && dictionary == nil && libraries.isEmpty && voices.isEmpty && packages.isEmpty && diskImages.isEmpty }
+
+        /// Files from packages win over loose ones: a disc's own loose
+        /// programs can be 64-bit only.
+        mutating func add(fromPackages p: Found) {
+            if let e = p.engine { engine = e }
+            if dictionary == nil { dictionary = p.dictionary } else { dictionaryOverlay = p.dictionary }
+            for lib in p.libraries {
+                libraries.removeAll { $0.lastPathComponent == lib.lastPathComponent }
+                libraries.append(lib)
+            }
+            for v in p.voices where !voices.contains(where: { $0.lastPathComponent == v.lastPathComponent }) { voices.append(v) }
+            otherVoices += p.otherVoices.filter { !otherVoices.contains($0) }
+        }
     }
 
     struct Outcome {
@@ -56,10 +72,10 @@ enum SpeechDataImport {
             let access = url.startAccessingSecurityScopedResource()
             defer { if access { url.stopAccessingSecurityScopedResource() } }
             look(at: url, &found)
-            guard let it = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey],
-                                         options: [.skipsHiddenFiles]) else { continue }
+            // Install discs mark System and usr hidden, so only dot-files are skipped.
+            guard let it = fm.enumerator(at: url, includingPropertiesForKeys: [.isDirectoryKey]) else { continue }
             for case let item as URL in it {
-                if it.level > 9 { it.skipDescendants(); continue }
+                if it.level > 9 || item.lastPathComponent.hasPrefix(".") { it.skipDescendants(); continue }
                 // Only for folders: after a file it would skip the file's siblings.
                 let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
                 if look(at: item, &found), isDir { it.skipDescendants() }
@@ -97,6 +113,14 @@ enum SpeechDataImport {
             found.libraries.append(item)
             return true
         }
+        if [".dmg", ".iso", ".cdr", ".toast"].contains(where: { name.lowercased().hasSuffix($0) }) {
+            found.diskImages.append(item)
+            return true
+        }
+        if name.hasSuffix(".pkg") {
+            if InstallerPackage.names.contains(name) { found.packages.append(item) }
+            return true
+        }
         if name.hasSuffix(".SpeechVoice") {
             if fm.fileExists(atPath: item.appendingPathComponent("Contents/Resources/VoiceDescription").path) {
                 if !found.voices.contains(where: { $0.lastPathComponent == name }) { found.voices.append(item) }
@@ -106,9 +130,9 @@ enum SpeechDataImport {
             return true
         }
         // Bundles and big folders that never hold speech files.
-        let skip: Set<String> = ["Frameworks", "PrivateFrameworks", "Fonts", "Caches", "Extensions",
+        let skip: Set<String> = ["Frameworks", "Fonts", "Caches", "Extensions",
                                  "Documentation", "Developer", "Applications", "Users", "private", "Library.noindex"]
-        return skip.contains(name) || name.hasSuffix(".app") || name.hasSuffix(".bundle") && name != "Speech"
+        return skip.contains(name) || [".app", ".bundle", ".framework", ".kext", ".plugin", ".lproj"].contains { name.hasSuffix($0) }
     }
 
     /// Which release a MacinTalk binary is, from the processors in its fat header:
@@ -143,8 +167,34 @@ enum SpeechDataImport {
 
     /// Copies what was found. `gen` decides the release when the files can't
     /// (voices picked on their own).
-    static func install(_ found: Found, gen chosen: String? = nil, from urls: [URL]) throws -> Outcome {
+    static func install(_ picked: Found, gen chosen: String? = nil, from urls: [URL],
+                        status: ((String) -> Void)? = nil) throws -> Outcome {
         var out = Outcome()
+        var found = picked
+        let fm = FileManager.default
+        let access = urls.map { $0.startAccessingSecurityScopedResource() }
+        defer { for (u, a) in zip(urls, access) where a { u.stopAccessingSecurityScopedResource() } }
+
+        // An install disc: read its packages into a staging folder, and use
+        // what they hold.
+        var staging: URL?
+        defer { if let staging { try? fm.removeItem(at: staging) } }
+        if !found.packages.isEmpty || !found.diskImages.isEmpty, let root = VoiceCatalog.enhancedRoot {
+            let s = root.appendingPathComponent(".staging-import")
+            try? fm.removeItem(at: s)
+            try fm.createDirectory(at: s, withIntermediateDirectories: true)
+            staging = s
+            for p in found.packages {
+                status?("Reading \(p.lastPathComponent)\u{2026}")
+                try InstallerPackage.extract(p, into: s)
+            }
+            for image in found.diskImages {
+                status?("Opening \(image.lastPathComponent)\u{2026}")
+                try readDisc(image, into: s, status: status)
+            }
+            found.add(fromPackages: scan([s]))
+        }
+
         let engineGen = found.engine.flatMap(era(ofEngine:))
         if found.engine != nil && engineGen == nil {
             throw ImportError("That MacinTalk is for PowerPC Macs only. Use the files from an Intel Mac\u{2019}s install instead.")
@@ -167,9 +217,6 @@ enum SpeechDataImport {
         guard let base = VoiceCatalog.enhancedRoot?.appendingPathComponent(gen) else {
             throw ImportError("The app can\u{2019}t reach its shared storage (App Group), so it can\u{2019}t keep voices. The Diagnostics page says more.")
         }
-        let fm = FileManager.default
-        let access = urls.map { $0.startAccessingSecurityScopedResource() }
-        defer { for (u, a) in zip(urls, access) where a { u.stopAccessingSecurityScopedResource() } }
         try fm.createDirectory(at: base, withIntermediateDirectories: true)
 
         func copy(_ src: URL, _ dst: URL) throws {
@@ -182,7 +229,14 @@ enum SpeechDataImport {
             out.added.append("the \(releaseName(gen)) MacinTalk engine")
         }
         if let d = found.dictionary, engineGen != nil || !VoiceCatalog.hasMacinTalkEngine(gen) {
-            try copy(d, base.appendingPathComponent("SpeechDictionary"))
+            let dst = base.appendingPathComponent("SpeechDictionary")
+            try copy(d, dst)
+            if let o = found.dictionaryOverlay, let files = fm.enumerator(at: o, includingPropertiesForKeys: nil) {
+                for case let f as URL in files where f.path.hasPrefix(o.path + "/") {
+                    guard (try? f.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+                    try copy(f, dst.appendingPathComponent(String(f.path.dropFirst(o.path.count + 1))))
+                }
+            }
             out.added.append("its pronunciation dictionary")
         }
         for lib in found.libraries where requiredLibraries(gen).contains(lib.lastPathComponent) {
@@ -199,6 +253,35 @@ enum SpeechDataImport {
         out.missing = missing(gen)
         if out.missing.isEmpty { out.test = test(gen, voices: found.voices) }
         return out
+    }
+
+    /// Reads the speech files out of an install disc image's packages.
+    private static func readDisc(_ image: URL, into tree: URL, status: ((String) -> Void)?) throws {
+        let disk = try DiskImage(image)
+        var any = false
+        for base in try disk.hfsVolumes() {
+            let volume = try HFSVolume(disk, at: base)
+            let packages = try volume.files { path in
+                let parts = path.split(separator: "/")
+                guard let last = parts.last else { return false }
+                if InstallerPackage.names.contains(String(last)) { return true }  // flat package
+                return path.hasSuffix("/Contents/Archive.pax.gz") && parts.count >= 3
+                    && InstallerPackage.names.contains(String(parts[parts.count - 3]))  // bundle package
+            }
+            for f in packages {
+                let archive = f.path.hasSuffix("/Contents/Archive.pax.gz")
+                let name = archive ? String(f.path.split(separator: "/").dropLast(2).last ?? "") : (f.path as NSString).lastPathComponent
+                status?("Reading \(name) from \(image.lastPathComponent)\u{2026}")
+                try InstallerPackage.extract(volume.reader(f), size: f.fork.size, archive: archive, name: name, into: tree)
+                any = true
+            }
+            if !any, try !volume.files(where: { $0.hasSuffix("InstallESD.dmg") || $0.hasSuffix("InstallMacOSX.pkg") }).isEmpty {
+                throw ImportError("This is an installer for OS X 10.7 or later. Its MacinTalk voices are Lion\u{2019}s, which already come with Classic Voices when it\u{2019}s built on GitHub.")
+            }
+        }
+        if !any {
+            throw ImportError("\(image.lastPathComponent) isn\u{2019}t a Mac OS X 10.4 to 10.6 install disc Classic Voices can read: no installer packages were found on it.")
+        }
     }
 
     /// What a release still needs before it can speak, said so someone can find it.
