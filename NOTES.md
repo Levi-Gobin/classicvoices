@@ -329,6 +329,12 @@ the same Vocalizer 5.2.3 family as iOS, so the iOS ARM engines run them.
   1–100 values (param and inline `ESC\pitch=N\`) for those engines.
 - Engine per key (vxstream.c `engine_build`): mac107/mac108 → ios6;
   mac109/*Compact → ios7; other mac109 (premium) → ios10.
+- Guest heap (vxengine.c, 40 MB): the iOS 7/10 engines allocate
+  phrase-sized buffers, so a large-block free list that only reused exact
+  sizes filled the heap after a few hundred varied phrases (live data stays
+  ~0.6 MB); from then on every ProcessText2Speech returned 0x80000011 and the
+  voice was silent until VoiceOver restarted. Large blocks are now best fit,
+  split, and merged with free neighbours (plateaus ~9 MB; output identical).
 - Lion Karen/Lee compacts (en-AU, FE 5.2.3.10238 cfg2) mispronounce on
   purpose: words found in `sysdct_ena_cfg2` lose `A`/`A+` (car, park, hot)
   and keep a final `R+` (here, door). Letter-to-sound, phonmap and the voice

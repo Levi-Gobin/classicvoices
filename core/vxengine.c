@@ -85,7 +85,7 @@ struct Vx {
     // heap
     uint32_t heap_next;
     uint32_t free_small[HEAP_BUCKETS + 1];
-    uint32_t free_large;  // singly linked, first fit
+    uint32_t free_large;  // address-ordered, best fit, merged on free
 
     // files
     FILE *files[MAX_FILES];
@@ -139,16 +139,28 @@ static uint32_t heap_alloc(Vx *vx, uint32_t n) {
         uint32_t *head = &vx->free_small[n / 16];
         if (*head) { a = *head; *head = g32(&c->k, a); }
     } else {
-        uint32_t prev = 0, cur = vx->free_large;
+        // best fit; a big enough remainder goes back on the list
+        uint32_t prev = 0, cur = vx->free_large, best = 0, best_prev = 0, best_n = 0;
         while (cur) {
-            uint32_t next = g32(&c->k, cur);
-            if (g32(&c->k, cur - 8) == n) {
-                if (prev) s32(&c->k, prev, next); else vx->free_large = next;
-                a = cur;
-                break;
+            uint32_t cn = g32(&c->k, cur - 8);
+            if (cn >= n && (!best || cn < best_n)) {
+                best = cur, best_prev = prev, best_n = cn;
+                if (cn == n) break;
             }
             prev = cur;
-            cur = next;
+            cur = g32(&c->k, cur);
+        }
+        if (best) {
+            uint32_t next = g32(&c->k, best);
+            if (best_n - n > 16 + HEAP_BUCKETS * 16) {
+                uint32_t r = best + n + 16;
+                s32(&c->k, r - 8, best_n - n - 16);
+                s32(&c->k, r, next);
+                next = r;
+                s32(&c->k, best - 8, n);
+            }
+            if (best_prev) s32(&c->k, best_prev, next); else vx->free_large = next;
+            a = best;
         }
     }
     if (!a) {
@@ -168,9 +180,23 @@ static void heap_free(Vx *vx, uint32_t a) {
     if (n <= HEAP_BUCKETS * 16) {
         s32(&c->k, a, vx->free_small[n / 16]);
         vx->free_small[n / 16] = a;
+        return;
+    }
+    // The large list is kept in address order so neighbours merge; without
+    // that, phrase-sized buffers (iOS 7/10) fragment the heap until it's full.
+    uint32_t prev = 0, cur = vx->free_large;
+    while (cur && cur < a) { prev = cur; cur = g32(&c->k, cur); }
+    if (cur && a + n + 16 == cur) {
+        n += 16 + g32(&c->k, cur - 8);
+        cur = g32(&c->k, cur);
+    }
+    if (prev && prev + g32(&c->k, prev - 8) + 16 == a) {
+        s32(&c->k, prev - 8, g32(&c->k, prev - 8) + 16 + n);
+        s32(&c->k, prev, cur);
     } else {
-        s32(&c->k, a, vx->free_large);
-        vx->free_large = a;
+        s32(&c->k, a - 8, n);
+        s32(&c->k, a, cur);
+        if (prev) s32(&c->k, prev, a); else vx->free_large = a;
     }
 }
 
