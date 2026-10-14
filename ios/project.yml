@@ -55,6 +55,8 @@ targets:
       - sdk: Accelerate.framework
       - sdk: AudioToolbox.framework
       - sdk: libsqlite3.tbd
+      - sdk: libbz2.tbd
+      - sdk: libz.tbd
   Synth:
     type: app-extension
     platform: iOS
@@ -158,6 +160,8 @@ targets:
       - sdk: Accelerate.framework
       - sdk: AudioToolbox.framework
       - sdk: libsqlite3.tbd
+      - sdk: libbz2.tbd
+      - sdk: libz.tbd
   SynthMac:
     type: app-extension
     platform: macOS

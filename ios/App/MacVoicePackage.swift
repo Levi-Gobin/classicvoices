@@ -28,7 +28,15 @@ enum MacVoicePackage {
                         progress: ((Double) -> Void)? = nil) throws -> [String] {
         let fh = try FileHandle(forReadingFrom: pkg)
         defer { try? fh.close() }
+        let length = try seekToPayload(fh)
+        let sink = CpioSink(dest: dest, keep: keep)
+        try Gunzip.stream(from: fh, count: length, into: sink.feed, progress: progress)
+        guard sink.finished else { throw PackageError.corrupt("payload ended early") }
+        return sink.written
+    }
 
+    /// Positions `fh` at the start of a xar package's Payload; returns its length.
+    static func seekToPayload(_ fh: ByteReader) throws -> UInt64 {
         // xar header (big-endian): magic, header size, version, TOC lengths
         let head = try fh.read(upToCount: 28) ?? Data()
         guard head.count == 28, head.prefix(4) == Data("xar!".utf8) else { throw PackageError.notXar }
@@ -41,13 +49,8 @@ enum MacVoicePackage {
         let toc = TOCParser(data: tocData)
         guard let payload = toc.payload else { throw PackageError.noPayload }
         guard payload.encoding.hasSuffix("octet-stream") else { throw PackageError.corrupt("payload encoding \(payload.encoding)") }
-
-        let heap = headerSize + tocCompressed
-        try fh.seek(toOffset: heap + payload.offset)
-        let sink = CpioSink(dest: dest, keep: keep)
-        try Gunzip.stream(from: fh, count: payload.length, into: sink.feed, progress: progress)
-        guard sink.finished else { throw PackageError.corrupt("payload ended early") }
-        return sink.written
+        try fh.seek(toOffset: headerSize + tocCompressed + payload.offset)
+        return payload.length
     }
 
     // MARK: - xar TOC
