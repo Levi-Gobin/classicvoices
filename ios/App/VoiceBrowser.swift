@@ -572,6 +572,8 @@ struct VoiceDetail: View {
                     LabeledContent("Version", value: "\(item.version.spokenName) (\(item.version.number))")
                     LabeledContent("Language", value: VoiceItem.languageName(item.language))
                     LabeledContent("Type", value: item.kindName)
+                } footer: {
+                    if let note = Self.note(entry.key) { Text(note) }
                 }
                 Section {
                     TextField("Text to speak", text: $text, axis: .vertical)
@@ -629,6 +631,19 @@ struct VoiceDetail: View {
             }
         } else {
             ContentUnavailableView("This voice isn\u{2019}t on this device", systemImage: "speaker.slash")
+        }
+    }
+
+    /// Voices whose quirks are original, kept as they shipped.
+    static func note(_ key: String) -> String? {
+        let lion = "Lion\u{2019}s Australian dictionary is broken: it drops the vowel in words like car, park and hot, and leaves an American r on words like here and door. Lion spoke this way too, so it\u{2019}s kept."
+        switch key {
+        case "mac107/LeeCompact":
+            return lion + " Mountain Lion Lee has byte-for-byte identical recordings with a working dictionary."
+        case "mac107/KarenCompact":
+            return lion + " iOS 5 Karen has byte-for-byte identical recordings with a working dictionary. Mountain Lion Karen is a newer recording, the same one as iOS 6."
+        default:
+            return nil
         }
     }
 }
