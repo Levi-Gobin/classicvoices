@@ -458,6 +458,14 @@ static void speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int in
 // ---- MacinTalk (Mac OS X 10.4-10.6): keys "mt104/Fred", "mt105/Alex" ...
 static int is_mt_key(const char *key) { return key[0] == 'm' && key[1] == 't' && key[2] >= '0' && key[2] <= '9'; }
 
+// A MacinTalk engine comes with the app (<root>/<gen>/MacinTalk) or was
+// added from the user's own Mac OS X files (<asset_root>/<gen>/MacinTalk).
+static void mt_engine_dir(const char *root, const char *asset_root, const char *gen, char *out, size_t cap) {
+    snprintf(out, cap, "%s/%s/MacinTalk", root, gen);
+    if (access(out, R_OK) != 0 && asset_root) snprintf(out, cap, "%s/%s", asset_root, gen);
+    else snprintf(out, cap, "%s/%s", root, gen);
+}
+
 static MtEngine *mt_for(VxStream *s, const char *key) {
     const char *slash = strchr(key, '/');
     if (!slash) return NULL;
@@ -471,7 +479,7 @@ static MtEngine *mt_for(VxStream *s, const char *key) {
     for (int i = 0; i < MAX_ENGINES; i++)
         if (s->engines[i].vx) { vx_close(s->engines[i].vx); s->engines[i].vx = NULL; s->engines[i].key[0] = 0; }
     char root[1100];
-    snprintf(root, sizeof root, "%s/%s", s->root, gen);
+    mt_engine_dir(s->root, s->asset_root, gen, root, sizeof root);
     s->mt = mte_open(root, s->err, sizeof s->err);
     if (s->mt) {
         snprintf(s->mt_gen, sizeof s->mt_gen, "%s", gen);
@@ -687,8 +695,9 @@ int vxs_benchmark(const char *root, const char *asset_root, const char *key, con
     char err[256];
     double t = now_ms();
     if (is_mt_key(key)) {
-        char dir[1100];
-        snprintf(dir, sizeof dir, "%s/%.*s", root, (int)(strchr(key, '/') - key), key);
+        char dir[1100], gen[16];
+        snprintf(gen, sizeof gen, "%.*s", (int)(strchr(key, '/') - key), key);
+        mt_engine_dir(root, asset_root, gen, dir, sizeof dir);
         MtEngine *mt = mte_open(dir, err, sizeof err);
         if (!mt) { fprintf(stderr, "%s\n", err); return -1; }
         char extra[1100];

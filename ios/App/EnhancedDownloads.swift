@@ -29,12 +29,10 @@ final class EnhancedDownloads {
     private(set) var installed: Set<String> = []
     /// Called on the main actor when a voice was installed or removed.
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
 
     /// Stops a download in progress; nothing is left behind.
     func cancel(_ id: String) {
-        tasks[id]?.cancel()
-        tasks[id] = nil
+        Downloader.shared.cancel("enhanced:" + id)
         progress[id] = nil
     }
 
@@ -44,7 +42,10 @@ final class EnhancedDownloads {
         if progress[id] != nil && progress[id] != v { progress[id] = v }
     }
 
-    init() { refresh() }
+    init() {
+        refresh()
+        Downloader.shared.register(self, prefix: "enhanced")
+    }
 
     func refresh() {
         installed = Set(Self.catalog.filter { isInstalled($0) }.map(\.id))
@@ -64,14 +65,26 @@ final class EnhancedDownloads {
         guard progress[a.id] == nil, let url = URL(string: a.url) else { return }
         progress[a.id] = 0
         errors[a.id] = nil
-        tasks[a.id] = Task.detached(priority: .userInitiated) {
+        Downloader.shared.start(url, id: "enhanced:" + a.id)
+    }
+
+    /// The download is done: check it, unpack it and tell the system.
+    private func finished(_ a: Asset, _ result: Result<URL, Error>) {
+        guard case .success(let zip) = result else {
+            progress[a.id] = nil
+            if case .failure(let error) = result, !(error is CancellationError), (error as? URLError)?.code != .cancelled {
+                errors[a.id] = error.localizedDescription
+            }
+            return
+        }
+        if progress[a.id] == nil { progress[a.id] = 0.9 }
+        report(a.id, 0.9)
+        Task.detached(priority: .userInitiated) {
+            defer { try? FileManager.default.removeItem(at: zip) }
             do {
-                let zip = try await Self.fetch(url) { p in Task { @MainActor in self.report(a.id, p * 0.9) } }
-                defer { try? FileManager.default.removeItem(at: zip) }
                 try Self.verify(zip, sha1: a.sha1)
                 try Self.install(zip, asset: a)
                 await MainActor.run {
-                    self.tasks[a.id] = nil
                     self.progress[a.id] = nil
                     self.refresh()
                     self.onChange()
@@ -79,11 +92,8 @@ final class EnhancedDownloads {
                 }
             } catch {
                 await MainActor.run {
-                    self.tasks[a.id] = nil
                     self.progress[a.id] = nil
-                    if !Task.isCancelled && (error as? URLError)?.code != .cancelled && !(error is CancellationError) {
-                        self.errors[a.id] = error.localizedDescription
-                    }
+                    self.errors[a.id] = error.localizedDescription
                 }
             }
         }
@@ -99,26 +109,6 @@ final class EnhancedDownloads {
     }
 
     // MARK: - steps
-
-    private final class ProgressDelegate: NSObject, URLSessionDownloadDelegate {
-        let report: @Sendable (Double) -> Void
-        init(_ report: @escaping @Sendable (Double) -> Void) { self.report = report }
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64,
-                        totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-            if totalBytesExpectedToWrite > 0 { report(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)) }
-        }
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
-    }
-
-    nonisolated private static func fetch(_ url: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
-        let (file, response) = try await URLSession.shared.download(from: url, delegate: ProgressDelegate(progress))
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw NSError(domain: "ClassicVoices", code: 3, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
-        }
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".zip")
-        try FileManager.default.moveItem(at: file, to: tmp)
-        return tmp
-    }
 
     nonisolated private static func verify(_ zip: URL, sha1: String) throws {
         let fh = try FileHandle(forReadingFrom: zip)
@@ -144,5 +134,29 @@ final class EnhancedDownloads {
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: payload, to: dest)
         try? FileManager.default.removeItem(at: staging)
+    }
+}
+
+extension EnhancedDownloads: DownloadClient {
+    nonisolated func downloadProgress(_ id: String, written: Int64, expected: Int64) {
+        Task { @MainActor in
+            guard let a = Self.catalog.first(where: { $0.id == id }) else { return }
+            let total = expected > 0 ? expected : Int64(a.size)
+            self.report(id, Double(written) / Double(max(total, 1)) * 0.9)
+        }
+    }
+
+    nonisolated func downloadFinished(_ id: String, _ result: Result<URL, Error>) {
+        Task { @MainActor in
+            guard let a = Self.catalog.first(where: { $0.id == id }) else {
+                if case .success(let f) = result { try? FileManager.default.removeItem(at: f) }
+                return
+            }
+            self.finished(a, result)
+        }
+    }
+
+    nonisolated func downloadRestored(_ id: String) {
+        Task { @MainActor in if self.progress[id] == nil { self.progress[id] = 0 } }
     }
 }

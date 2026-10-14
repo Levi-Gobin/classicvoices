@@ -46,6 +46,9 @@ jobs:
           PYTHON: .venv/bin/python
         run: tools/fetch_firmware.sh
 
+      - name: Fetch Lion's MacinTalk from Apple
+        run: tools/fetch_macintalk.sh
+
       - name: Generate the fast engines
         env:
           PYTHON: .venv/bin/python
@@ -95,6 +98,9 @@ jobs:
         env:
           PYTHON: .venv/bin/python
         run: tools/fetch_firmware.sh
+
+      - name: Fetch Lion's MacinTalk from Apple
+        run: tools/fetch_macintalk.sh
 
       - name: Generate the fast engines
         env:
