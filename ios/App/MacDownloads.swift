@@ -41,12 +41,10 @@ final class MacDownloads {
     var errors: [String: String] = [:]
     private(set) var installed: Set<String> = []
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
 
     /// Stops a download in progress; nothing is left behind.
     func cancel(_ id: String) {
-        tasks[id]?.cancel()
-        tasks[id] = nil
+        Downloader.shared.cancel("mac:" + id)
         progress[id] = nil
     }
 
@@ -62,7 +60,10 @@ final class MacDownloads {
         return list.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
 
-    init() { refresh() }
+    init() {
+        refresh()
+        Downloader.shared.register(self, prefix: "mac")
+    }
 
     nonisolated private static func markerDirectory(_ era: String) -> URL? {
         VoiceCatalog.enhancedRoot?.appendingPathComponent(era).appendingPathComponent(".installed")
@@ -80,13 +81,25 @@ final class MacDownloads {
         guard progress[v.id] == nil, let url = URL(string: v.url) else { return }
         progress[v.id] = 0
         errors[v.id] = nil
-        tasks[v.id] = Task.detached(priority: .userInitiated) {
+        Downloader.shared.start(url, id: "mac:" + v.id)
+    }
+
+    /// The package is here: unpack its voices into the App Group.
+    private func finished(_ v: Voice, _ result: Result<URL, Error>) {
+        guard case .success(let pkg) = result else {
+            progress[v.id] = nil
+            if case .failure(let error) = result, !(error is CancellationError), (error as? URLError)?.code != .cancelled {
+                errors[v.id] = error.localizedDescription
+            }
+            return
+        }
+        if progress[v.id] == nil { progress[v.id] = 0.85 }
+        report(v.id, 0.85)
+        Task.detached(priority: .userInitiated) {
+            defer { try? FileManager.default.removeItem(at: pkg) }
             do {
-                let pkg = try await Self.fetch(url) { p in Task { @MainActor in self.report(v.id, p * 0.85) } }
-                defer { try? FileManager.default.removeItem(at: pkg) }
                 try Self.install(pkg, voice: v) { p in Task { @MainActor in self.report(v.id, 0.85 + p * 0.15) } }
                 await MainActor.run {
-                    self.tasks[v.id] = nil
                     self.progress[v.id] = nil
                     self.refresh()
                     self.onChange()
@@ -94,11 +107,8 @@ final class MacDownloads {
                 }
             } catch {
                 await MainActor.run {
-                    self.tasks[v.id] = nil
                     self.progress[v.id] = nil
-                    if !Task.isCancelled && (error as? URLError)?.code != .cancelled && !(error is CancellationError) {
-                        self.errors[v.id] = error.localizedDescription
-                    }
+                    self.errors[v.id] = error.localizedDescription
                 }
             }
         }
@@ -119,26 +129,6 @@ final class MacDownloads {
     }
 
     // MARK: - steps
-
-    private final class ProgressDelegate: NSObject, URLSessionDownloadDelegate {
-        let report: @Sendable (Double) -> Void
-        init(_ report: @escaping @Sendable (Double) -> Void) { self.report = report }
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData _: Int64,
-                        totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-            if totalBytesExpectedToWrite > 0 { report(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)) }
-        }
-        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
-    }
-
-    nonisolated private static func fetch(_ url: URL, progress: @escaping @Sendable (Double) -> Void) async throws -> URL {
-        let (file, response) = try await URLSession.shared.download(from: url, delegate: ProgressDelegate(progress))
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw NSError(domain: "ClassicVoices", code: 3, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])
-        }
-        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".pkg")
-        try FileManager.default.moveItem(at: file, to: tmp)
-        return tmp
-    }
 
     nonisolated private static func install(_ pkg: URL, voice v: Voice, progress: @escaping (Double) -> Void) throws {
         guard let eraDir = VoiceCatalog.enhancedRoot?.appendingPathComponent(v.era),
@@ -163,5 +153,29 @@ final class MacDownloads {
         }
         try FileManager.default.createDirectory(at: markers, withIntermediateDirectories: true)
         try folders.joined(separator: "\n").write(to: markers.appendingPathComponent(v.product), atomically: true, encoding: .utf8)
+    }
+}
+
+extension MacDownloads: DownloadClient {
+    nonisolated func downloadProgress(_ id: String, written: Int64, expected: Int64) {
+        Task { @MainActor in
+            guard let v = Self.catalog.first(where: { $0.id == id }) else { return }
+            let total = expected > 0 ? expected : Int64(v.size)
+            self.report(id, Double(written) / Double(max(total, 1)) * 0.85)
+        }
+    }
+
+    nonisolated func downloadFinished(_ id: String, _ result: Result<URL, Error>) {
+        Task { @MainActor in
+            guard let v = Self.catalog.first(where: { $0.id == id }) else {
+                if case .success(let f) = result { try? FileManager.default.removeItem(at: f) }
+                return
+            }
+            self.finished(v, result)
+        }
+    }
+
+    nonisolated func downloadRestored(_ id: String) {
+        Task { @MainActor in if self.progress[id] == nil { self.progress[id] = 0 } }
     }
 }

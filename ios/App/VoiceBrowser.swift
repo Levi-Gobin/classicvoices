@@ -72,6 +72,9 @@ struct VoiceItem: Identifiable, Hashable {
 /// a download only changes its row, so nothing moves under VoiceOver's focus.
 @MainActor @Observable
 final class VoiceLibrary {
+    /// One for the app's life: downloads report to it even when the system
+    /// relaunches the app in the background to finish them.
+    static let shared = VoiceLibrary()
     let enhanced = EnhancedDownloads()
     let mac = MacDownloads()
     private(set) var items: [VoiceItem] = []
@@ -81,6 +84,7 @@ final class VoiceLibrary {
         rebuild()
         enhanced.onChange = { [weak self] in self?.rebuild() }
         mac.onChange = { [weak self] in self?.rebuild() }
+        Downloader.shared.restore()
     }
 
     func item(_ id: String) -> VoiceItem? { items.first { $0.id == id } }
@@ -192,7 +196,7 @@ final class VoiceLibrary {
 // MARK: - Views
 
 struct RootView: View {
-    @State private var library = VoiceLibrary()
+    @State private var library = VoiceLibrary.shared
 
     var body: some View {
         TabView {
@@ -209,6 +213,7 @@ enum BrowserRoute: Hashable {
     case language(String)
     case voice(String)  // VoiceItem.id
     case diagnostics
+    case addFiles
 }
 
 /// One tab, as a drill-down: version menu and languages (or the voices, when
@@ -264,7 +269,7 @@ struct PlatformTab: View {
             let detail: String
             switch new.last {
             case .voice?: detail = "voice"
-            case .diagnostics?: detail = ""
+            case .diagnostics?, .addFiles?: detail = ""
             case .language(let lang)?: detail = "\(items(language: lang).count) voices"
             case nil: detail = ""
             }
@@ -291,6 +296,7 @@ struct PlatformTab: View {
         case .language(let lang): VoiceItem.languageName(lang)
         case .voice(let id): library.item(id)?.name ?? "Voice"
         case .diagnostics: "Diagnostics"
+        case .addFiles: "Add from Files"
         }
     }
 
@@ -301,6 +307,7 @@ struct PlatformTab: View {
             Page { VoiceButtons(items: items(language: lang), groupByVersion: versionID == "all", open: open) }
         case .voice(let id)?: VoiceDetail(id: id)
         case .diagnostics?: DiagnosticsView()
+        case .addFiles?: AddFilesView()
         }
     }
 
@@ -334,26 +341,29 @@ struct PlatformTab: View {
                 Text(note).font(.footnote).foregroundStyle(.secondary)
             }
             PageSection(nil) {
+                if platform == .macOS {
+                    OpenButton(title: "Add from Files", detail: "MacinTalk from your own Mac OS X") { open(.addFiles) }
+                }
                 OpenButton(title: "Diagnostics", detail: "a report to send if voices don\u{2019}t work") { open(.diagnostics) }
             }
         }
     }
 
-    /// MacinTalk releases: Alex is too big to include, so say how to add it.
+    /// MacinTalk releases whose files aren't here yet, or are missing Alex.
     private var alexNote: String? {
         guard let v = versions.first(where: { $0.id == versionID }),
-              let gen = v.builds.first(where: { $0.hasPrefix("mt") }), gen != "mt104",  // Alex arrived in Leopard
+              let gen = v.builds.first(where: { $0.hasPrefix("mt") }) else { return nil }
+        if !VoiceCatalog.hasMacinTalkEngine(gen) {
+            return "\(v.name)\u{2019}s MacinTalk voices need Apple\u{2019}s speech files from Mac OS X \(v.number) \(v.name), which Classic Voices can\u{2019}t download. Add them with Add from Files below."
+        }
+        guard gen != "mt104",  // Alex arrived in Leopard
               !library.items.contains(where: { $0.version == v && $0.name == "Alex" }) else { return nil }
-        #if os(macOS)
-        return "Alex isn\u{2019}t here: at several hundred megabytes he doesn\u{2019}t come with the app. Copy Alex.SpeechVoice from Mac OS X \(v.name) into ~/Library/Group Containers/\(appGroup)/EnhancedVoices/\(gen)/Voices, then open the app again."
-        #else
-        return "Alex isn\u{2019}t here: at several hundred megabytes he doesn\u{2019}t come with the app. Copy Alex.SpeechVoice from Mac OS X \(v.name) into Classic Voices\u{2019}s MacinTalk/\(gen) folder in the Files app, then open the app again."
-        #endif
+        return "Alex isn\u{2019}t here: at several hundred megabytes he doesn\u{2019}t come with the app. Add Alex.SpeechVoice from Mac OS X \(v.name) with Add from Files below."
     }
 }
 
 /// A scrolling page: a list on iOS, a column of buttons on the Mac.
-private struct Page<Content: View>: View {
+struct Page<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -369,7 +379,7 @@ private struct Page<Content: View>: View {
     }
 }
 
-private struct PageSection<Content: View>: View {
+struct PageSection<Content: View>: View {
     let header: String?
     @ViewBuilder let content: Content
 
@@ -391,7 +401,7 @@ private struct PageSection<Content: View>: View {
 }
 
 /// A row that opens something. A button, so focusing it does nothing.
-private struct OpenButton: View {
+struct OpenButton: View {
     let title: String
     var detail: String? = nil
     var label: String? = nil  // what VoiceOver reads; title and detail by default

@@ -87,7 +87,7 @@ enum VoiceCatalog {
     /// the Pascal string at offset 16 of the VoiceDescription.
     static func macinTalkVoices(in base: URL) -> [Entry] {
         var out: [Entry] = []
-        for (gen, genName, version) in macinTalkEras {
+        for (gen, genName, version) in macinTalkEras where hasMacinTalkEngine(gen) {
             let dir = base.appendingPathComponent(gen).appendingPathComponent("Voices")
             guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { continue }
             for folder in names.sorted() where folder.hasSuffix(".SpeechVoice") {
@@ -101,6 +101,17 @@ enum VoiceCatalog {
             }
         }
         return out
+    }
+
+    /// MacinTalk engines come with the app when it was built with them, or
+    /// were added from someone's own Mac OS X files.
+    static func hasBundledMacinTalk(_ gen: String) -> Bool {
+        root.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(gen)/MacinTalk").path) } ?? false
+    }
+
+    static func hasMacinTalkEngine(_ gen: String) -> Bool {
+        hasBundledMacinTalk(gen)
+            || enhancedRoot.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(gen)/MacinTalk").path) } ?? false
     }
 
     /// Nuance language codes (broker.hdr <langcode>) used by the Mac voices.

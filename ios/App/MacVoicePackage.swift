@@ -293,7 +293,7 @@ enum MacVoicePackage {
     }
 }
 
-private extension Data {
+extension Data {
     func be16(_ o: Int) -> UInt16 { UInt16(self[startIndex + o]) << 8 | UInt16(self[startIndex + o + 1]) }
     func be32(_ o: Int) -> UInt32 { UInt32(be16(o)) << 16 | UInt32(be16(o + 2)) }
     func be64(_ o: Int) -> UInt64 { UInt64(be32(o)) << 32 | UInt64(be32(o + 4)) }

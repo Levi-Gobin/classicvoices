@@ -50,6 +50,8 @@ enum Diagnostics {
         let ours = AVSpeechSynthesisVoice.speechVoices().filter { $0.identifier.contains("com.levigobin.ClassicVoices") }
         out.append("System voices from Classic Voices: \(ours.count) of \(VoiceCatalog.providerVoices.count)")
 
+        let downloaded = VoiceCatalog.enhanced.map(\.key).sorted()
+        out.append("Downloaded voices: \(downloaded.count)" + (downloaded.isEmpty ? "" : " (\(downloaded.joined(separator: ", ")))"))
         out.append(errors.isEmpty ? "Download errors: none"
                                   : "Download errors:\n" + errors.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }.joined(separator: "\n"))
         return out.joined(separator: "\n")

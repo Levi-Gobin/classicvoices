@@ -3,11 +3,33 @@ import SwiftUI
 
 @main
 struct ClassicVoicesApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
+    #endif
+
     init() {
+        // `-import <folder>` adds Mac OS X speech files as Add from Files does, then quits.
+        if let i = CommandLine.arguments.firstIndex(of: "-import"), i + 1 < CommandLine.arguments.count {
+            let url = URL(fileURLWithPath: CommandLine.arguments[i + 1])
+            let found = SpeechDataImport.scan([url])
+            print("IMPORT found engine=\(found.engine?.path ?? "none") dictionary=\(found.dictionary != nil) libraries=\(found.libraries.map(\.lastPathComponent)) voices=\(found.voices.count) other=\(found.otherVoices)")
+            do {
+                let o = try SpeechDataImport.install(found, from: [url])
+                print("IMPORT \(o.gen ?? "?"): added \(o.added); missing \(o.missing); test \(o.test ?? "-"); needsRelease \(o.needsRelease)")
+            } catch {
+                print("IMPORT error: \(error.localizedDescription)")
+            }
+            fflush(stdout)
+            exit(0)
+        }
+        _ = VoiceLibrary.shared
         let imported = MacinTalkImport.run()
         if !imported.isEmpty { print("IMPORTED \(imported)") }
         if CommandLine.arguments.contains("-benchmark") { Benchmark.run() }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "-download"), i + 1 < CommandLine.arguments.count {
+            DownloadTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
+        }
         if CommandLine.arguments.contains("-report") { print(Diagnostics.report(downloadErrors: [:])); fflush(stdout) }
         if let i = CommandLine.arguments.firstIndex(of: "-voicetest"), i + 1 < CommandLine.arguments.count {
             VoiceTest.run(keys: CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
@@ -23,6 +45,18 @@ struct ClassicVoicesApp: App {
         #endif
     }
 }
+
+#if os(iOS)
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    /// Downloads finished while the app wasn't running.
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == Downloader.sessionIdentifier else { return completionHandler() }
+        Downloader.shared.backgroundCompletion = completionHandler
+        _ = VoiceLibrary.shared
+    }
+}
+#endif
 
 /// What the system sees of our extension; results go to stdout.
 enum Diagnose {
@@ -125,6 +159,43 @@ enum VoiceTest {
     }
 }
 
+/// Starts several downloads at once, as tapping Download on each would, and
+/// prints their progress: `-download ios6/en-GB,mac107/041-85113`.
+enum DownloadTest {
+    @MainActor static func run(_ ids: [String]) {
+        let lib = VoiceLibrary.shared
+        let had = lib.enhanced.installed.union(lib.mac.installed)
+        for id in ids {
+            if let a = EnhancedDownloads.catalog.first(where: { $0.id == id }) { lib.enhanced.download(a) }
+            else if let v = MacDownloads.catalog.first(where: { $0.id == id }) { lib.mac.download(v) }
+            else { print("DOWNLOAD \(id): not in the catalogs") }
+        }
+        Task { @MainActor in
+            let start = Date()
+            while true {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                let p = lib.enhanced.progress.merging(lib.mac.progress) { a, _ in a }
+                let line = p.sorted { $0.key < $1.key }.map { "\($0.key) \(Int($0.value * 100))%" }.joined(separator: ", ")
+                print(String(format: "DOWNLOAD %.0fs: ", Date().timeIntervalSince(start)) + (line.isEmpty ? "all finished" : line))
+                fflush(stdout)
+                if p.isEmpty { break }
+            }
+            let errors = lib.enhanced.errors.merging(lib.mac.errors) { a, _ in a }
+            print("DOWNLOAD errors: \(errors.isEmpty ? "none" : errors.description)")
+            print("DOWNLOAD installed: \(ids.filter { lib.enhanced.installed.contains($0) || lib.mac.installed.contains($0) })")
+            // `-download-cleanup` deletes what the test added.
+            if CommandLine.arguments.contains("-download-cleanup") {
+                for id in ids where !had.contains(id) {
+                    if let a = EnhancedDownloads.catalog.first(where: { $0.id == id }) { lib.enhanced.remove(a) }
+                    if let v = MacDownloads.catalog.first(where: { $0.id == id }) { lib.mac.remove(v) }
+                }
+                print("DOWNLOAD cleaned up")
+            }
+            print("DOWNLOAD done"); fflush(stdout)
+        }
+    }
+}
+
 /// Headless timing run, started with `-benchmark`; results go to stdout.
 enum Benchmark {
     static func run() {
@@ -170,7 +241,7 @@ enum Benchmark {
                let a = EnhancedDownloads.catalog.first(where: { $0.build == "ios6" && $0.language == "en-US" }) {
                 let sem = DispatchSemaphore(value: 0)
                 Task { @MainActor in
-                    let d = EnhancedDownloads()
+                    let d = VoiceLibrary.shared.enhanced
                     if !d.isInstalled(a) {
                         print("BENCH downloading enhanced \(a.id) …"); fflush(stdout)
                         d.download(a)
