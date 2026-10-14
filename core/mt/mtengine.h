@@ -29,6 +29,9 @@ void mte_close(MtEngine *e);
 int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pitch, int volume,
               MtPcmCallback cb, void *ctx);
 const char *mte_error(MtEngine *e);
+// The engine faulted or stopped responding and has shut itself down: close it
+// and open a new one.
+int mte_broken(MtEngine *e);
 double mte_sample_rate(MtEngine *e);
 
 #ifdef __cplusplus

@@ -103,7 +103,7 @@ static void h_MPCreateCriticalRegion(Mt *m, X86 *c) {
     R(c, 0);
 }
 static void h_MPEnterCriticalRegion(Mt *m, X86 *c) {
-    pthread_mutex_lock(&g_regions[id_index(m, c, A(c, 0), 0x4D505247u)].mu);
+    mt_lock(m, c, &g_regions[id_index(m, c, A(c, 0), 0x4D505247u)].mu);
     R(c, 0);
 }
 static void h_MPExitCriticalRegion(Mt *m, X86 *c) {
@@ -191,7 +191,7 @@ static void *task_main(void *arg) {
     c->fault = &k->t->fault;
     uint32_t status = 0;
     if (setjmp(k->t->fault)) {
-        if (!m->dying) mt_log("MP task %#x faulted: %s", k->entry, c->err);
+        if (!m->dying) { m->broken = 1; mt_log("MP task %#x faulted: %s", k->entry, c->err); }
         status = (uint32_t)-1;
     } else {
         status = mt_call_on(m, c, k->entry, 1, &k->param);
@@ -201,7 +201,7 @@ static void *task_main(void *arg) {
         queue_notify(q, k->t1, k->t2, status);
     }
     __sync_fetch_and_sub(&m->live, 1);
-    free(k->t);
+    mt_thread_free(k->t);
     free(k);
     return NULL;
 }
@@ -215,6 +215,7 @@ static void h_MPCreateTask(Mt *m, X86 *c) {
     k->t1 = A(c, 4);
     k->t2 = A(c, 5);
     k->t = mt_thread_new(m);
+    if (!k->t) { free(k); R(c, (uint32_t)-108); return; }  // memFullErr
     if (m->verbose) fprintf(stderr, "[mp] CreateTask entry=%#x param=%#x\n", k->entry, k->param);
     pthread_t th;
     pthread_attr_t at;

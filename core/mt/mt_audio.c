@@ -152,7 +152,10 @@ static void *pacer_main(void *arg) {
         uint32_t fl = rd32(c, job.slice + SL_FLAGS) | SLICE_COMPLETE;
         wr32(c, job.slice + SL_FLAGS, fl);
         if (job.proc) {
-            if (setjmp(t->fault)) mt_log("slice completion faulted: %s", c->err);
+            if (setjmp(t->fault)) {
+                if (!m->dying) { m->broken = 1; mt_log("slice completion faulted: %s", c->err); }
+                c->r[ESP] = t->stack_top - 16;
+            }
             else {
                 uint32_t args[2] = {job.udata, job.slice};
                 mt_call_on(m, c, job.proc, 2, args);
@@ -171,6 +174,7 @@ static void schedule_slice(Mt *m, X86 *c, uint32_t slice) {
     if (!g_pacer_started) {
         g_pacer_started = 1;
         g_pacer_thread = mt_thread_new(m);
+        if (!g_pacer_thread) { g_pacer_started = 0; x86_fault(c, "too many engine threads"); }
         pthread_t th;
         __sync_fetch_and_add(&m->live, 1);
         pthread_create(&th, NULL, pacer_main, m);

@@ -26,6 +26,12 @@ struct MtEngine {
     double cur_rate, cur_pitch, cur_volume;
     jmp_buf jb;
     char err[512];
+    // watchdog: a call into the engine that never returns, or an engine
+    // thread that faulted, shuts the engine down so the caller can reopen it
+    volatile double call_t0;
+    volatile int closing;
+    pthread_t dog;
+    int dog_started;
 };
 
 #define OS(a, b, c, d) ((uint32_t)(a) << 24 | (uint32_t)(b) << 16 | (uint32_t)(c) << 8 | (uint32_t)(d))
@@ -34,6 +40,40 @@ struct MtEngine {
 #define SO_VOLM OS('v', 'o', 'l', 'm')
 
 static int exists(const char *p) { struct stat st; return stat(p, &st) == 0; }
+static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
+
+void mt_wake_all(void);
+#define MT_CALL_LIMIT 10.0  // seconds; far longer than any call takes, even Alex paging in
+
+static void *watchdog(void *arg) {
+    MtEngine *e = arg;
+    while (!e->closing) {
+        usleep(20000);  // short, so closing the engine never waits long for this
+        Mt *m = e->m;
+        double t0 = e->call_t0;
+        int stuck = t0 > 0 && now_s() - t0 > MT_CALL_LIMIT;
+        if (m->dying || !(m->broken || stuck)) continue;
+        mt_log("MacinTalk %s; restarting it", stuck ? "stopped responding" : "faulted");
+        m->broken = 1;
+        m->dying = 1;  // every guest thread, the caller's included, faults out
+        mt_wake_all();
+    }
+    return NULL;
+}
+
+static uint32_t call(MtEngine *e, uint32_t fn, int nargs, const uint32_t *args) {
+    e->call_t0 = now_s();
+#ifdef MT_TEST_HOOKS
+    if (getenv("MT_TEST_BREAK") && !strcmp(getenv("MT_TEST_BREAK"), "hang")) {  // a lock nobody will release
+        static pthread_mutex_t held = PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_trylock(&held);
+        mt_lock(e->m, &e->m->main->cpu, &held);
+    }
+#endif
+    uint32_t r = mt_call(e->m, fn, nargs, args);
+    e->call_t0 = 0;
+    return r;
+}
 
 const char *mte_error(MtEngine *e) { return e->err; }
 double mte_sample_rate(MtEngine *e) { (void)e; return mt_audio_rate(); }
@@ -41,7 +81,7 @@ double mte_sample_rate(MtEngine *e) { (void)e; return mt_audio_rate(); }
 #define GUARD(e, failret) \
     (e)->m->fault = &(e)->jb; \
     (e)->m->main->cpu.fault = &(e)->jb; \
-    if (setjmp((e)->jb)) { snprintf((e)->err, sizeof (e)->err, "%s%s", (e)->m->err, (e)->m->main->cpu.err); return failret; }
+    if (setjmp((e)->jb)) { (e)->call_t0 = 0; snprintf((e)->err, sizeof (e)->err, "%s%s", (e)->m->err, (e)->m->main->cpu.err); return failret; }
 
 MtEngine *mte_open(const char *root, char *err, size_t errlen) {
     MtEngine *e = calloc(1, sizeof *e);
@@ -95,14 +135,19 @@ MtEngine *mte_open(const char *root, char *err, size_t errlen) {
         free(e);
         return NULL;
     }
+    e->dog_started = pthread_create(&e->dog, NULL, watchdog, e) == 0;
     return e;
 }
 
 void mte_close(MtEngine *e) {
     if (!e) return;
+    e->closing = 1;
+    if (e->dog_started) pthread_join(e->dog, NULL);
     mt_destroy(e->m);
     free(e);
 }
+
+int mte_broken(MtEngine *e) { return e->m->broken || e->m->dying; }
 
 static uint32_t be32(const uint8_t *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
 
@@ -118,25 +163,25 @@ static double get_fixed(MtEngine *e, uint32_t sel) {
         uint32_t out = mt_static(e->m, 4);
         wr32(&e->m->main->cpu, out, 0);
         uint32_t a[3] = {e->chan, mt_speech_key(e->m, prop_key(sel)), out};
-        if (mt_call(e->m, e->fn_copyprop, 3, a)) return 0;
+        if (call(e, e->fn_copyprop, 3, a)) return 0;
         return mt_cf_number_value(e->m, rd32(&e->m->main->cpu, out));
     }
     if (!e->fn_getinfo) return 0;
     uint32_t v = mt_static(e->m, 4);
     uint32_t a[3] = {e->chan, sel, v};
-    if (mt_call(e->m, e->fn_getinfo, 3, a)) return 0;
+    if (call(e, e->fn_getinfo, 3, a)) return 0;
     return (int32_t)rd32(&e->m->main->cpu, v) / 65536.0;
 }
 static int set_fixed(MtEngine *e, uint32_t sel, double val) {
     if (e->fn_setprop) {  // 10.7: SESetSpeechProperty(chan, key, CFNumber)
         uint32_t a[3] = {e->chan, mt_speech_key(e->m, prop_key(sel)), mt_cf_number(e->m, val)};
-        return (int)mt_call(e->m, e->fn_setprop, 3, a);
+        return (int)call(e, e->fn_setprop, 3, a);
     }
     if (!e->fn_setinfo) return -1;
     uint32_t v = mt_static(e->m, 4);
     wr32(&e->m->main->cpu, v, (uint32_t)(int32_t)lround(val * 65536.0));
     uint32_t a[3] = {e->chan, sel, v};
-    return (int)mt_call(e->m, e->fn_setinfo, 3, a);
+    return (int)call(e, e->fn_setinfo, 3, a);
 }
 
 void mte_set_extra_voices(MtEngine *e, const char *dir) { snprintf(e->extra, sizeof e->extra, "%s", dir ? dir : ""); }
@@ -158,7 +203,7 @@ static int use_voice(MtEngine *e, const char *voice) {
     wr32(&e->m->main->cpu, spec, be32(h + 4));
     wr32(&e->m->main->cpu, spec + 4, be32(h + 8));
     uint32_t a[3] = {e->chan, spec, mt_cf_bundle(e->m, dir)};
-    int rc = (int)mt_call(e->m, e->fn_use, 3, a);
+    int rc = (int)call(e, e->fn_use, 3, a);
     if (rc) { snprintf(e->err, sizeof e->err, "SEUseVoice(%s) failed: %d", voice, rc); return rc; }
     snprintf(e->voice, sizeof e->voice, "%s", voice);
     e->base_rate = get_fixed(e, SO_RATE);
@@ -237,8 +282,6 @@ static size_t convert(MtEngine *e, const char *s, const char *end, char *out, si
 #undef PUT
 }
 
-static double now_s(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec + ts.tv_nsec / 1e9; }
-
 static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb, void *ctx) {
     Mt *m = e->m;
     uint32_t buf = mt_malloc(m, (uint32_t)len + 1);
@@ -247,10 +290,10 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
     int rc;
     if (e->fn_speak) {
         uint32_t a[4] = {e->chan, buf, (uint32_t)len, 0};
-        rc = (int)mt_call(m, e->fn_speak, 4, a);
+        rc = (int)call(e, e->fn_speak, 4, a);
     } else {  // 10.7 takes a CFString (MacRoman bytes here) and an options dictionary
         uint32_t a[3] = {e->chan, mt_cf_string(m, text, len), 0};
-        rc = (int)mt_call(m, e->fn_speakcf, 3, a);
+        rc = (int)call(e, e->fn_speakcf, 3, a);
     }
     if (rc) { mt_free(m, buf); snprintf(e->err, sizeof e->err, "SESpeakBuffer failed: %d", rc); return rc; }
     float tmp[4096];
@@ -264,11 +307,12 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
             pos += n;
             if (!stopped && cb(ctx, tmp, n)) {  // cancelled: stop the engine, drain quietly
                 stopped = 1;
-                if (e->fn_stop) { uint32_t s2[2] = {e->chan, 0}; mt_call(m, e->fn_stop, 2, s2); }
+                if (e->fn_stop) { uint32_t s2[2] = {e->chan, 0}; call(e, e->fn_stop, 2, s2); }
             }
             continue;
         }
         if (done) break;
+        if (m->broken) { mt_log("engine faulted at %u frames", pos); return -1; }
         uint32_t sl = mt_audio_slices();
         if (sl != slices) {
             double gap = now_s() - last_change;
@@ -277,7 +321,11 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
         }
         // The engine went quiet without stopping its graph. Generous: Alex can
         // pause a while paging in voice data on a phone.
-        else if (now_s() - last_change > 5.0) { mt_log("gave up waiting at %u frames", pos); break; }
+        else if (now_s() - last_change > 5.0) {
+            mt_log("gave up waiting at %u frames", pos);
+            m->broken = 1;  // whatever it was doing, it won't speak again
+            return -1;
+        }
         usleep(500);
     }
     mt_free(m, buf);
@@ -285,6 +333,7 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
 }
 
 int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pitch, int volume, MtPcmCallback cb, void *ctx) {
+    if (mte_broken(e)) { snprintf(e->err, sizeof e->err, "MacinTalk stopped; it reopens for the next utterance"); return -1; }
     GUARD(e, -1);
     if (use_voice(e, voice)) return -1;
     double r = e->base_rate * rate / 100.0, pb = e->base_pitch + 12.0 * log2(pitch / 100.0);

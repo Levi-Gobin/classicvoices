@@ -575,53 +575,86 @@ static void h_setlocale(Mt *m, X86 *c) {
 static void h_mlock(Mt *m, X86 *c) { (void)m; R(c, 0); }
 
 // ---------------------------------------------------------------- pthreads
-// Guest pthread_mutex_t (44 bytes on i386) holds an index into a host table.
+// Guest pthread_mutex_t (44 bytes on i386) and pthread_cond_t (28) hold
+// {magic, index into a host table, their own address}. The address marks
+// copies: the engine copies structures holding them, and a copy is a new
+// object. Each host slot records the guest object that owns it, so a destroy
+// frees only its own slot, once; 10.6 makes and destroys several per utterance.
 
 #define MAX_SYNC 1024
+typedef struct {
+    uint32_t magic;
+    int n, nspare;
+    uint32_t owner[MAX_SYNC];  // guest address using each slot, 0 if spare
+    uint32_t spare[MAX_SYNC];  // initialised slots free for reuse
+} SyncTable;
 static pthread_mutex_t g_mutex[MAX_SYNC];
 static pthread_cond_t g_cond[MAX_SYNC];
-static int g_nmutex, g_ncond;
+static SyncTable g_mtab = {0x4D54584Du}, g_ctab = {0x4D54434Eu};  // 'MTXM', 'MTCN'
 static pthread_mutex_t g_sync_mu = PTHREAD_MUTEX_INITIALIZER;
 
-static pthread_mutex_t *mutex_of(Mt *m, X86 *c, uint32_t g) {
-    (void)m;
-    uint32_t sig = rd32(c, g), idx = rd32(c, g + 4);
-    if (sig == 0x4D54584Du && idx < MAX_SYNC) return &g_mutex[idx];  // 'MTXM'
-    // statically initialised mutex (PTHREAD_MUTEX_INITIALIZER sig 0x32AAABA7) or zeroed
-    pthread_mutex_lock(&g_sync_mu);
-    sig = rd32(c, g);
-    if (sig != 0x4D54584Du) {
-        if (g_nmutex >= MAX_SYNC) x86_fault(c, "too many mutexes");
-        idx = (uint32_t)g_nmutex++;
-        pthread_mutexattr_t at;
-        pthread_mutexattr_init(&at);
-        pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
-        pthread_mutex_init(&g_mutex[idx], &at);
-        wr32(c, g + 4, idx);
-        wr32(c, g, 0x4D54584Du);
-    }
-    idx = rd32(c, g + 4);
-    pthread_mutex_unlock(&g_sync_mu);
-    return &g_mutex[idx];
+static int sync_valid(SyncTable *t, X86 *c, uint32_t g, uint32_t *idx) {
+    uint32_t i = rd32(c, g + 4);
+    if (rd32(c, g) != t->magic || rd32(c, g + 8) != g || i >= MAX_SYNC || t->owner[i] != g) return 0;
+    *idx = i;
+    return 1;
 }
-static pthread_cond_t *cond_of(Mt *m, X86 *c, uint32_t g) {
-    (void)m;
+// The host slot for guest object g, giving it one if it has none.
+static uint32_t sync_slot(SyncTable *t, X86 *c, uint32_t g) {
+    uint32_t idx;
+    if (sync_valid(t, c, g, &idx)) return idx;
     pthread_mutex_lock(&g_sync_mu);
-    if (rd32(c, g) != 0x4D54434Eu) {  // 'MTCN'
-        if (g_ncond >= MAX_SYNC) x86_fault(c, "too many condition variables");
-        uint32_t idx = (uint32_t)g_ncond++;
-        pthread_cond_init(&g_cond[idx], NULL);
+    if (!sync_valid(t, c, g, &idx)) {
+        if (t->nspare) idx = t->spare[--t->nspare];
+        else if (t->n < MAX_SYNC) {
+            idx = (uint32_t)t->n++;
+            if (t == &g_mtab) {
+                pthread_mutexattr_t at;
+                pthread_mutexattr_init(&at);
+                pthread_mutexattr_settype(&at, PTHREAD_MUTEX_RECURSIVE);
+                pthread_mutex_init(&g_mutex[idx], &at);
+            } else {
+                pthread_cond_init(&g_cond[idx], NULL);
+            }
+        } else {
+            pthread_mutex_unlock(&g_sync_mu);
+            x86_fault(c, t == &g_mtab ? "too many mutexes" : "too many condition variables");
+        }
+        t->owner[idx] = g;
+        wr32(c, g + 8, g);
         wr32(c, g + 4, idx);
-        wr32(c, g, 0x4D54434Eu);
+        wr32(c, g, t->magic);
     }
-    uint32_t idx = rd32(c, g + 4);
     pthread_mutex_unlock(&g_sync_mu);
-    return &g_cond[idx];
+    return idx;
 }
-static void h_mutex_init(Mt *m, X86 *c) { wr32(c, A(c, 0), 0); mutex_of(m, c, A(c, 0)); R(c, 0); }
-static void h_mutex_lock(Mt *m, X86 *c) { R(c, (uint32_t)pthread_mutex_lock(mutex_of(m, c, A(c, 0)))); }
+// The host object stays initialised for the next one. A mutex someone still
+// holds is never reused.
+static void sync_destroy(SyncTable *t, X86 *c, uint32_t g) {
+    pthread_mutex_lock(&g_sync_mu);
+    uint32_t idx;
+    if (sync_valid(t, c, g, &idx)) {
+        wr32(c, g, 0);
+        t->owner[idx] = 0;
+        int busy = 0;
+        if (t == &g_mtab) {
+            busy = pthread_mutex_trylock(&g_mutex[idx]) != 0;
+            if (!busy) pthread_mutex_unlock(&g_mutex[idx]);
+        }
+        if (busy) t->owner[idx] = 1;  // never handed out again
+        else if (t->nspare < MAX_SYNC) t->spare[t->nspare++] = idx;
+    }
+    pthread_mutex_unlock(&g_sync_mu);
+}
+
+static pthread_mutex_t *mutex_of(Mt *m, X86 *c, uint32_t g) { (void)m; return &g_mutex[sync_slot(&g_mtab, c, g)]; }
+static pthread_cond_t *cond_of(Mt *m, X86 *c, uint32_t g) { (void)m; return &g_cond[sync_slot(&g_ctab, c, g)]; }
+static void h_mutex_init(Mt *m, X86 *c) { sync_destroy(&g_mtab, c, A(c, 0)); wr32(c, A(c, 0), 0); mutex_of(m, c, A(c, 0)); R(c, 0); }
+static void h_mutex_lock(Mt *m, X86 *c) { mt_lock(m, c, mutex_of(m, c, A(c, 0))); R(c, 0); }
 static void h_mutex_unlock(Mt *m, X86 *c) { R(c, (uint32_t)pthread_mutex_unlock(mutex_of(m, c, A(c, 0)))); }
-static void h_cond_init(Mt *m, X86 *c) { wr32(c, A(c, 0), 0); cond_of(m, c, A(c, 0)); R(c, 0); }
+static void h_mutex_destroy(Mt *m, X86 *c) { (void)m; sync_destroy(&g_mtab, c, A(c, 0)); R(c, 0); }
+static void h_cond_destroy(Mt *m, X86 *c) { (void)m; sync_destroy(&g_ctab, c, A(c, 0)); R(c, 0); }
+static void h_cond_init(Mt *m, X86 *c) { sync_destroy(&g_ctab, c, A(c, 0)); wr32(c, A(c, 0), 0); cond_of(m, c, A(c, 0)); R(c, 0); }
 static void h_cond_signal(Mt *m, X86 *c) { R(c, (uint32_t)pthread_cond_signal(cond_of(m, c, A(c, 0)))); }
 static void h_cond_wait(Mt *m, X86 *c) {
     if (m->dying) x86_fault(c, "engine shut down");
@@ -664,11 +697,13 @@ static void h_btowc(Mt *m, X86 *c) { (void)m; uint32_t v = A(c, 0); R(c, v < 128
 static void h_wctob(Mt *m, X86 *c) { (void)m; uint32_t v = A(c, 0); R(c, v < 128 ? v : ~0u); }
 static void h_mb_unsupported(Mt *m, X86 *c) { (void)m; x86_fault(c, "wide/multibyte conversion is not implemented"); }
 
-void mt_libc_wake(void) { for (int i = 0; i < g_ncond; i++) pthread_cond_broadcast(&g_cond[i]); }
+void mt_libc_wake(void) { for (int i = 0; i < g_ctab.n; i++) pthread_cond_broadcast(&g_cond[i]); }
 void mt_libc_reset(void) {
-    for (int i = 0; i < g_nmutex; i++) pthread_mutex_destroy(&g_mutex[i]);
-    for (int i = 0; i < g_ncond; i++) pthread_cond_destroy(&g_cond[i]);
-    g_nmutex = g_ncond = 0;
+    for (int i = 0; i < g_mtab.n; i++) pthread_mutex_destroy(&g_mutex[i]);
+    for (int i = 0; i < g_ctab.n; i++) pthread_cond_destroy(&g_cond[i]);
+    g_mtab.n = g_mtab.nspare = g_ctab.n = g_ctab.nspare = 0;
+    memset(g_mtab.owner, 0, sizeof g_mtab.owner);
+    memset(g_ctab.owner, 0, sizeof g_ctab.owner);
     g_locale_name = 0;
     for (int i = 3; i < MAX_FILES; i++) if (g_files[i]) { fclose(g_files[i]); g_files[i] = NULL; }
 }
@@ -703,8 +738,8 @@ const MtHleEntry mt_hle_libc[] = {
     {"_abort", h_abort}, {"_exit", h_exit}, {"___assert_rtn", h_assert_rtn}, {"_getenv", h_getenv},
     {"_usleep", h_usleep}, {"___error", h_error}, {"___cxa_atexit", h_cxa_atexit}, {"_setlocale", h_setlocale},
     {"_pthread_mutex_init", h_mutex_init}, {"_pthread_mutex_lock", h_mutex_lock}, {"_pthread_mutex_unlock", h_mutex_unlock},
-    {"_pthread_mutex_destroy", h_zero}, {"_pthread_mutexattr_init", h_zero}, {"_pthread_mutexattr_destroy", h_zero},
-    {"_pthread_mutexattr_settype", h_zero}, {"_pthread_cond_init", h_cond_init}, {"_pthread_cond_destroy", h_zero},
+    {"_pthread_mutex_destroy", h_mutex_destroy}, {"_pthread_mutexattr_init", h_zero}, {"_pthread_mutexattr_destroy", h_zero},
+    {"_pthread_mutexattr_settype", h_zero}, {"_pthread_cond_init", h_cond_init}, {"_pthread_cond_destroy", h_cond_destroy},
     {"_pthread_cond_signal", h_cond_signal}, {"_pthread_cond_wait", h_cond_wait}, {"_pthread_once", h_once},
     {"_pthread_self", h_pthread_self}, {"_pthread_key_create", h_key_create},
     {"_pthread_getspecific", h_getspecific}, {"_pthread_setspecific", h_setspecific},

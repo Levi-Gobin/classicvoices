@@ -23,6 +23,7 @@ int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pi
     return -1;
 }
 const char *mte_error(MtEngine *e) { (void)e; return "MacinTalk not supported"; }
+int mte_broken(MtEngine *e) { (void)e; return 0; }
 double mte_sample_rate(MtEngine *e) { (void)e; return 22050.0; }
 
 #define EMPTY_TABLE(b) \

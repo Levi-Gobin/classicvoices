@@ -200,6 +200,12 @@ uint32_t mt_call(Mt *m, uint32_t fn, int nargs, const uint32_t *args) {
 
 static pthread_mutex_t g_thread_mu = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t g_next_stack = MT_STACK_TOP;
+// Stacks (with their errno and pthread_t objects) of threads that have ended,
+// for the next thread: there is room below MT_STACK_TOP for only 31, and one
+// more would grow down into the mapped voice data.
+#define MT_STACK_SLOTS ((MT_STACK_TOP - MT_MAP_HI) / 0x100000)
+static struct { uint32_t top, errno_addr, self; } g_spare[MT_STACK_SLOTS];
+static int g_nspare;
 
 MtThread *mt_thread_new(Mt *m) {
     MtThread *t = calloc(1, sizeof *t);
@@ -210,15 +216,50 @@ MtThread *mt_thread_new(Mt *m) {
     t->cpu.trap = on_trap;
     t->cpu.trap_ctx = m;
     pthread_mutex_lock(&g_thread_mu);
-    t->stack_top = g_next_stack;
-    g_next_stack -= 0x100000;  // 1 MB each
+    if (g_nspare) {
+        g_nspare--;
+        t->stack_top = g_spare[g_nspare].top;
+        t->errno_addr = g_spare[g_nspare].errno_addr;
+        t->self = g_spare[g_nspare].self;
+    } else if (g_next_stack - 0x100000 >= MT_MAP_HI) {
+        t->stack_top = g_next_stack;
+        g_next_stack -= 0x100000;  // 1 MB each
+    } else {
+        pthread_mutex_unlock(&g_thread_mu);
+        free(t);
+        return NULL;
+    }
     pthread_mutex_unlock(&g_thread_mu);
     t->cpu.r[ESP] = t->stack_top - 16;
     t->cpu.abort = &m->dying;
     t->cpu.div0_as_one = 1;
-    t->errno_addr = mt_static(m, 4);
-    t->self = mt_static(m, 64);  // an opaque guest object standing for pthread_t
+    if (!t->errno_addr) t->errno_addr = mt_static(m, 4);
+    if (!t->self) t->self = mt_static(m, 64);  // an opaque guest object standing for pthread_t
     return t;
+}
+
+// Lock a host mutex for guest code; a thread stuck waiting here faults out
+// when the engine shuts down instead of holding the shutdown up forever.
+void mt_lock(Mt *m, X86 *c, pthread_mutex_t *mu) {
+    for (int spins = 0; pthread_mutex_trylock(mu) != 0; spins++) {
+        if (m->dying) x86_fault(c, "engine shut down");
+        if (spins < 64) sched_yield();
+        else usleep(200);
+    }
+}
+
+// A guest thread has ended: its stack goes back for the next one.
+void mt_thread_free(MtThread *t) {
+    if (!t) return;
+    pthread_mutex_lock(&g_thread_mu);
+    if (g_nspare < (int)MT_STACK_SLOTS) {
+        g_spare[g_nspare].top = t->stack_top;
+        g_spare[g_nspare].errno_addr = t->errno_addr;
+        g_spare[g_nspare].self = t->self;
+        g_nspare++;
+    }
+    pthread_mutex_unlock(&g_thread_mu);
+    free(t);
 }
 
 // ---------------------------------------------------------------- create
@@ -244,6 +285,7 @@ Mt *mt_create(char *err, size_t errlen) {
     if (m->mem == MAP_FAILED) { snprintf(err, errlen, "cannot reserve guest memory"); free(m); return NULL; }
     m->data_next = MT_DATA_BASE;
     g_next_stack = MT_STACK_TOP;
+    g_nspare = 0;
     m->main = mt_thread_new(m);
     m->heap_lo = m->heap_next = MT_IMAGE_BASE;  // moved past the images as they load
     m->map_next = MT_MAP_LO;
@@ -418,6 +460,27 @@ static uint32_t lookup_in_depth(MtImage *im, const char *name, int depth) {
         return u32(sy + 8) + im->slide;
     }
     return 0;
+}
+
+// "image:symbol+off" for a guest address, for fault messages.
+const char *mt_symbolize(Mt *m, uint32_t a, char *out, size_t cap) {
+    snprintf(out, cap, "%#x", a);
+    for (int i = 0; i < m->nimages; i++) {
+        MtImage *im = &m->images[i];
+        if (a < im->lo + im->slide || a >= im->hi + im->slide) continue;
+        uint32_t best = 0;
+        const char *name = NULL;
+        for (uint32_t k = 0; k < im->nsyms; k++) {
+            const uint8_t *sy = im->syms + 12 * k;
+            if ((sy[4] & N_STAB) || (sy[4] & N_TYPE) != 0xe) continue;  // N_SECT
+            uint32_t v = u32(sy + 8) + im->slide;
+            if (v <= a && v >= best) { best = v; name = im->strs + u32(sy); }
+        }
+        const char *base = strrchr(im->path, '/');
+        snprintf(out, cap, "%s:%s+%#x", base ? base + 1 : im->path, name ? name : "?", a - (name ? best : im->lo + im->slide));
+        break;
+    }
+    return out;
 }
 
 uint32_t mt_export(Mt *m, int image, const char *name) { return lookup_in_depth(&m->images[image], name, 4); }

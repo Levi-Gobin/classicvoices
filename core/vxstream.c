@@ -471,7 +471,7 @@ static MtEngine *mt_for(VxStream *s, const char *key) {
     if (!slash) return NULL;
     char gen[16];
     snprintf(gen, sizeof gen, "%.*s", (int)(slash - key), key);
-    if (s->mt && !strcmp(s->mt_gen, gen)) return s->mt;
+    if (s->mt && !strcmp(s->mt_gen, gen) && !mte_broken(s->mt)) return s->mt;
     if (s->mt) { mte_close(s->mt); s->mt = NULL; s->mt_gen[0] = 0; }
     // A MacinTalk engine reserves 2 GB of address space; an audio-unit
     // extension has little to spare, so release the cached Vocalizer engines
@@ -536,6 +536,14 @@ static void *worker(void *arg) {
                 if (mte_speak(mt, voice, text, rate, pitch, volume, mt_pcm, &k) < 0) {
                     snprintf(s->err, sizeof s->err, "%s", mte_error(mt));
                     os_log_error(OS_LOG_DEFAULT, "CLASSICVOICES MacinTalk speak failed: %{public}s", s->err);
+                }
+                // It shut itself down after a fault or a hang: the next
+                // utterance opens a fresh one rather than every voice going quiet.
+                if (mte_broken(mt)) {
+                    os_log_error(OS_LOG_DEFAULT, "CLASSICVOICES MacinTalk %{public}s restarting", s->mt_gen);
+                    mte_close(mt);
+                    s->mt = NULL;
+                    s->mt_gen[0] = 0;
                 }
             }
             if (!atomic_load(&s->cancel)) finish(&k, pause);

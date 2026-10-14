@@ -20,12 +20,16 @@ static inline MtThread *mt_tls(Mt *m, X86 *c) { (void)m; return (MtThread *)c; }
 
 typedef struct { const char *name; MtHle fn; } MtHleEntry;
 
+const char *mt_symbolize(Mt *m, uint32_t a, char *out, size_t cap);
 void mt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // call a guest function on a given CPU (any thread); returns eax
 uint32_t mt_call_on(Mt *m, X86 *c, uint32_t fn, int nargs, const uint32_t *args);
 void mt_check(Mt *m, X86 *c, uint32_t a, uint32_t n);
 // new guest thread state (stack, TLS); the CPU shares m->mem
+// NULL when every stack is in use
 MtThread *mt_thread_new(Mt *m);
+void mt_thread_free(MtThread *t);
+void mt_lock(Mt *m, X86 *c, pthread_mutex_t *mu);
 
 extern const MtHleEntry mt_hle_libc[];
 
