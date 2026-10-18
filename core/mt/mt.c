@@ -66,7 +66,7 @@ static void die(Mt *m, const char *fmt, ...) {
 
 const char *mt_str(Mt *m, uint32_t a) {
     if (!a) return NULL;
-    if (a >= X86_MEM_SIZE || !memchr(m->mem + a, 0, X86_MEM_SIZE - a)) die(m, "bad string pointer %#x", a);
+    if (a >= m->mem_size || !memchr(m->mem + a, 0, m->mem_size - a)) die(m, "bad string pointer %#x", a);
     return (const char *)m->mem + a;
 }
 
@@ -110,7 +110,7 @@ static uint32_t malloc_locked(Mt *m, uint32_t n) {
         }
     }
     uint32_t a = m->heap_next + HDR;
-    if (a + sz > MT_HEAP_HI) die(m, "guest heap exhausted (%u bytes)", n);
+    if (a + sz > m->heap_hi) die(m, "guest heap exhausted (%u bytes)", n);
     m->heap_next = a + sz;
     memcpy(m->mem + a - HDR, &sz, 4);
     memcpy(m->mem + a - HDR + 4, "BLK!", 4);
@@ -199,11 +199,10 @@ uint32_t mt_call(Mt *m, uint32_t fn, int nargs, const uint32_t *args) {
 }
 
 static pthread_mutex_t g_thread_mu = PTHREAD_MUTEX_INITIALIZER;
-static uint32_t g_next_stack = MT_STACK_TOP;
+static uint32_t g_next_stack;
 // Stacks (with their errno and pthread_t objects) of threads that have ended,
-// for the next thread: there is room below MT_STACK_TOP for only 31, and one
-// more would grow down into the mapped voice data.
-#define MT_STACK_SLOTS ((MT_STACK_TOP - MT_MAP_HI) / 0x100000)
+// for the next thread: there is room below stack_top for only MT_STACK_SLOTS,
+// and one more would grow down into the mapped voice data.
 static struct { uint32_t top, errno_addr, self; } g_spare[MT_STACK_SLOTS];
 static int g_nspare;
 
@@ -211,6 +210,7 @@ MtThread *mt_thread_new(Mt *m) {
     MtThread *t = calloc(1, sizeof *t);
     t->m = m;
     x86_init(&t->cpu, m->mem);
+    t->cpu.mem_size = m->mem_size;
     t->cpu.trap_lo = MT_TRAP_BASE;
     t->cpu.trap_hi = MT_TRAP_BASE + 16u * MT_TRAP_SLOTS;
     t->cpu.trap = on_trap;
@@ -221,7 +221,7 @@ MtThread *mt_thread_new(Mt *m) {
         t->stack_top = g_spare[g_nspare].top;
         t->errno_addr = g_spare[g_nspare].errno_addr;
         t->self = g_spare[g_nspare].self;
-    } else if (g_next_stack - 0x100000 >= MT_MAP_HI) {
+    } else if (g_next_stack - 0x100000 >= m->map_hi) {
         t->stack_top = g_next_stack;
         g_next_stack -= 0x100000;  // 1 MB each
     } else {
@@ -281,14 +281,29 @@ static void data_imports_init(Mt *m);
 
 Mt *mt_create(char *err, size_t errlen) {
     Mt *m = calloc(1, sizeof *m);
-    m->mem = mmap(NULL, X86_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    // The full 2 GB when the process may map it; otherwise the largest smaller layout it may.
+    static const struct { uint32_t size, heap_hi; } layouts[] = {
+        {0x80000000u, 0x40000000u}, {0x50000000u, 0x20000000u}, {0x40000000u, 0x18000000u},
+    };
+    m->mem = MAP_FAILED;
+    const char *force = getenv("CLASSICVOICES_MT_GUEST_MB");  // testing: pretend only this much can be mapped
+    for (size_t i = 0; i < sizeof layouts / sizeof layouts[0] && m->mem == MAP_FAILED; i++) {
+        if (force && layouts[i].size > (uint32_t)atoi(force) << 20) continue;
+        m->mem = mmap(NULL, layouts[i].size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        if (m->mem == MAP_FAILED) continue;
+        m->mem_size = layouts[i].size;
+        m->heap_hi = m->map_lo = layouts[i].heap_hi;
+        m->stack_top = m->mem_size - 0x100000u;
+        m->map_hi = m->stack_top - MT_STACK_SLOTS * 0x100000u;
+        if (i) mt_log("guest space reduced to %u MB (this process may not map more)", m->mem_size >> 20);
+    }
     if (m->mem == MAP_FAILED) { snprintf(err, errlen, "cannot reserve guest memory"); free(m); return NULL; }
     m->data_next = MT_DATA_BASE;
-    g_next_stack = MT_STACK_TOP;
+    g_next_stack = m->stack_top;
     g_nspare = 0;
     m->main = mt_thread_new(m);
     m->heap_lo = m->heap_next = MT_IMAGE_BASE;  // moved past the images as they load
-    m->map_next = MT_MAP_LO;
+    m->map_next = m->map_lo;
     memset(g_free_small, 0, sizeof g_free_small);
     g_free_large = 0;
     // the stop address must be executable by the trap check: it lies below trap_lo,
@@ -306,7 +321,7 @@ void mt_destroy(Mt *m) {
     if (m->live > 0) mt_log("%d engine threads did not stop; leaking the engine", m->live);
     if (m->live > 0) return;
     mt_reset_globals();
-    munmap(m->mem, X86_MEM_SIZE);
+    munmap(m->mem, m->mem_size);
     for (int i = 0; i < m->nimages; i++) free(m->images[i].file);
     for (int i = 0; i < m->ntraps; i++) free((void *)m->trap_name[i]);
     free(m);
@@ -363,7 +378,7 @@ static void map_image(Mt *m, MtImage *im) {
     im->lo = lo;
     im->hi = hi;
     uint32_t base = (m->heap_next + 0xFFFFFu) & ~0xFFFFFu;  // 1 MB aligned
-    if (base + (hi - lo) > MT_HEAP_HI) die(m, "no room for %s", im->path);
+    if (base + (hi - lo) > m->heap_hi) die(m, "no room for %s", im->path);
     im->slide = base - lo;
     m->heap_next = base + ((hi - lo + 0xFFFFFu) & ~0xFFFFFu);
     m->heap_lo = m->heap_next;

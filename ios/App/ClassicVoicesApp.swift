@@ -38,6 +38,14 @@ struct ClassicVoicesApp: App {
         if let i = CommandLine.arguments.firstIndex(of: "-speaktime"), i + 1 < CommandLine.arguments.count {
             SpeakTimeTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
+        if CommandLine.arguments.contains("-vmprobe") {
+            Task.detached {
+                for l in VoiceStore.shared.vmProbe() { print("VMPROBE extension: \(l)") }
+                // The same in the app, for comparison.
+                for l in (StoreOps(root: FileManager.default.temporaryDirectory).perform(["op": "vmprobe"])["lines"] as? [String] ?? []) { print("VMPROBE app: \(l)") }
+                fflush(stdout); exit(0)
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "-storetest"), i + 1 < CommandLine.arguments.count {
             let keys = CommandLine.arguments[i + 1].split(separator: ",").map(String.init)
             Task.detached {

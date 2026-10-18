@@ -186,6 +186,8 @@ final class VoiceStore: @unchecked Sendable {
         } catch { return error.localizedDescription }
     }
 
+    func vmProbe() -> [String] { (try? call(["op": "vmprobe"]))?["lines"] as? [String] ?? ["unreachable"] }
+
     func setHidden(_ ids: Set<String>) {
         VoiceCatalog.hiddenVoices = ids  // app side: cache + legacy defaults
         if let data = try? JSONEncoder().encode(ids.sorted()) { try? write(data, at: "hidden.json") }

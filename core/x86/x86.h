@@ -9,7 +9,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define X86_MEM_SIZE 0x80000000u  // 2 GB guest space, reserved, mostly unbacked
+#define X86_MEM_SIZE 0x80000000u  // 2 GB guest space, reserved, mostly unbacked (the most; see X86.mem_size)
 
 enum { EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI };
 
@@ -32,6 +32,7 @@ struct X86 {
     uint16_t fcw, fsw_cc;  // control word; condition bits C0..C3 in fsw layout
 
     uint8_t *mem;
+    uint32_t mem_size;          // bytes mapped at mem (X86_MEM_SIZE, or less where a process may not map that much)
     uint32_t trap_lo, trap_hi;  // eip in [lo, hi) = host function
     X86Trap trap;
     void *trap_ctx;
@@ -57,8 +58,8 @@ void x86_set_eflags(X86 *c, uint32_t v);
 
 // guest memory (little-endian host assumed)
 static inline void x86_check(X86 *c, uint32_t a, uint32_t n) {
-    if (__builtin_expect((uint64_t)a + n > X86_MEM_SIZE || a < 0x1000, 0))
-        x86_fault(c, "bad access %#x (%u bytes) at eip %#x (esp %#x -> %#x)", a, n, c->eip, c->r[ESP], (c->r[ESP] >= 0x1000 && c->r[ESP] < X86_MEM_SIZE - 4) ? *(uint32_t *)(void *)(c->mem + c->r[ESP]) : 0);
+    if (__builtin_expect((uint64_t)a + n > c->mem_size || a < 0x1000, 0))
+        x86_fault(c, "bad access %#x (%u bytes) at eip %#x (esp %#x -> %#x)", a, n, c->eip, c->r[ESP], (c->r[ESP] >= 0x1000 && c->r[ESP] < c->mem_size - 4) ? *(uint32_t *)(void *)(c->mem + c->r[ESP]) : 0);
 }
 static inline uint8_t rd8(X86 *c, uint32_t a) { x86_check(c, a, 1); return c->mem[a]; }
 static inline uint16_t rd16(X86 *c, uint32_t a) { x86_check(c, a, 2); uint16_t v; __builtin_memcpy(&v, c->mem + a, 2); return v; }

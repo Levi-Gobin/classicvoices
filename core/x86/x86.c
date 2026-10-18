@@ -44,6 +44,7 @@ void x86_fault(X86 *c, const char *fmt, ...) {
 void x86_init(X86 *c, uint8_t *mem) {
     memset(c, 0, sizeof *c);
     c->mem = mem;
+    c->mem_size = X86_MEM_SIZE;
     c->mxcsr = 0x1F80;
     c->fcw = 0x037F;
     for (int i = 0; i < 8; i++) c->tag[i] = 1;

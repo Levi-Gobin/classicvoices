@@ -125,6 +125,49 @@ final class StoreOps {
                     "totalMs": Date().timeIntervalSince(t0) * 1000,
                     "error": frames > 0 ? "" : String(cString: vxs_last_error(stream))]
 
+        // Developer probe: how much address space can this process still map?
+        case "vmprobe":
+            var lines: [String] = []
+            var info = task_vm_info_data_t()
+            var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+            let kr = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+            }
+            if kr == KERN_SUCCESS {
+                lines.append("virtual \(info.virtual_size >> 20) MB, resident \(info.resident_size >> 20) MB, footprint \(info.phys_footprint >> 20) MB")
+            }
+            for mb in [2048, 1536, 1280, 1024, 768, 512, 256] {
+                let p = mmap(nil, mb << 20, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+                if p == MAP_FAILED { lines.append("mmap \(mb) MB: FAILED errno \(errno)") }
+                else { lines.append("mmap \(mb) MB: ok"); munmap(p, mb << 20) }
+            }
+            // Two at once, as the engine plus a Vocalizer voice would need.
+            let a = mmap(nil, 1 << 30, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+            let b = mmap(nil, 1 << 30, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+            lines.append("two 1 GB maps: \(a != MAP_FAILED && b != MAP_FAILED ? "ok" : "FAILED errno \(errno)")")
+            if a != MAP_FAILED { munmap(a, 1 << 30) }
+            if b != MAP_FAILED { munmap(b, 1 << 30) }
+            // Does an unbacked reservation escape the limit? 2 GB PROT_NONE, then
+            // make the parts MacinTalk uses writable: 1 GB low, 64 MB of stacks high.
+            let r = mmap(nil, 2 << 30, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0)
+            if r == MAP_FAILED { lines.append("reserve 2 GB PROT_NONE: FAILED errno \(errno)") }
+            else {
+                lines.append("reserve 2 GB PROT_NONE: ok")
+                let lo = mprotect(r, 1 << 30, PROT_READ | PROT_WRITE)
+                lines.append("mprotect low 1 GB RW: \(lo == 0 ? "ok" : "FAILED errno \(errno)")")
+                let hi = mprotect(r! + (2 << 30) - (64 << 20), 64 << 20, PROT_READ | PROT_WRITE)
+                lines.append("mprotect top 64 MB RW: \(hi == 0 ? "ok" : "FAILED errno \(errno)")")
+                if lo == 0 { (r! + (512 << 20)).storeBytes(of: 1, as: UInt8.self); lines.append("touch low: ok") }
+                if hi == 0 { (r! + (2 << 30) - 4096).storeBytes(of: 1, as: UInt8.self); lines.append("touch top: ok") }
+                let more = mprotect(r! + (1 << 30), 512 << 20, PROT_READ | PROT_WRITE)
+                lines.append("mprotect another 512 MB RW (1.5 GB total): \(more == 0 ? "ok" : "FAILED errno \(errno)")")
+                let c = mmap(nil, 1 << 30, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0)
+                lines.append("plus a separate 1 GB RW map: \(c == MAP_FAILED ? "FAILED errno \(errno)" : "ok")")
+                if c != MAP_FAILED { munmap(c, 1 << 30) }
+                munmap(r, 2 << 30)
+            }
+            return ["lines": lines]
+
         default:
             return fail("unknown op")
         }

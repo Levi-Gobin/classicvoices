@@ -174,7 +174,19 @@ static Vx *engine_for(VxStream *s, const char *key) {
     }
     if (lru->vx) { vx_close(lru->vx); lru->vx = NULL; }
     Vx *vx = open_engine(s->root, s->asset_root, key, s->err, sizeof s->err);
-    if (!vx) return NULL;
+    if (!vx) {
+        // Devices with 3 GB of RAM let a process map only ~1.3 GB: one
+        // Vocalizer engine (1 GB) at a time, and no MacinTalk beside it. Make
+        // room and try once more.
+        int freed = 0;
+        for (int i = 0; i < MAX_ENGINES; i++)
+            if (s->engines[i].vx) { vx_close(s->engines[i].vx); s->engines[i].vx = NULL; s->engines[i].key[0] = 0; freed = 1; }
+        if (s->mt) { mte_close(s->mt); s->mt = NULL; s->mt_gen[0] = 0; freed = 1; }
+        if (!freed) return NULL;
+        os_log_info(OS_LOG_DEFAULT, "CLASSICVOICES %{public}s: %{public}s; retrying with the other engines closed", key, s->err);
+        vx = open_engine(s->root, s->asset_root, key, s->err, sizeof s->err);
+        if (!vx) return NULL;
+    }
     snprintf(lru->key, sizeof lru->key, "%s", key);
     lru->vx = vx;
     lru->failures = 0;

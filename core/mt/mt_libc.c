@@ -25,8 +25,7 @@ static inline float argf(X86 *c, int word) { uint32_t u = A(c, word); float f; m
 static inline void RD(X86 *c, double v) { x86_fpush(c, v); }  // float/double return in ST(0)
 
 void mt_check(Mt *m, X86 *c, uint32_t a, uint32_t n) {
-    (void)m;
-    if (n && ((uint64_t)a + n > X86_MEM_SIZE || a < 0x1000)) x86_fault(c, "bad guest range %#x+%u", a, n);
+    if (n && ((uint64_t)a + n > m->mem_size || a < 0x1000)) x86_fault(c, "bad guest range %#x+%u", a, n);
 }
 
 uint32_t *mt_errno_slot(Mt *m, X86 *c) { return (uint32_t *)(void *)G(m, mt_tls(m, c)->errno_addr); }
@@ -456,7 +455,7 @@ static void h_mmap(Mt *m, X86 *c) {
     size_t span = ((size_t)len + page - 1) & ~(page - 1);
     pthread_mutex_lock(&g_map_mu);
     uint32_t a = (m->map_next + (uint32_t)page - 1) & ~((uint32_t)page - 1);
-    if ((uint64_t)a + span > MT_MAP_HI) { pthread_mutex_unlock(&g_map_mu); set_errno(m, c, ENOMEM); R(c, ~0u); return; }
+    if ((uint64_t)a + span > m->map_hi) { pthread_mutex_unlock(&g_map_mu); set_errno(m, c, ENOMEM); R(c, ~0u); return; }
     m->map_next = a + (uint32_t)span;
     pthread_mutex_unlock(&g_map_mu);
     if (!(flags & 0x1000) && fd >= 0) {  // not MAP_ANON
@@ -475,7 +474,7 @@ static void h_munmap(Mt *m, X86 *c) {
     uint32_t a = A(c, 0), len = A(c, 1);
     size_t page = (size_t)getpagesize();
     size_t span = ((size_t)len + page - 1) & ~(page - 1);
-    if (a >= MT_MAP_LO && a + span <= MT_MAP_HI)
+    if (a >= m->map_lo && a + span <= m->map_hi)
         mmap(G(m, a), span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);  // drop the file pages
     R(c, 0);
 }

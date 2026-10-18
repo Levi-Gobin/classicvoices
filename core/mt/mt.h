@@ -10,15 +10,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Guest memory map (2 GB)
+// Guest memory map. Normally 2 GB: images and heap up to 1 GB, file mappings
+// (Alex's sample bank is ~650 MB) up to the stacks, 31 one-megabyte stacks
+// under the top. Devices with 3 GB of RAM let a process map only ~1.3 GB, so
+// mt_create falls back to 1.25 GB and 1 GB layouts (Mt.heap_hi/map_lo/map_hi/
+// stack_top); Leopard's Alex still fits in the first of those.
 #define MT_TRAP_BASE   0x00100000u  // 16 bytes per imported function
 #define MT_TRAP_SLOTS  8192u
 #define MT_DATA_BASE   0x00300000u  // imported data symbols, host-owned objects (to 0x01000000)
 #define MT_IMAGE_BASE  0x01000000u  // images, slid here one after another
-#define MT_HEAP_HI     0x40000000u  // heap grows from the end of the images up to here
-#define MT_MAP_LO      0x40000000u  // file mappings (Alex's sample bank is ~650 MB)
-#define MT_MAP_HI      0x7E000000u
-#define MT_STACK_TOP   0x7FF00000u  // 1 MB stacks downward from here, one per thread
+#define MT_STACK_SLOTS 31u          // 1 MB stacks downward from stack_top, one per thread
 #define MT_STOP        0x000FFFF0u  // return address that ends a host->guest call
 
 typedef struct Mt Mt;
@@ -44,6 +45,10 @@ typedef struct {
 struct MtThread;
 struct Mt {
     uint8_t *mem;
+    uint32_t mem_size;   // guest space mapped at mem
+    uint32_t heap_hi;    // heap grows from the end of the images up to here
+    uint32_t map_lo, map_hi;  // file mappings
+    uint32_t stack_top;
     struct MtThread *main;  // the thread that loads the engine and calls into it
     jmp_buf *fault;
     char err[512];

@@ -178,8 +178,30 @@ team-prefixed group. So, since 2026-10-18:
   `-import <folder or Documents-relative path>`, `-latency [a.b,c.d]`,
   `-storetest key,key`. devicectl passes app args after `--`.
 - A copy without any group can be built for testing with
-  `CODE_SIGN_ENTITLEMENTS=/tmp/nogroup.entitlements` (an empty plist) on both
+  `CODE_SIGN_ENTITLEMENTS=tools/nogroup.entitlements` (an empty plist) on both
   targets; that is what the iPad verification used.
+
+## Devices with 3 GB of RAM (iPad Air 3, iPhone XR/XS/11, iPad 7-9, mini 5)
+
+A process there may map only ~1.3 GB of anonymous memory (mmap fails with
+ENOMEM beyond that, PROT_NONE reservations included; measured on an iPad Air 3
+in both the extension and the app). The engines' flat guest spaces hit this:
+
+- Vocalizer reserves 1 GB per engine (`GUEST_MEM_SIZE`), so a second engine
+  (another language or firmware) failed to open and VoiceOver went silent on
+  every voice switch. `engine_for` (vxstream.c) now closes every other engine,
+  MacinTalk included, and retries once when an open fails. Switching costs a
+  reopen (milliseconds) on such devices; unchanged elsewhere.
+- MacinTalk reserved a fixed 2 GB (`X86_MEM_SIZE`), so `mte_open` failed with
+  "cannot reserve guest memory". `mt_create` now tries 2 GB, then 1.25 GB
+  (heap to 0x20000000, 736 MB of file mappings: Leopard's 669 MB Alex fits),
+  then 1 GB (heap to 0x18000000). The layout lives in `Mt` (heap_hi, map_lo,
+  map_hi, stack_top) and `X86.mem_size`; `CLASSICVOICES_MT_GUEST_MB=1280`
+  forces a smaller layout for testing (`build/mtsay`). Fred and Alex render
+  bit-identically in all three.
+- `-speaktime a.b,c.d` (speak + didFinish timing) is the reliable device check;
+  `AVSpeechSynthesizer.write` returns a lone 256-frame buffer for some engines
+  even when speech is fine.
 
 ## macOS
 
