@@ -77,8 +77,8 @@ downloaded and decrypted with `tools/ipswtool.py ios <ver> iPhone2,1 -y --no-mou
   `synth_<voice>_full_155mrf22_*.dat` (about 107 MB, needing a 512 MB guest
   address space).
 - The app downloads them on demand (EnhancedDownloads.swift: SHA-1 check, zip
-  extraction) into the App Group at EnhancedVoices/<build>/<lang>. Engine keys
-  are "ios6e/en-US".
+  extraction) and hands them to the speech extension's own store (see "Voice
+  store" below) at <store>/<build>/<lang>. Engine keys are "ios6e/en-US".
 - `tools/fetch_assets.py <catalog> <format> <dir>` mirrors them on the Mac
   (downloads/assets5, downloads/assets6).
 
@@ -132,6 +132,54 @@ downloaded and decrypted with `tools/ipswtool.py ios <ver> iPhone2,1 -y --no-mou
   request.
 - Leading and trailing engine silence is trimmed in vxstream.c, keeping 5 ms
   before speech and 30 ms after.
+
+## Voice store (no App Group needed)
+
+Downloaded and added voices used to live in the App Group. Sideloading tools
+(Sideloadly with a free Apple ID at least) strip that entitlement: the iPad
+copy reported `App Group ... (NOT available)`, every download failed with
+"couldn't create the file", and testers saw the same. macOS also warns that an
+ad hoc signed app "tried to access data from other apps" when it opens the
+team-prefixed group. So, since 2026-10-18:
+
+- The **extension owns the voices**: `<Synth container>/Library/Application
+  Support/EnhancedVoices/` (`VoiceCatalog.extensionStore`), same layout as the
+  group had. Its container belongs to the extension bundle, so what it writes
+  while the app hosts it is there when VoiceOver hosts it. It survives app
+  updates (the container UUID changes, the data stays).
+- The **app hosts its own audio unit** (`AVAudioUnit.instantiate` with
+  'ausp'/'cvox'/'ClVo'; the component manager lists 0 matches but instantiate
+  works, 200-900 ms) and talks to it over `messageChannel(for:
+  "com.levigobin.ClassicVoices.files")`. Messages are dictionaries with an
+  "op": put (4 MB chunks into .incoming), commit, delete, write/read (small
+  files), tree, catalog (the extension's VoiceCatalog.enhanced, JSON), test.
+  `Shared/StoreOps.swift` implements them; `Synth/FileChannel.swift` is the
+  extension side; `App/VoiceStore.swift` the app side. Measured 600-760 MB/s
+  on an iPad Air 3; the extension writes to Application Support, Caches,
+  Documents and tmp of its container (not its root).
+- **Speaking is untouched**: the channel is only used while the app hosts the
+  unit. First audio for a store voice equals a bundled one (80 ms on that
+  iPad through AVSpeechSynthesizer; the first use of a voice adds its load
+  time wherever the files live).
+- **Old voices stay**: at every start the extension links whatever the App
+  Group holds into the store (`VoiceCatalog.adoptLegacy`, symlinks refreshed
+  because the group path can change). Deleting a linked voice deletes the
+  target too. The app never touches the group itself any more (no macOS
+  prompt), except `VoiceStore`'s fallback when it can't host the unit.
+- The app's view of what's installed is `VoiceStore.snapshot` (tree +
+  catalog from the extension); `VoiceCatalog.remoteEnhanced` /
+  `remoteMacinTalkEngines` / `remoteHidden` make the shared code read it.
+  Hidden voices go to `<store>/hidden.json` (old group defaults still read).
+- Downloads finishing in the background can't host the unit, so installs are
+  recorded as jobs in the app's Application Support/PendingInstalls and run
+  when the app is next in front (`VoiceStore.flush`, on launch and
+  scenePhase .active). Rows show 90 % until then.
+- Dev flags run off the main thread now (`VoiceStore` blocks): `-report`,
+  `-import <folder or Documents-relative path>`, `-latency [a.b,c.d]`,
+  `-storetest key,key`. devicectl passes app args after `--`.
+- A copy without any group can be built for testing with
+  `CODE_SIGN_ENTITLEMENTS=/tmp/nogroup.entitlements` (an empty plist) on both
+  targets; that is what the iPad verification used.
 
 ## macOS
 
@@ -412,9 +460,9 @@ re-implementation over a 2 GB guest space at `m->mem`.
 - Alex is not bundled (Leopard 669 MB, Snow Leopard 382 MB). iPhone: copy the
   .SpeechVoice into the app's Documents/MacinTalk/<gen>/ (`devicectl device
   copy to --domain-type appDataContainer --domain-identifier
-  com.levigobin.ClassicVoices`); the app moves it into the App Group at launch
-  (MacinTalkImport.swift; file sharing is on too). Mac: `cp -cR` (APFS clone)
-  into ~/Library/Group Containers/<group>/EnhancedVoices/<gen>/Voices/.
+  com.levigobin.ClassicVoices`); the app hands it to the extension's store at
+  launch (MacinTalkImport.swift; file sharing is on too). Mac: Add from Files,
+  or the same Documents/MacinTalk/<gen>/ inbox in the app's container.
 - Engine API: core/mt/mtengine.h (mte_open/speak/close; one generation
   loaded at a time; shutdown stops all guest threads); vxstream keys
   `mt104/Fred` etc.; build/mtsay <gen dir> <voice> text out.wav [rate%].

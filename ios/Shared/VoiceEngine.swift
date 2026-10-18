@@ -55,7 +55,7 @@ enum VoiceCatalog {
     static let macEras = [("mac107", "Lion", "10.7"), ("mac108", "Mountain Lion", "10.8"),
                           ("mac109", "Mavericks", "10.9")]
 
-    struct Entry: Hashable {
+    struct Entry: Hashable, Codable {
         let build: String      // "ios6" / "ios5" / "ios4" / "ios3", or a Mac era "mac107"
         let buildName: String  // "iOS 6" / "Lion"
         let version: String
@@ -110,9 +110,14 @@ enum VoiceCatalog {
     }
 
     static func hasMacinTalkEngine(_ gen: String) -> Bool {
-        hasBundledMacinTalk(gen)
-            || enhancedRoot.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(gen)/MacinTalk").path) } ?? false
+        if hasBundledMacinTalk(gen) { return true }
+        if let remote = remoteMacinTalkEngines { return remote.contains(gen) }
+        return enhancedRoot.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent("\(gen)/MacinTalk").path) } ?? false
     }
+
+    /// MacinTalk engines the extension has (added files), as it reported them
+    /// to the app over its message channel. nil in the extension itself.
+    nonisolated(unsafe) static var remoteMacinTalkEngines: Set<String>?
 
     /// Nuance language codes (broker.hdr <langcode>) used by the Mac voices.
     static let nuanceLanguages = [
@@ -171,10 +176,69 @@ enum VoiceCatalog {
         return nil
     }()
 
-    /// Downloaded enhanced voices: <group>/EnhancedVoices/<build>/<lang>/
-    static var enhancedRoot: URL? {
+    /// The speech extension's own voice store, in its container: the app fills
+    /// it over the audio unit's message channel (FileChannel), so no App Group
+    /// is needed. Sideloading tools often drop that entitlement. Layout as the
+    /// App Group had: <store>/<build>/<lang>/, <store>/<era>/<Voice>/,
+    /// <store>/<gen>/MacinTalk ... Only the extension process has one.
+    static let extensionStore: URL? = {
+        guard Bundle.main.bundleURL.pathExtension == "appex",
+              let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let store = base.appendingPathComponent("EnhancedVoices")
+        try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        return store
+    }()
+
+    /// Voices downloaded by earlier versions into the App Group, when there is one.
+    static var legacyGroupRoot: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
             .appendingPathComponent("EnhancedVoices")
+    }
+
+    /// Where downloaded voices live for this process: the extension's store
+    /// (which also links to the App Group's voices, see adoptLegacy), or, in
+    /// the app, the App Group for the few developer tools that read files
+    /// directly. App features go through VoiceStore instead.
+    static var enhancedRoot: URL? { extensionStore ?? legacyGroupRoot }
+
+    /// Extension only: make voices the App Group holds appear in the store as
+    /// symbolic links, so one root serves both. Links are refreshed each time
+    /// because the group container's path can change between installs.
+    static func adoptLegacy() {
+        guard let store = extensionStore, let group = legacyGroupRoot else { return }
+        let fm = FileManager.default
+        func prune(_ dir: URL, depth: Int) {
+            guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { return }
+            for n in names {
+                let u = dir.appendingPathComponent(n)
+                if let dest = try? fm.destinationOfSymbolicLink(atPath: u.path) {
+                    if !fm.fileExists(atPath: dest) { try? fm.removeItem(at: u) }
+                } else if depth < 3, (try? u.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    prune(u, depth: depth + 1)
+                }
+            }
+        }
+        prune(store, depth: 0)
+        guard fm.fileExists(atPath: group.path) else { return }
+        func link(_ from: URL, _ to: URL, depth: Int) {
+            guard let names = try? fm.contentsOfDirectory(atPath: from.path) else { return }
+            for n in names where !n.hasPrefix(".staging") {
+                let src = from.appendingPathComponent(n), dst = to.appendingPathComponent(n)
+                let srcIsDir = (try? src.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                if (try? dst.checkResourceIsReachable()) == true || (try? fm.destinationOfSymbolicLink(atPath: dst.path)) != nil {
+                    // Both have it: look inside folders (not voices themselves).
+                    if srcIsDir, depth < 3, (try? fm.destinationOfSymbolicLink(atPath: dst.path)) == nil,
+                       n == "Voices" || depth < 1 || n == ".installed" {
+                        link(src, dst, depth: depth + 1)
+                    }
+                } else {
+                    try? fm.createDirectory(at: to, withIntermediateDirectories: true)
+                    try? fm.createSymbolicLink(at: dst, withDestinationURL: src)
+                }
+            }
+        }
+        link(group, store, depth: 0)
     }
 
     static func enhancedDirectory(build: String, language: String) -> URL? {
@@ -200,9 +264,19 @@ enum VoiceCatalog {
         return out + macVoices(in: root) + macinTalkVoices(in: root)
     }()
 
+    /// The extension's downloaded voices as it last reported them to the app
+    /// (VoiceStore.refresh). nil in the extension itself.
+    nonisolated(unsafe) static var remoteEnhanced: [Entry]?
+
     /// Re-scanned each time: voices can be downloaded while we run.
     static var enhanced: [Entry] {
+        if let remoteEnhanced { return remoteEnhanced }
         guard let base = enhancedRoot else { return [] }
+        return scanEnhanced(base)
+    }
+
+    /// Downloaded voices under one root: <build>/<lang>/, Mac eras, MacinTalk.
+    static func scanEnhanced(_ base: URL) -> [Entry] {
         var out: [Entry] = []
         for (build, buildName, version) in builds {
             let dir = base.appendingPathComponent(build)
@@ -234,11 +308,26 @@ enum VoiceCatalog {
     }
 
     /// Voices switched off in the app (by identifier): the system doesn't see
-    /// them. Kept in the App Group so the extension reads the same list.
+    /// them. The app sends the list to the extension's store (hidden.json);
+    /// older versions kept it in the App Group's defaults, still read when
+    /// the store has none.
     static var hiddenVoices: Set<String> {
-        get { Set(UserDefaults(suiteName: appGroup)?.stringArray(forKey: "hiddenVoices") ?? []) }
-        set { UserDefaults(suiteName: appGroup)?.set(newValue.sorted(), forKey: "hiddenVoices") }
+        get {
+            if let file = extensionStore?.appendingPathComponent("hidden.json"),
+               let data = try? Data(contentsOf: file), let list = try? JSONDecoder().decode([String].self, from: data) {
+                return Set(list)
+            }
+            if let cached = remoteHidden { return cached }
+            return Set(UserDefaults(suiteName: appGroup)?.stringArray(forKey: "hiddenVoices") ?? [])
+        }
+        set {
+            remoteHidden = newValue
+            UserDefaults(suiteName: appGroup)?.set(newValue.sorted(), forKey: "hiddenVoices")
+            if let file = extensionStore?.appendingPathComponent("hidden.json"),
+               let data = try? JSONEncoder().encode(newValue.sorted()) { try? data.write(to: file) }
+        }
     }
+    nonisolated(unsafe) static var remoteHidden: Set<String>?
 
     static var providerVoices: [AVSpeechSynthesisProviderVoice] {
         let hidden = hiddenVoices

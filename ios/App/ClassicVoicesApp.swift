@@ -10,27 +10,50 @@ struct ClassicVoicesApp: App {
     init() {
         // `-import <folder>` adds Mac OS X speech files as Add from Files does, then quits.
         if let i = CommandLine.arguments.firstIndex(of: "-import"), i + 1 < CommandLine.arguments.count {
-            let url = URL(fileURLWithPath: CommandLine.arguments[i + 1])
-            let found = SpeechDataImport.scan([url])
-            print("IMPORT found engine=\(found.engine?.path ?? "none") dictionary=\(found.dictionary != nil) libraries=\(found.libraries.map(\.lastPathComponent)) voices=\(found.voices.count) other=\(found.otherVoices)")
-            do {
-                let o = try SpeechDataImport.install(found, from: [url])
-                print("IMPORT \(o.gen ?? "?"): added \(o.added); missing \(o.missing); test \(o.test ?? "-"); needsRelease \(o.needsRelease)")
-            } catch {
-                print("IMPORT error: \(error.localizedDescription)")
+            // An absolute path, or one inside the app's Documents folder.
+            let arg = CommandLine.arguments[i + 1]
+            let url = arg.hasPrefix("/") ? URL(fileURLWithPath: arg)
+                : FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(arg)
+            Task.detached {
+                let found = SpeechDataImport.scan([url])
+                print("IMPORT found engine=\(found.engine?.path ?? "none") dictionary=\(found.dictionary != nil) libraries=\(found.libraries.map(\.lastPathComponent)) voices=\(found.voices.count) other=\(found.otherVoices)")
+                do {
+                    let o = try SpeechDataImport.install(found, from: [url])
+                    print("IMPORT \(o.gen ?? "?"): added \(o.added); missing \(o.missing); test \(o.test ?? "-"); needsRelease \(o.needsRelease)")
+                } catch {
+                    print("IMPORT error: \(error.localizedDescription)")
+                }
+                fflush(stdout)
+                exit(0)
             }
-            fflush(stdout)
-            exit(0)
         }
         _ = VoiceLibrary.shared
-        let imported = MacinTalkImport.run()
-        if !imported.isEmpty { print("IMPORTED \(imported)") }
+        Task.detached {
+            let imported = MacinTalkImport.run()
+            if !imported.isEmpty { print("IMPORTED \(imported)"); fflush(stdout) }
+        }
         if CommandLine.arguments.contains("-benchmark") { Benchmark.run() }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
+        if CommandLine.arguments.contains("-latency") { LatencyTest.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "-speaktime"), i + 1 < CommandLine.arguments.count {
+            SpeakTimeTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
+        }
+        if let i = CommandLine.arguments.firstIndex(of: "-storetest"), i + 1 < CommandLine.arguments.count {
+            let keys = CommandLine.arguments[i + 1].split(separator: ",").map(String.init)
+            Task.detached {
+                for k in keys { print("STORETEST \(k): \(VoiceStore.shared.test(k) ?? "speaks")") }
+                fflush(stdout); exit(0)
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "-download"), i + 1 < CommandLine.arguments.count {
             DownloadTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
-        if CommandLine.arguments.contains("-report") { print(Diagnostics.report(downloadErrors: [:])); fflush(stdout) }
+        if CommandLine.arguments.contains("-report") {
+            Task.detached {  // after the store has answered, so the report shows it
+                try? VoiceStore.shared.refresh()
+                print(Diagnostics.report(downloadErrors: [:])); fflush(stdout)
+            }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "-stress"), i + 1 < CommandLine.arguments.count {
             let a = CommandLine.arguments[i + 1].split(separator: ",").map(String.init)
             StressTest.shared.run(key: a[0], count: a.count > 1 ? Int(a[1]) ?? 300 : 300)
@@ -42,11 +65,20 @@ struct ClassicVoicesApp: App {
         AVSpeechSynthesisProviderVoice.updateSpeechVoices()
     }
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some Scene {
         WindowGroup { RootView() }
         #if os(macOS)
             .defaultSize(width: 760, height: 720)
         #endif
+            .onChange(of: scenePhase) { _, phase in
+                // Downloads that finished in the background are handed to the
+                // speech extension once the app is in front again.
+                if phase == .active, VoiceStore.shared.hasPending {
+                    Task.detached { try? VoiceStore.shared.flush() }
+                }
+            }
     }
 }
 

@@ -4,8 +4,8 @@ import Foundation
 import Observation
 
 /// Downloads the original iOS 5/6 enhanced voices from Apple's MobileAsset
-/// servers (as the phone's Settings did), verifies them, and unpacks them into
-/// the App Group so the speech extension can use them.
+/// servers (as the phone's Settings did), verifies them, and hands them to the
+/// speech extension's store (VoiceStore) so it can use them.
 @MainActor @Observable
 final class EnhancedDownloads {
     struct Asset: Codable, Hashable, Identifiable {
@@ -49,11 +49,11 @@ final class EnhancedDownloads {
 
     func refresh() {
         installed = Set(Self.catalog.filter { isInstalled($0) }.map(\.id))
+        for id in installed where progress[id] != nil { progress[id] = nil }  // finished while waiting
     }
 
     func isInstalled(_ a: Asset) -> Bool {
-        guard let dir = VoiceCatalog.enhancedDirectory(build: a.build, language: a.language) else { return false }
-        return FileManager.default.fileExists(atPath: dir.appendingPathComponent("broker.hdr.asset").path)
+        VoiceStore.shared.snapshot.has("\(a.build)/\(a.language)/broker.hdr.asset")
     }
 
     /// Name of the built-in voice for the same build/language (enhanced voices share it).
@@ -79,13 +79,14 @@ final class EnhancedDownloads {
         }
         if progress[a.id] == nil { progress[a.id] = 0.9 }
         report(a.id, 0.9)
+        let now = VoiceStore.isForeground
         Task.detached(priority: .userInitiated) {
             defer { try? FileManager.default.removeItem(at: zip) }
             do {
                 try Self.verify(zip, sha1: a.sha1)
-                try Self.install(zip, asset: a)
+                try Self.install(zip, asset: a, now: now)
                 await MainActor.run {
-                    self.progress[a.id] = nil
+                    if now { self.progress[a.id] = nil }  // else it clears when the store takes it
                     self.refresh()
                     self.onChange()
                     AVSpeechSynthesisProviderVoice.updateSpeechVoices()
@@ -100,12 +101,19 @@ final class EnhancedDownloads {
     }
 
     func remove(_ a: Asset) {
-        if let dir = VoiceCatalog.enhancedDirectory(build: a.build, language: a.language) {
-            try? FileManager.default.removeItem(at: dir)
+        Task.detached {
+            do {
+                try VoiceStore.shared.delete("\(a.build)/\(a.language)")
+                try VoiceStore.shared.refresh()
+            } catch {
+                await MainActor.run { self.errors[a.id] = error.localizedDescription }
+            }
+            await MainActor.run {
+                self.refresh()
+                self.onChange()
+                AVSpeechSynthesisProviderVoice.updateSpeechVoices()
+            }
         }
-        refresh()
-        onChange()
-        AVSpeechSynthesisProviderVoice.updateSpeechVoices()
     }
 
     // MARK: - steps
@@ -121,19 +129,19 @@ final class EnhancedDownloads {
         }
     }
 
-    nonisolated private static func install(_ zip: URL, asset a: Asset) throws {
-        guard let dest = VoiceCatalog.enhancedDirectory(build: a.build, language: a.language) else {
-            throw NSError(domain: "ClassicVoices", code: 2, userInfo: [NSLocalizedDescriptionKey: "App Group unavailable"])
-        }
-        let staging = dest.deletingLastPathComponent().appendingPathComponent(".staging-\(a.language)")
-        try? FileManager.default.removeItem(at: staging)
+    /// Unpacks the archive here, then hands the voice folder to the store.
+    nonisolated private static func install(_ zip: URL, asset a: Asset, now: Bool) throws {
+        let fm = FileManager.default
+        let staging = fm.temporaryDirectory.appendingPathComponent("enhanced-\(a.build)-\(a.language)")
+        try? fm.removeItem(at: staging)
+        defer { try? fm.removeItem(at: staging) }
         try ZipExtractor.extract(zip, to: staging)
         // Archives hold AssetData/<lang>.tmp/...
         let payload = staging.appendingPathComponent("AssetData/\(a.language).tmp")
-        try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try FileManager.default.moveItem(at: payload, to: dest)
-        try? FileManager.default.removeItem(at: staging)
+        let folder = staging.appendingPathComponent(a.language)
+        try fm.moveItem(at: payload, to: folder)
+        let job = VoiceStore.Job(items: [.init(local: a.language, dest: "\(a.build)/\(a.language)")])
+        try VoiceStore.shared.enqueue(job, payloads: [folder], run: now)
     }
 }
 

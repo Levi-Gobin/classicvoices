@@ -12,12 +12,18 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         try super.init(componentDescription: componentDescription, options: options)
         outputBus = try AUAudioUnitBus(format: format)
         busses = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outputBus])
+        VoiceCatalog.adoptLegacy()
         // Warm up the most recently used voice so the first utterance is fast.
         VoiceEngine.shared.preload(UserDefaults.standard.string(forKey: "lastVoiceKey") ?? "ios6/en-US")
         log.notice("CLASSICVOICES audio unit created; root=\(VoiceCatalog.root?.path ?? "nil", privacy: .public) voices=\(VoiceCatalog.entries.count)")
     }
 
     public override var outputBusses: AUAudioUnitBusArray { busses }
+
+    private let fileChannel = FileChannel()
+    public override func messageChannel(for channelName: String) -> any AUMessageChannel {
+        fileChannel
+    }
 
     public override var speechVoices: [AVSpeechSynthesisProviderVoice] {
         get {

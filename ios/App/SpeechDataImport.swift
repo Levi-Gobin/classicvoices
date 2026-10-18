@@ -179,8 +179,8 @@ enum SpeechDataImport {
         // what they hold.
         var staging: URL?
         defer { if let staging { try? fm.removeItem(at: staging) } }
-        if !found.packages.isEmpty || !found.diskImages.isEmpty, let root = VoiceCatalog.enhancedRoot {
-            let s = root.appendingPathComponent(".staging-import")
+        if !found.packages.isEmpty || !found.diskImages.isEmpty {
+            let s = fm.temporaryDirectory.appendingPathComponent("import-staging")
             try? fm.removeItem(at: s)
             try fm.createDirectory(at: s, withIntermediateDirectories: true)
             staging = s
@@ -214,42 +214,46 @@ enum SpeechDataImport {
             return out
         }
         out.gen = gen
-        guard let base = VoiceCatalog.enhancedRoot?.appendingPathComponent(gen) else {
-            throw ImportError("The app can\u{2019}t reach its shared storage (App Group), so it can\u{2019}t keep voices. The Diagnostics page says more.")
-        }
-        try fm.createDirectory(at: base, withIntermediateDirectories: true)
-
-        func copy(_ src: URL, _ dst: URL) throws {
-            try? fm.removeItem(at: dst)
-            try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try fm.copyItem(at: src.resolvingSymlinksInPath(), to: dst)
+        // Everything goes to the speech extension's store (VoiceStore) under <gen>/.
+        let store = VoiceStore.shared
+        func copy(_ src: URL, _ rel: String) throws {
+            status?("Copying \(src.lastPathComponent)\u{2026}")
+            try store.install(src.resolvingSymlinksInPath(), at: "\(gen)/\(rel)")
         }
         if let e = found.engine {
-            try copy(e, base.appendingPathComponent("MacinTalk"))
+            try copy(e, "MacinTalk")
             out.added.append("the \(releaseName(gen)) MacinTalk engine")
         }
         if let d = found.dictionary, engineGen != nil || !VoiceCatalog.hasMacinTalkEngine(gen) {
-            let dst = base.appendingPathComponent("SpeechDictionary")
-            try copy(d, dst)
+            // The dictionary plus any overlay files, assembled here first.
+            let tmp = fm.temporaryDirectory.appendingPathComponent("import-dictionary")
+            try? fm.removeItem(at: tmp)
+            defer { try? fm.removeItem(at: tmp) }
+            try fm.copyItem(at: d.resolvingSymlinksInPath(), to: tmp)
             if let o = found.dictionaryOverlay, let files = fm.enumerator(at: o, includingPropertiesForKeys: nil) {
                 for case let f as URL in files where f.path.hasPrefix(o.path + "/") {
                     guard (try? f.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-                    try copy(f, dst.appendingPathComponent(String(f.path.dropFirst(o.path.count + 1))))
+                    let dst = tmp.appendingPathComponent(String(f.path.dropFirst(o.path.count + 1)))
+                    try? fm.removeItem(at: dst)
+                    try fm.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    try fm.copyItem(at: f, to: dst)
                 }
             }
+            try copy(tmp, "SpeechDictionary")
             out.added.append("its pronunciation dictionary")
         }
         for lib in found.libraries where requiredLibraries(gen).contains(lib.lastPathComponent) {
-            try copy(lib, base.appendingPathComponent("lib").appendingPathComponent(lib.lastPathComponent))
+            try copy(lib, "lib/\(lib.lastPathComponent)")
             out.added.append(lib.lastPathComponent)
         }
         for v in found.voices {
-            try copy(v, base.appendingPathComponent("Voices").appendingPathComponent(v.lastPathComponent))
+            try copy(v, "Voices/\(v.lastPathComponent)")
         }
         if !found.voices.isEmpty {
             let names = found.voices.map { String($0.lastPathComponent.dropLast(".SpeechVoice".count)) }
             out.added.append(names.count == 1 ? "the voice \(names[0])" : "\(names.count) voices")
         }
+        try store.refresh()
         out.missing = missing(gen)
         if out.missing.isEmpty { out.test = test(gen, voices: found.voices) }
         return out
@@ -287,8 +291,8 @@ enum SpeechDataImport {
     /// What a release still needs before it can speak, said so someone can find it.
     static func missing(_ gen: String) -> [String] {
         guard !VoiceCatalog.hasBundledMacinTalk(gen) else { return [] }
-        let base = VoiceCatalog.enhancedRoot?.appendingPathComponent(gen)
-        func has(_ p: String) -> Bool { base.map { FileManager.default.fileExists(atPath: $0.appendingPathComponent(p).path) } ?? false }
+        let snap = VoiceStore.shared.snapshot
+        func has(_ p: String) -> Bool { snap.has("\(gen)/\(p)") }
         var out: [String] = []
         if !has("MacinTalk") {
             out.append("the MacinTalk engine: System/Library/Speech/Synthesizers/MacinTalk.SpeechSynthesizer")
@@ -299,8 +303,7 @@ enum SpeechDataImport {
         for lib in requiredLibraries(gen) where !has("lib/\(lib)") {
             out.append("\(lib), from usr/lib")
         }
-        let voices = (try? FileManager.default.contentsOfDirectory(atPath: base?.appendingPathComponent("Voices").path ?? "")) ?? []
-        if !voices.contains(where: { $0.hasSuffix(".SpeechVoice") }) {
+        if !snap.paths.contains(where: { $0.hasPrefix("\(gen)/Voices/") && $0.hasSuffix(".SpeechVoice") }) {
             out.append("its voices: System/Library/Speech/Voices")
         }
         return out
@@ -308,17 +311,14 @@ enum SpeechDataImport {
 
     /// Speaks a sentence with the new files, as the speech extension will.
     private static func test(_ gen: String, voices: [URL]) -> String {
-        guard let root = VoiceCatalog.root else { return "Not tested: the app\u{2019}s own voices are missing." }
-        let dir = VoiceCatalog.enhancedRoot?.appendingPathComponent(gen).appendingPathComponent("Voices")
+        let prefix = "\(gen)/Voices/"
         let names = (voices.map(\.lastPathComponent) +
-                     ((try? FileManager.default.contentsOfDirectory(atPath: dir?.path ?? "")) ?? []).sorted())
-            .filter { $0.hasSuffix(".SpeechVoice") }
+                     VoiceStore.shared.snapshot.paths.filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }.sorted())
+            .filter { $0.hasSuffix(".SpeechVoice") && !$0.contains("/") }
         guard let first = names.first(where: { $0 != "Alex.SpeechVoice" }) ?? names.first else { return "" }
         let voice = String(first.dropLast(".SpeechVoice".count))
-        var open = 0.0, firstAudio = 0.0, total = 0.0, audio = 0.0
-        let rc = vxs_benchmark(root.path, VoiceCatalog.enhancedRoot?.path, "\(gen)/\(voice)", "Testing.", 100,
-                               &open, &firstAudio, &total, &audio)
-        return rc == 0 && audio > 0 ? "\(voice) speaks." : "\(voice) didn\u{2019}t speak (error \(rc)). Make sure every file came from the same Mac OS X release."
+        guard let problem = VoiceStore.shared.test("\(gen)/\(voice)") else { return "\(voice) speaks." }
+        return "\(voice) didn\u{2019}t speak (\(problem)). Make sure every file came from the same Mac OS X release."
     }
 
     private static func nothingFound(_ found: Found) -> ImportError {

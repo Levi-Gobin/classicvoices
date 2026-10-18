@@ -84,6 +84,18 @@ final class VoiceLibrary {
         rebuild()
         enhanced.onChange = { [weak self] in self?.rebuild() }
         mac.onChange = { [weak self] in self?.rebuild() }
+        // The store (the speech extension) says what's downloaded; it answers
+        // off the main thread, and again after every change.
+        VoiceStore.shared.onChange = { [weak self] in
+            guard let self else { return }
+            self.enhanced.refresh()
+            self.mac.refresh()
+            self.rebuild()
+        }
+        Task.detached {
+            try? VoiceStore.shared.flush()   // installs left from a background download
+            try? VoiceStore.shared.refresh()
+        }
         Downloader.shared.restore()
     }
 
@@ -140,8 +152,11 @@ final class VoiceLibrary {
 
     func setHidden(_ id: String, _ on: Bool) {
         if on { hidden.insert(id) } else { hidden.remove(id) }
-        VoiceCatalog.hiddenVoices = hidden
-        AVSpeechSynthesisProviderVoice.updateSpeechVoices()
+        let list = hidden
+        Task.detached {
+            VoiceStore.shared.setHidden(list)
+            await MainActor.run { AVSpeechSynthesisProviderVoice.updateSpeechVoices() }
+        }
     }
 
     func download(_ item: VoiceItem) {

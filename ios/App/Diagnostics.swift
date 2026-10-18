@@ -25,6 +25,7 @@ enum Diagnostics {
         out.append("Profile App Groups: \(profile.map { $0.isEmpty ? "none" : $0.joined(separator: ", ") } ?? "no profile")")
         if let alt = info["ALTAppGroups"] as? [String] { out.append("ALTAppGroups: \(alt.joined(separator: ", "))") }
         #endif
+        out.append("Voice store: \(VoiceStore.shared.mode)" + (VoiceStore.shared.hasPending ? ", installs waiting for the next launch" : ""))
         let ext = Bundle.main.builtInPlugInsURL?.appendingPathComponent("Synth.appex")
         out.append("Speech extension: \(ext.map { FileManager.default.fileExists(atPath: $0.path) ? "present" : "MISSING" } ?? "MISSING")")
         #if os(iOS)

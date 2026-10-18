@@ -4,7 +4,7 @@ import Observation
 
 /// The voices Mac OS X Lion, Mountain Lion and Mavericks offered for download
 /// (System Preferences › Speech), fetched from Apple's software-update CDN and
-/// unpacked into the App Group: <group>/EnhancedVoices/<era>/<VoiceFolder>/.
+/// unpacked into the speech extension's store: <store>/<era>/<VoiceFolder>/.
 ///
 /// A package holds the premium voice and its compact sibling; both are kept.
 /// Lion and Mountain Lion voices run on the iOS 6 engine; Mavericks compacts
@@ -55,26 +55,22 @@ final class MacDownloads {
 
     /// Voice folders a downloaded package installed ("Karen", "KarenCompact").
     nonisolated static func folders(of v: Voice) -> [String] {
-        guard let marker = markerDirectory(v.era)?.appendingPathComponent(v.product),
-              let list = try? String(contentsOf: marker, encoding: .utf8) else { return [] }
+        guard let list = VoiceStore.shared.snapshot.markers[marker(v)] else { return [] }
         return list.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
     }
+
+    /// The small file listing a package's folders: <era>/.installed/<product>
+    nonisolated static func marker(_ v: Voice) -> String { "\(v.era)/.installed/\(v.product)" }
 
     init() {
         refresh()
         Downloader.shared.register(self, prefix: "mac")
     }
 
-    nonisolated private static func markerDirectory(_ era: String) -> URL? {
-        VoiceCatalog.enhancedRoot?.appendingPathComponent(era).appendingPathComponent(".installed")
-    }
-
     func refresh() {
-        installed = Set(Self.catalog.filter { v in
-            Self.markerDirectory(v.era).map {
-                FileManager.default.fileExists(atPath: $0.appendingPathComponent(v.product).path)
-            } ?? false
-        }.map(\.id))
+        let snap = VoiceStore.shared.snapshot
+        installed = Set(Self.catalog.filter { snap.has(Self.marker($0)) }.map(\.id))
+        for id in installed where progress[id] != nil { progress[id] = nil }  // finished while waiting
     }
 
     func download(_ v: Voice) {
@@ -95,12 +91,13 @@ final class MacDownloads {
         }
         if progress[v.id] == nil { progress[v.id] = 0.85 }
         report(v.id, 0.85)
+        let now = VoiceStore.isForeground
         Task.detached(priority: .userInitiated) {
             defer { try? FileManager.default.removeItem(at: pkg) }
             do {
-                try Self.install(pkg, voice: v) { p in Task { @MainActor in self.report(v.id, 0.85 + p * 0.15) } }
+                try Self.install(pkg, voice: v, now: now) { p in Task { @MainActor in self.report(v.id, 0.85 + p * 0.15) } }
                 await MainActor.run {
-                    self.progress[v.id] = nil
+                    if now { self.progress[v.id] = nil }
                     self.refresh()
                     self.onChange()
                     AVSpeechSynthesisProviderVoice.updateSpeechVoices()
@@ -115,44 +112,44 @@ final class MacDownloads {
     }
 
     func remove(_ v: Voice) {
-        if let marker = Self.markerDirectory(v.era)?.appendingPathComponent(v.product),
-           let list = try? String(contentsOf: marker, encoding: .utf8) {
-            let eraDir = marker.deletingLastPathComponent().deletingLastPathComponent()
-            for folder in list.split(separator: "\n") where !folder.isEmpty && !folder.contains("/") && !folder.contains("..") {
-                try? FileManager.default.removeItem(at: eraDir.appendingPathComponent(String(folder)))
+        let folders = Self.folders(of: v).filter { !$0.contains("/") && !$0.contains("..") }
+        Task.detached {
+            do {
+                for folder in folders { try VoiceStore.shared.delete("\(v.era)/\(folder)") }
+                try VoiceStore.shared.delete(Self.marker(v))
+                try VoiceStore.shared.refresh()
+            } catch {
+                await MainActor.run { self.errors[v.id] = error.localizedDescription }
             }
-            try? FileManager.default.removeItem(at: marker)
+            await MainActor.run {
+                self.refresh()
+                self.onChange()
+                AVSpeechSynthesisProviderVoice.updateSpeechVoices()
+            }
         }
-        refresh()
-        onChange()
-        AVSpeechSynthesisProviderVoice.updateSpeechVoices()
     }
 
     // MARK: - steps
 
-    nonisolated private static func install(_ pkg: URL, voice v: Voice, progress: @escaping (Double) -> Void) throws {
-        guard let eraDir = VoiceCatalog.enhancedRoot?.appendingPathComponent(v.era),
-              let markers = markerDirectory(v.era) else {
-            throw NSError(domain: "ClassicVoices", code: 2, userInfo: [NSLocalizedDescriptionKey: "App Group unavailable"])
-        }
-        let staging = eraDir.appendingPathComponent(".staging-\(v.product)")
-        try? FileManager.default.removeItem(at: staging)
-        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: staging) }
+    /// Unpacks the package here, then hands its voice folders to the store.
+    nonisolated private static func install(_ pkg: URL, voice v: Voice, now: Bool, progress: @escaping (Double) -> Void) throws {
+        let fm = FileManager.default
+        let staging = fm.temporaryDirectory.appendingPathComponent("mac-\(v.era)-\(v.product)")
+        try? fm.removeItem(at: staging)
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
         let folders = try MacVoicePackage.extract(pkg, to: staging, keep: { _ in true },
                                                   progress: progress)
         guard !folders.isEmpty else {
             throw NSError(domain: "ClassicVoices", code: 4, userInfo: [NSLocalizedDescriptionKey: "No voice in package"])
         }
+        var job = VoiceStore.Job()
         for f in folders {
-            let src = staging.appendingPathComponent(f)
-            try v.locale.write(to: src.appendingPathComponent("locale"), atomically: true, encoding: .utf8)
-            let dst = eraDir.appendingPathComponent(f)
-            try? FileManager.default.removeItem(at: dst)
-            try FileManager.default.moveItem(at: src, to: dst)
+            try v.locale.write(to: staging.appendingPathComponent(f).appendingPathComponent("locale"), atomically: true, encoding: .utf8)
+            job.items.append(.init(local: f, dest: "\(v.era)/\(f)"))
         }
-        try FileManager.default.createDirectory(at: markers, withIntermediateDirectories: true)
-        try folders.joined(separator: "\n").write(to: markers.appendingPathComponent(v.product), atomically: true, encoding: .utf8)
+        job.files.append(.init(dest: marker(v), data: Data(folders.joined(separator: "\n").utf8)))
+        try VoiceStore.shared.enqueue(job, payloads: folders.map { staging.appendingPathComponent($0) }, run: now)
     }
 }
 
