@@ -45,9 +45,12 @@ an hour later:
 - **NVDA**: the voices go into NVDA's settings folder and NVDA offers to
   install the add-on. Choose Yes, restart NVDA, and pick Classic Voices as the
   synthesizer.
-- **Mac**: the app is installed in Applications and opened. Because it's built
-  without an Apple developer account, macOS may ask whether to open "Classic
-  Voices Synthesizer": choose Open Anyway.
+- **Mac**: the app is installed in Applications and opened. If Classic Voices is
+  already installed, the script asks whether to replace it now, save the new
+  build in Downloads for later, or leave it: replacing an open copy stops its
+  voices until the new one opens. Because it's built without an Apple developer
+  account, macOS may ask whether to open "Classic Voices Synthesizer": choose
+  Open Anyway.
 - **iPhone**: `ClassicVoices.ipa` is saved in your Downloads folder and
   Sideloadly opens, if you have it, so you can install it.
 

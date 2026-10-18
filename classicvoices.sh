@@ -125,19 +125,52 @@ if has mac; then
     unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoices-mac-locked.zip" -d "$TMP" || fail "couldn't open the Mac app download."
     APPS=/Applications
     [ -w "$APPS" ] || { APPS="$HOME/Applications"; mkdir -p "$APPS"; }
-    LS=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-    osascript -e 'quit app "Classic Voices"' >/dev/null 2>&1 || true
-    rm -rf "$APPS/Classic Voices.app"
-    ditto -x -k "$TMP/ClassicVoices-mac.zip" "$APPS" || fail "couldn't install the Mac app."
-    "$LS" -f "$APPS/Classic Voices.app" >/dev/null 2>&1 || true
-    # macOS keeps a list of speech voices; restart it so the new ones appear.
-    killall axassetsd >/dev/null 2>&1 || true
-    sleep 2
-    open "$APPS/Classic Voices.app"
-    say "Installed the Mac app in $APPS and opened it."
-    say "If macOS asks whether to open Classic Voices Synthesizer, choose Open Anyway:"
-    say "that is its speech part, which the build signed without an Apple developer account."
-    say "The voices then appear in System Settings, Accessibility, Spoken Content and VoiceOver."
+    APP="$APPS/Classic Voices.app"
+    # Replacing a copy that is open stops its voices until the new one opens.
+    # If Classic Voices is already installed, ask instead of just doing it.
+    choice=1
+    if [ -d "$APP" ]; then
+        if pgrep -f "Classic Voices.app/" >/dev/null 2>&1; then
+            say "Classic Voices is already installed and open."
+            say "Replacing it now closes it and its voices for a moment: if VoiceOver is speaking"
+            say "with one of them, speech stops until the new copy opens. macOS may then ask to"
+            say "reopen Classic Voices and to open Classic Voices Synthesizer: choose Reopen and Open Anyway."
+        else
+            say "Classic Voices is already installed."
+        fi
+        say "  1. Replace it with the new build now"
+        say "  2. Save the new build in Downloads as Classic Voices.app, to install later"
+        say "  3. Leave the installed copy alone"
+        read -r -p "Type 1, 2 or 3 and press Return (Return alone means 1): " choice </dev/tty || choice=1
+    fi
+    case "$choice" in
+    2)
+        rm -rf "$OUT/Classic Voices.app"
+        ditto -x -k "$TMP/ClassicVoices-mac.zip" "$OUT" || fail "couldn't save the Mac app."
+        say "Saved the new build as Classic Voices.app in your Downloads folder."
+        say "To install it later: quit Classic Voices, drag the new one into $APPS replacing the old, and open it."
+        ;;
+    3)
+        say "Left the installed Mac app as it is."
+        ;;
+    *)
+        LS=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+        osascript -e 'quit app "Classic Voices"' >/dev/null 2>&1 || true
+        # The speech part keeps running after the app quits; stop it before its files go.
+        pkill -f "Classic Voices.app/Contents/PlugIns/Synth.appex" >/dev/null 2>&1 || true
+        rm -rf "$APP"
+        ditto -x -k "$TMP/ClassicVoices-mac.zip" "$APPS" || fail "couldn't install the Mac app."
+        "$LS" -f "$APP" >/dev/null 2>&1 || true
+        # macOS keeps a list of speech voices; restart it so the new ones appear.
+        killall axassetsd >/dev/null 2>&1 || true
+        sleep 2
+        open "$APP"
+        say "Installed the Mac app in $APPS and opened it."
+        say "If macOS asks whether to open Classic Voices Synthesizer, choose Open Anyway:"
+        say "that is its speech part, which the build signed without an Apple developer account."
+        say "The voices then appear in System Settings, Accessibility, Spoken Content and VoiceOver."
+        ;;
+    esac
 fi
 
 if has iphone; then
