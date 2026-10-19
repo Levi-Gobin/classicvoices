@@ -181,6 +181,45 @@ team-prefixed group. So, since 2026-10-18:
   `CODE_SIGN_ENTITLEMENTS=tools/nogroup.entitlements` (an empty plist) on both
   targets; that is what the iPad verification used.
 
+## Apple's pronunciation rules and the compact fallback (2026-10-19)
+
+- iOS 5 and 6 ship `TTSResources/<lang>/user_rules.txt` (29 languages; iOS 3
+  and 4 have fewer, without the "iOS" rule): regex rules VoiceServices ran
+  over the text before the engine, e.g. `/\biOS\b/ --> " I O S "`,
+  `/OS X\b/ --> "OS ten "`, St/Dr before a line end -> Street/Drive, 49er,
+  ETA, degree signs, German date ordinals. The engine (voiced) contains the
+  string but never asks for the file (VX_FILES trace: it maps `userdct/enu`
+  only), so with our engine "iOS" and "ios" rendered identically.
+  `ios/Shared/PronunciationRules.swift` parses the file (`/re/flags --> "repl"`,
+  `$1`, `\xHH`, trailing `# comment`) into NSRegularExpression and applies it
+  to the SSML text tokens in `SpeechJob.from(ssml:rules:)` and to samples in
+  the app. iOS 6's file is used for every voice of that language (Mac Nuance,
+  MacinTalk, iOS 3-5 included), falling back to the voice's firmware or iOS 5.
+  Apple's own quirks are kept (German `06_MTH_` leaves "Juni_").
+- iOS 6 VoiceOver (`vot`) has `_useCompactVoice`, `setFootprint:`,
+  `_handleUsePitchChange:`; VoiceServices' `-[VSSpeechSynthesizer setFootprint:]`
+  picks compact vs premium. An enhanced voice ignores pitch, so pitched speech
+  used the compact one. `vxs_start_with_fallback()` does the same: with a
+  fallback key, pitch commands always split the text (inline pitch off) and
+  every segment whose engine pitch != 50 is spoken by the fallback engine
+  (same sample rate required; rate/volume copied). The fallback loads on
+  first use (never evicting the primary: `engine_for_opt(..., keep)`) and is
+  warmed after each utterance without evicting anything (3 GB devices simply
+  get no fallback). Verified on the Mac with `build/fbtest/fbtest`
+  (scratch program): the pitched segments go to the compact engine and a
+  whole-utterance pitch renders byte-identical to the compact voice itself.
+  `VoiceCatalog.compactCounterpart(of:)`: ios6e/<lang> -> ios6/<lang>,
+  mac107/Karen -> mac107/KarenCompact; MacinTalk none.
+- `SpeechSettings` (`settings.json` in the store, written by the app through
+  the channel, read by the extension per request with an mtime check): two
+  defaults (rules, pitchFallback, both on) plus per-voice overrides by
+  identifier. UI: "Speech Settings" page from each tab's root, and a "For
+  This Voice" section on every voice page (Default/On/Off pickers). `-rules
+  <key> <text>` prints what the rules do to a text.
+- The browser's root page has a search field: matching voices from the whole
+  catalog (both platforms, every version, downloadable ones too), grouped by
+  version, replace the page while the query is non-empty.
+
 ## Devices with 3 GB of RAM (iPad Air 3, iPhone XR/XS/11, iPad 7-9, mini 5)
 
 A process there may map only ~1.3 GB of anonymous memory (mmap fails with

@@ -303,6 +303,23 @@ enum VoiceCatalog {
         entries.first { id == $0.identifier || id.hasSuffix("." + $0.identifier) }
     }
 
+    static func entry(forKey key: String) -> Entry? { entries.first { $0.key == key } }
+
+    /// The compact version of an enhanced or premium voice, when it's here:
+    /// the same firmware and language for an iOS voice, the "<Name>Compact"
+    /// folder of the same release for a Mac voice. Pitch changes speak with
+    /// it (see SpeechSettings.pitchFallback).
+    static func compactCounterpart(of e: Entry) -> Entry? {
+        if e.macinTalk { return nil }
+        let all = entries
+        if let dir = e.macDir {
+            guard e.premium else { return nil }
+            return all.first { $0.build == e.build && $0.macDir == dir + "Compact" }
+        }
+        guard e.enhanced else { return nil }
+        return all.first { $0.build == e.build && $0.language == e.language && !$0.enhanced && $0.macDir == nil }
+    }
+
     static func systemVoice(for entry: Entry) -> AVSpeechSynthesisVoice? {
         AVSpeechSynthesisVoice.speechVoices().first { $0.identifier.hasSuffix(entry.identifier) }
     }
@@ -351,8 +368,11 @@ struct SpeechJob {
     var volume = -1    // 0...100, or -1 to leave the voice's default
     var trailingPauseMs = 0  // silence after the speech (an SSML <break> at the end)
 
-    static func from(ssml: String) -> SpeechJob {
+    /// `rules` (Apple's text rules for the voice's language) are applied to
+    /// the text itself, never to the prosody markup around it.
+    static func from(ssml: String, rules: PronunciationRules? = nil) -> SpeechJob {
         let parser = SSMLParser()
+        parser.rules = rules
         let xml = XMLParser(data: Data(ssml.utf8))
         xml.delegate = parser
         if xml.parse() {
@@ -362,13 +382,15 @@ struct SpeechJob {
         }
         // Not well-formed: strip anything tag-like.
         var job = SpeechJob()
-        job.text = ssml.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        let plain = ssml.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+        job.text = rules?.apply(plain) ?? plain
         return job
     }
 }
 
 private final class SSMLParser: NSObject, XMLParserDelegate {
     var job = SpeechJob()
+    var rules: PronunciationRules?
     // prosody currently in effect while walking the tree
     private var current = (rate: 100, pitch: 100, volume: -1)
     private var stack: [(rate: Int, pitch: Int, volume: Int)] = []
@@ -392,7 +414,9 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
         for (i, tok) in tokens[...lastText].enumerated() {
             if i < firstText, case .pitch = tok {} else if i < firstText { continue }  // leading pauses add latency
             switch tok {
-            case .text(let t): out += t.replacingOccurrences(of: "\u{1b}", with: " ")
+            case .text(let t):
+                let clean = t.replacingOccurrences(of: "\u{1b}", with: " ")
+                out += rules?.apply(clean) ?? clean
             case .pause(let ms): out += " \u{1b}\\pause=\(ms)\\ "
             case .sentenceEnd: out += " \u{1b}\\eos=1\\ "
             case .pitch(let p): out += "\u{1b}\\pitch=\(vxs_engine_pitch(Int32(p)))\\"
@@ -514,10 +538,12 @@ final class VoiceEngine {
         }
     }
 
-    func speak(_ job: SpeechJob, voiceKey: String) {
+    /// `fallbackKey`: the compact voice that speaks the parts whose pitch
+    /// isn't normal (VoiceCatalog.compactCounterpart), or nil.
+    func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil) {
         guard let stream else { return }
-        vxs_start(stream, voiceKey, job.text, Int32(job.rate), Int32(job.pitch), Int32(job.volume),
-                  Int32(job.trailingPauseMs))
+        vxs_start_with_fallback(stream, voiceKey, fallbackKey, job.text, Int32(job.rate), Int32(job.pitch),
+                                Int32(job.volume), Int32(job.trailingPauseMs))
     }
 
     func cancel() {

@@ -79,6 +79,7 @@ final class VoiceLibrary {
     let mac = MacDownloads()
     private(set) var items: [VoiceItem] = []
     private(set) var hidden = VoiceCatalog.hiddenVoices
+    private(set) var settings = SpeechSettings()
 
     init() {
         rebuild()
@@ -88,6 +89,7 @@ final class VoiceLibrary {
         // off the main thread, and again after every change.
         VoiceStore.shared.onChange = { [weak self] in
             guard let self else { return }
+            self.settings = VoiceStore.shared.snapshot.settings
             self.enhanced.refresh()
             self.mac.refresh()
             self.rebuild()
@@ -149,6 +151,39 @@ final class VoiceLibrary {
     }
 
     func isHidden(_ id: String) -> Bool { hidden.contains(id) }
+
+    /// Changes the speech settings and saves them for the extension.
+    func updateSettings(_ change: (inout SpeechSettings) -> Void) {
+        var s = settings
+        change(&s)
+        guard s != settings else { return }
+        settings = s
+        Task.detached { VoiceStore.shared.saveSettings(s) }
+    }
+
+    /// Apple's text rules for a voice, when they're on for it.
+    func rules(for item: VoiceItem) -> PronunciationRules? {
+        guard let entry = item.entry, settings.rulesEnabled(item.id) else { return nil }
+        return PronunciationRules.rules(forVoiceKey: entry.key)
+    }
+
+    /// The compact voice an enhanced or premium voice's pitch changes would use.
+    func compactCounterpart(_ item: VoiceItem) -> VoiceItem? {
+        guard let entry = item.entry, let c = VoiceCatalog.compactCounterpart(of: entry) else { return nil }
+        return self.item(c.identifier)
+    }
+
+    /// Voices anywhere in the catalog, installed or not, matching a search.
+    func search(_ query: String) -> [VoiceItem] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return [] }
+        return items.filter { item in
+            let hay = [item.name, item.kindName, item.language, VoiceItem.languageName(item.language),
+                       item.version.menuName, item.version.spokenName, item.version.number,
+                       item.version.platform.rawValue].joined(separator: " ").lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+    }
 
     func setHidden(_ id: String, _ on: Bool) {
         if on { hidden.insert(id) } else { hidden.remove(id) }
@@ -229,6 +264,7 @@ enum BrowserRoute: Hashable {
     case voice(String)  // VoiceItem.id
     case diagnostics
     case addFiles
+    case settings
 }
 
 /// One tab, as a drill-down: version menu and languages (or the voices, when
@@ -243,6 +279,7 @@ struct PlatformTab: View {
     @Environment(VoiceLibrary.self) private var library
     @AppStorage private var versionID: String
     @State private var path: [BrowserRoute] = []
+    @State private var query = ""
 
     init(platform: VoiceVersion.Platform) {
         self.platform = platform
@@ -284,7 +321,7 @@ struct PlatformTab: View {
             let detail: String
             switch new.last {
             case .voice?: detail = "voice"
-            case .diagnostics?, .addFiles?: detail = ""
+            case .diagnostics?, .addFiles?, .settings?: detail = ""
             case .language(let lang)?: detail = "\(items(language: lang).count) voices"
             case nil: detail = ""
             }
@@ -312,6 +349,7 @@ struct PlatformTab: View {
         case .voice(let id): library.item(id)?.name ?? "Voice"
         case .diagnostics: "Diagnostics"
         case .addFiles: "Add from Files"
+        case .settings: "Speech Settings"
         }
     }
 
@@ -323,6 +361,7 @@ struct PlatformTab: View {
         case .voice(let id)?: VoiceDetail(id: id)
         case .diagnostics?: DiagnosticsView()
         case .addFiles?: AddFilesView()
+        case .settings?: SpeechSettingsView()
         }
     }
 
@@ -331,7 +370,19 @@ struct PlatformTab: View {
         let languages = Set(items.map(\.language)).sorted {
             VoiceItem.languageName($0).localizedStandardCompare(VoiceItem.languageName($1)) == .orderedAscending
         }
+        let found = library.search(query)
         return Page {
+            PageSection(nil) {
+                SearchField(text: $query)
+            }
+            if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+                // Across everything, both platforms and all versions.
+                if found.isEmpty {
+                    Text("No voices match \u{201c}\(query)\u{201d}.").foregroundStyle(.secondary)
+                } else {
+                    VoiceButtons(items: found, groupByVersion: true, open: open)
+                }
+            } else {
             PageSection(nil) {
                 Picker("Version", selection: $versionID) {
                     Text("All").tag("all")
@@ -359,7 +410,9 @@ struct PlatformTab: View {
                 if platform == .macOS {
                     OpenButton(title: "Add from Files", detail: "MacinTalk from your own Mac OS X") { open(.addFiles) }
                 }
+                OpenButton(title: "Speech Settings", detail: "pronunciation rules, pitch changes") { open(.settings) }
                 OpenButton(title: "Diagnostics", detail: "a report to send if voices don\u{2019}t work") { open(.diagnostics) }
+            }
             }
         }
     }
@@ -510,7 +563,9 @@ private struct VoiceRow: View {
         }
         .accessibilityActions {
             if state.isAvailable, let entry = item.entry {
-                Button("Play sample") { DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100) }
+                Button("Play sample") {
+                    DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item))
+                }
             }
         }
     }
@@ -598,7 +653,7 @@ struct VoiceDetail: View {
                         Slider(value: $rate, in: 50...400, step: 10) { Text("Rate") }
                     }
                     HStack {
-                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate)) } label: {
+                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item)) } label: {
                             Label("Speak", systemImage: "speaker.wave.2.fill")
                         }
                         Button { VoiceEngine.shared.cancel() } label: {
@@ -619,6 +674,24 @@ struct VoiceDetail: View {
                         set: { library.setHidden(item.id, !$0) }))
                 } footer: {
                     Text("Off hides this voice from Settings, VoiceOver and Spoken Content. It stays downloaded.")
+                }
+                Section {
+                    OverridePicker("Pronunciation rules", general: library.settings.rules,
+                                   value: library.settings.rulesOverride[item.id]) { v in
+                        library.updateSettings { $0.rulesOverride[item.id] = v }
+                    }
+                    if let compact = library.compactCounterpart(item) {
+                        OverridePicker("Compact voice for pitch changes", general: library.settings.pitchFallback,
+                                       value: library.settings.pitchFallbackOverride[item.id]) { v in
+                            library.updateSettings { $0.pitchFallbackOverride[item.id] = v }
+                        }
+                        Text("Pitch changes speak with \(compact.name) (\(compact.kindName)).")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("For This Voice")
+                } footer: {
+                    Text("\u{201c}Default\u{201d} follows Speech Settings.")
                 }
                 if case .installed(let n) = library.state(item) {
                     Section {
@@ -660,5 +733,79 @@ struct VoiceDetail: View {
         default:
             return nil
         }
+    }
+}
+
+
+/// A search box that reads well to VoiceOver on both platforms.
+struct SearchField: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField("Search all voices", text: $text)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                .accessibilityLabel("Search all voices")
+                .accessibilityHint("Finds voices by name, language, version or type, in every version of iOS and macOS")
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+            }
+        }
+        #if os(macOS)
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
+        .frame(width: 440)
+        #endif
+    }
+}
+
+/// Default / On / Off for one voice, where Default is the general setting.
+struct OverridePicker: View {
+    let title: String
+    let general: Bool
+    let value: Bool?
+    let set: (Bool?) -> Void
+
+    init(_ title: String, general: Bool, value: Bool?, set: @escaping (Bool?) -> Void) {
+        (self.title, self.general, self.value, self.set) = (title, general, value, set)
+    }
+
+    var body: some View {
+        Picker(title, selection: Binding(get: { value.map { $0 ? 1 : 0 } ?? -1 },
+                                         set: { set($0 < 0 ? nil : $0 == 1) })) {
+            Text("Default (\(general ? "on" : "off"))").tag(-1)
+            Text("On").tag(1)
+            Text("Off").tag(0)
+        }
+    }
+}
+
+/// The two speech switches, for every voice unless a voice says otherwise.
+struct SpeechSettingsView: View {
+    @Environment(VoiceLibrary.self) private var library
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Apple\u{2019}s pronunciation rules", isOn: Binding(
+                    get: { library.settings.rules },
+                    set: { v in library.updateSettings { $0.rules = v } }))
+            } footer: {
+                Text("The text rules iOS 5 and 6 applied before speaking, per language: \u{201c}iOS\u{201d} is spelled out, \u{201c}OS X\u{201d} is \u{201c}OS ten\u{201d}, St and Dr become Street and Drive, and so on. Each voice can override this on its own page.")
+            }
+            Section {
+                Toggle("Compact voice for pitch changes", isOn: Binding(
+                    get: { library.settings.pitchFallback },
+                    set: { v in library.updateSettings { $0.pitchFallback = v } }))
+            } footer: {
+                Text("Enhanced and premium voices can\u{2019}t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch (capital letters, the pitch rotor) uses the voice\u{2019}s compact version, which stays loaded. Voices without a compact version here are unaffected.")
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Speech Settings")
     }
 }

@@ -55,11 +55,14 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         dumpRenderLog()
         renderCount.pointee = 0
         requestStart.pointee = mach_absolute_time()
-        let job = SpeechJob.from(ssml: request.ssmlRepresentation)
-        let key = VoiceCatalog.entry(forIdentifier: request.voice.identifier)?.key
-            ?? "ios6/" + (request.voice.primaryLanguages.first ?? "en-US")
-        log.notice("CLASSICVOICES request \(key, privacy: .public) rate=\(job.rate) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
-        VoiceEngine.shared.speak(job, voiceKey: key)
+        let entry = VoiceCatalog.entry(forIdentifier: request.voice.identifier)
+        let key = entry?.key ?? "ios6/" + (request.voice.primaryLanguages.first ?? "en-US")
+        let settings = SpeechSettings.current
+        let rules = settings.rulesEnabled(entry?.identifier ?? "") ? PronunciationRules.rules(forVoiceKey: key) : nil
+        let job = SpeechJob.from(ssml: request.ssmlRepresentation, rules: rules)
+        let fallback = entry.flatMap { settings.pitchFallbackEnabled($0.identifier) ? VoiceCatalog.compactCounterpart(of: $0)?.key : nil }
+        log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
+        VoiceEngine.shared.speak(job, voiceKey: key, fallbackKey: fallback)
         if UserDefaults.standard.string(forKey: "lastVoiceKey") != key {
             UserDefaults.standard.set(key, forKey: "lastVoiceKey")
         }

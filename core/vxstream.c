@@ -68,6 +68,7 @@ struct VxStream {
     // pending job (guarded by mu)
     int has_job;
     char job_lang[96];
+    char job_fallback[96];  // compact voice for pitch changes (see speak_segmented), or empty
     char *job_text;
     int job_rate, job_pitch, job_volume, job_pause;
     char preload_lang[96];
@@ -165,22 +166,30 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
     return vx;
 }
 
-static Vx *engine_for(VxStream *s, const char *key) {
-    EngineSlot *lru = &s->engines[0];
+// The engine for a voice key, opened if need be. `keep` names an engine that
+// must stay open (the voice being spoken while its compact fallback loads);
+// with evict == 0 nothing else is closed to make room either.
+static Vx *engine_for_opt(VxStream *s, const char *key, int evict, const char *keep) {
+    EngineSlot *lru = NULL;
     for (int i = 0; i < MAX_ENGINES; i++) {
         EngineSlot *e = &s->engines[i];
         if (e->vx && strcmp(e->key, key) == 0) { e->last_used = ++s->tick; return e->vx; }
-        if (!e->vx || e->last_used < lru->last_used) lru = e;
+        if (e->vx && keep && strcmp(e->key, keep) == 0) continue;
+        if (!lru || !e->vx || (lru->vx && e->last_used < lru->last_used)) lru = e;
     }
-    if (lru->vx) { vx_close(lru->vx); lru->vx = NULL; }
+    if (!lru) return NULL;
+    if (lru->vx) { vx_close(lru->vx); lru->vx = NULL; lru->key[0] = 0; }
     Vx *vx = open_engine(s->root, s->asset_root, key, s->err, sizeof s->err);
     if (!vx) {
+        if (!evict) return NULL;
         // Devices with 3 GB of RAM let a process map only ~1.3 GB: one
         // Vocalizer engine (1 GB) at a time, and no MacinTalk beside it. Make
         // room and try once more.
         int freed = 0;
-        for (int i = 0; i < MAX_ENGINES; i++)
-            if (s->engines[i].vx) { vx_close(s->engines[i].vx); s->engines[i].vx = NULL; s->engines[i].key[0] = 0; freed = 1; }
+        for (int i = 0; i < MAX_ENGINES; i++) {
+            if (!s->engines[i].vx || (keep && strcmp(s->engines[i].key, keep) == 0)) continue;
+            vx_close(s->engines[i].vx); s->engines[i].vx = NULL; s->engines[i].key[0] = 0; freed = 1;
+        }
         if (s->mt) { mte_close(s->mt); s->mt = NULL; s->mt_gen[0] = 0; freed = 1; }
         if (!freed) return NULL;
         os_log_info(OS_LOG_DEFAULT, "CLASSICVOICES %{public}s: %{public}s; retrying with the other engines closed", key, s->err);
@@ -193,6 +202,8 @@ static Vx *engine_for(VxStream *s, const char *key) {
     lru->last_used = ++s->tick;
     return vx;
 }
+
+static Vx *engine_for(VxStream *s, const char *key) { return engine_for_opt(s, key, 1, NULL); }
 
 // ---- resampling (iOS 3 voices are 16 kHz; the audio unit runs at 22.05 kHz)
 // Windowed-sinc interpolation, 32 taps, 512 sub-sample phases.
@@ -421,13 +432,21 @@ static int pitch_value_to_percent(int v) {
     return 158;
 }
 
-static int speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch) {
+// With a fallback key, every segment whose pitch isn't normal (engine value
+// 50) is spoken by that voice instead: VoiceOver on iOS 5 and 6 did this,
+// since an enhanced voice can't change pitch (the compact one can). The
+// fallback engine must share the primary's sample rate; it loads when first
+// needed, and warm_fallback() keeps it ready for the next time.
+static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const char *fallback_key, int rate, int volume,
+                           Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch) {
     static const char kEos[] = "\x1b\\eos=1\\", kPitch[] = "\x1b\\pitch=";
     size_t n = strlen(text);
     char *seg = malloc(n + 1);
     size_t m = 0;
     int rc = 0;
     const char *p = text;
+    Vx *fb = NULL;
+    int fb_tried = 0;
     for (;;) {
         int at_end = *p == 0;
         int is_eos = !at_end && strncmp(p, kEos, sizeof kEos - 1) == 0;
@@ -437,9 +456,21 @@ static int speak_segmented(Vx *vx, Sink *k, const char *text, int pitch, int inl
             int has_text = 0;
             for (size_t i = 0; i < m; i++) if (seg[i] != ' ') { has_text = 1; break; }
             if (has_text) {
-                int prc = vx_set_param(vx, 4, (uint32_t)(percent_pitch ? pitch_value_to_percent(pitch) : pitch));
-                if (getenv("VX_SEGDEBUG")) fprintf(stderr, "segment pitch=%d rc=%x [%s]\n", pitch, prc, seg);
-                if ((rc = vx_speak_utf8(vx, seg, on_pcm, k))) break;
+                Vx *use = vx;
+                if (fallback_key && pitch != 50) {
+                    if (!fb && !fb_tried) {
+                        fb_tried = 1;
+                        fb = engine_for_opt(s, fallback_key, 1, primary_key);
+                        if (fb && vx_sample_rate(fb) != vx_sample_rate(vx)) fb = NULL;
+                        if (fb) { vx_set_param(fb, 3, (uint32_t)rate); vx_set_param(fb, 2, (uint32_t)volume); }
+                        else os_log_info(OS_LOG_DEFAULT, "CLASSICVOICES no compact fallback %{public}s for %{public}s: %{public}s",
+                                         fallback_key, primary_key, s->err);
+                    }
+                    if (fb) use = fb;
+                }
+                int prc = vx_set_param(use, 4, (uint32_t)(percent_pitch ? pitch_value_to_percent(pitch) : pitch));
+                if (getenv("VX_SEGDEBUG")) fprintf(stderr, "segment pitch=%d rc=%x %s [%s]\n", pitch, prc, use == fb ? "(fallback)" : "", seg);
+                if ((rc = vx_speak_utf8(use, seg, on_pcm, k))) break;
                 // between utterances keep the engine's natural silence; inside a
                 // sentence (pitch change only) join tightly
                 k->cap_quiet = is_pitch ? (size_t)k->rate / 10 : 0;
@@ -536,8 +567,9 @@ static void *worker(void *arg) {
             pthread_mutex_lock(&s->mu);
             continue;
         }
-        char lang[96];
+        char lang[96], fallback[96];
         snprintf(lang, sizeof lang, "%s", s->job_lang);
+        snprintf(fallback, sizeof fallback, "%s", s->job_fallback);
         char *text = s->job_text;
         int rate = s->job_rate, pitch = s->job_pitch, volume = s->job_volume, pause = s->job_pause;
         s->job_text = NULL;
@@ -584,8 +616,11 @@ static void *worker(void *arg) {
             char eb[16];
             engine_build(lang, eb, sizeof eb);
             int percent = strcmp(eb, "ios7") == 0 || strcmp(eb, "ios10") == 0;
-            int rc = speak_segmented(vx, &k, text, vxs_engine_pitch(pitch),
-                                     percent || strcmp(eb, "ios5") == 0 || strcmp(eb, "ios6") == 0, percent);
+            // With a fallback voice, pitch commands split the text so each
+            // piece can go to the right engine.
+            int inline_pitch = (percent || strcmp(eb, "ios5") == 0 || strcmp(eb, "ios6") == 0) && !fallback[0];
+            int rc = speak_segmented(s, vx, lang, fallback[0] ? fallback : NULL, rate, volume, &k, text,
+                                     vxs_engine_pitch(pitch), inline_pitch, percent);
             // One refused phrase is usually the text (e.g. a lone "(" for some
             // voices); two in a row means the engine itself is stuck, so start
             // it again rather than stay silent.
@@ -613,6 +648,14 @@ static void *worker(void *arg) {
         pthread_mutex_lock(&s->mu);
         atomic_store(&s->producing, 0);
         pthread_cond_broadcast(&s->cv);
+        if (fallback[0] && !s->has_job) {
+            // Have the compact voice ready for the next pitch change, without
+            // delaying what was just said (the utterance is finished) and
+            // without pushing the voice itself out on devices short of memory.
+            pthread_mutex_unlock(&s->mu);
+            engine_for_opt(s, fallback, 0, lang);
+            pthread_mutex_lock(&s->mu);
+        }
     }
     pthread_mutex_unlock(&s->mu);
     return NULL;
@@ -666,9 +709,15 @@ void vxs_cancel(VxStream *s) {
 
 void vxs_start(VxStream *s, const char *lang, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms) {
+    vxs_start_with_fallback(s, lang, NULL, utf8_text, rate, pitch, volume, trailing_pause_ms);
+}
+
+void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback_key, const char *utf8_text,
+                             int rate, int pitch, int volume, int trailing_pause_ms) {
     vxs_cancel(s);
     pthread_mutex_lock(&s->mu);
     snprintf(s->job_lang, sizeof s->job_lang, "%s", lang);
+    snprintf(s->job_fallback, sizeof s->job_fallback, "%s", fallback_key && !is_mt_key(lang) ? fallback_key : "");
     s->job_text = strdup(utf8_text);
     s->job_rate = rate < 50 ? 50 : rate > 400 ? 400 : rate;
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;

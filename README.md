@@ -98,6 +98,14 @@ extension).
 The app can also download the voices Mac OS X Lion, Mountain Lion and
 Mavericks offered in System Preferences, from Apple's software update servers.
 
+The voices speak the way they did then. Apple's pronunciation rules from iOS 5
+and 6 are applied to the text ("iOS" is spelled out, "OS X" is "OS ten", and so
+on), and when VoiceOver changes the pitch, an enhanced or premium voice hands
+that part to its compact version, as iOS did, because those voices can't change
+pitch themselves. Both are on for every voice and can be turned off in Speech
+Settings or per voice. A search field at the top of each tab finds any voice in
+the catalog.
+
 ### Mac OS X voices from your own copy
 
 The build also takes Lion's MacinTalk voices (Fred, Victoria, Bells and the

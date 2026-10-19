@@ -26,6 +26,12 @@ void vxs_set_asset_root(VxStream *s, const char *path);
 // the end of a request). Leading/trailing engine silence is trimmed.
 void vxs_start(VxStream *s, const char *voice_key, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms);
+// As vxs_start, with a second voice (normally the compact version of an
+// enhanced or premium voice) that speaks every part of the text whose pitch
+// isn't normal, the way VoiceOver on iOS 5 and 6 did. It is loaded on first
+// use and kept warm afterwards. NULL or a MacinTalk voice_key: no fallback.
+void vxs_start_with_fallback(VxStream *s, const char *voice_key, const char *fallback_key, const char *utf8_text,
+                             int rate, int pitch, int volume, int trailing_pause_ms);
 void vxs_cancel(VxStream *s);
 
 // Real-time safe. Copies up to `frames` samples into `out`. *done is set to 1

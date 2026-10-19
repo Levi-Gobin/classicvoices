@@ -26,6 +26,7 @@ final class VoiceStore: @unchecked Sendable {
         var entries: [VoiceCatalog.Entry] = []
         var engines: Set<String> = []
         var hidden: Set<String> = []
+        var settings = SpeechSettings()
         func has(_ rel: String) -> Bool { paths.contains(rel) }
     }
 
@@ -122,6 +123,7 @@ final class VoiceStore: @unchecked Sendable {
         if let data = cat["entries"] as? Data { snap.entries = (try? JSONDecoder().decode([VoiceCatalog.Entry].self, from: data)) ?? [] }
         snap.engines = Set(cat["engines"] as? [String] ?? [])
         snap.hidden = Set(cat["hidden"] as? [String] ?? [])
+        snap.settings = read(SpeechSettings.file).flatMap(SpeechSettings.decode) ?? SpeechSettings()
         lock.lock()
         snapshot = snap
         lock.unlock()
@@ -187,6 +189,12 @@ final class VoiceStore: @unchecked Sendable {
     }
 
     func vmProbe() -> [String] { (try? call(["op": "vmprobe"]))?["lines"] as? [String] ?? ["unreachable"] }
+
+    /// Saves the speech settings in the store, where the extension reads them.
+    func saveSettings(_ settings: SpeechSettings) {
+        lock.lock(); snapshot.settings = settings; lock.unlock()
+        try? write(settings.encoded(), at: SpeechSettings.file)
+    }
 
     func setHidden(_ ids: Set<String>) {
         VoiceCatalog.hiddenVoices = ids  // app side: cache + legacy defaults

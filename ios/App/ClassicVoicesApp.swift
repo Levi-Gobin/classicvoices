@@ -35,6 +35,13 @@ struct ClassicVoicesApp: App {
         if CommandLine.arguments.contains("-benchmark") { Benchmark.run() }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
         if CommandLine.arguments.contains("-latency") { LatencyTest.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "-rules"), i + 2 < CommandLine.arguments.count {
+            // `-rules ios6/en-US "iOS on OS X"`: the text after Apple's rules.
+            let key = CommandLine.arguments[i + 1], text = CommandLine.arguments[i + 2]
+            let r = PronunciationRules.rules(forVoiceKey: key)
+            print("RULES \(key): \(r?.rules.count ?? 0) rules; [\(text)] -> [\(r?.apply(text) ?? text)]")
+            fflush(stdout); exit(0)
+        }
         if let i = CommandLine.arguments.firstIndex(of: "-speaktime"), i + 1 < CommandLine.arguments.count {
             SpeakTimeTest.run(CommandLine.arguments[i + 1].split(separator: ",").map(String.init))
         }
@@ -406,14 +413,14 @@ final class DirectPlayer: ObservableObject {
         engine.connect(node, to: engine.mainMixerNode, format: format)
     }
 
-    func speak(_ text: String, voiceKey: String, rate: Int) {
+    func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil) {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
         if !engine.isRunning { try? engine.start() }
         var job = SpeechJob()
-        job.text = text
+        job.text = rules?.apply(text) ?? text
         job.rate = rate
         VoiceEngine.shared.speak(job, voiceKey: voiceKey)
         stats = "Speaking…"
