@@ -69,18 +69,23 @@ enum SpeakTimeTest {
             let synth = AVSpeechSynthesizer()
             let d = Delegate()
             synth.delegate = d
-            for suffix in suffixes {
+            for spec in suffixes {
+                // `ios6e.en-US@1.3`: the voice's identifier suffix and, after @, a pitch multiplier.
+                let parts = spec.split(separator: "@", maxSplits: 1).map(String.init)
+                let suffix = parts[0]
+                let pitch = parts.count > 1 ? Float(parts[1]) ?? 1 : 1
                 guard let v = all.first(where: { $0.identifier.hasSuffix(suffix) && $0.identifier.contains("ClassicVoices") }) else {
                     print("SPEAKTIME \(suffix): voice not found"); continue
                 }
                 let u = AVSpeechUtterance(string: "Hello there. This is a sentence long enough to measure.")
                 u.voice = v
+                u.pitchMultiplier = pitch
                 d.ranges = 0
                 let t0 = Date()
                 synth.speak(u)
                 let r = d.done.wait(timeout: .now() + 25)
                 print(String(format: "SPEAKTIME %@ (%@): %@ queued->finish %.0f ms, start->finish %.0f ms, %d word ranges",
-                             suffix, v.name, r == .timedOut ? "TIMED OUT" : "ok",
+                             spec, v.name, r == .timedOut ? "TIMED OUT" : "ok",
                              d.finished.timeIntervalSince(t0) * 1000, d.finished.timeIntervalSince(d.started) * 1000, d.ranges))
                 fflush(stdout)
             }
