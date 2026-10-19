@@ -76,22 +76,15 @@ else
     }
     if gh repo view "$REPO" >/dev/null 2>&1; then
         # A copy whose history shares nothing with Classic Voices itself is left
-        # over from an older history and can't be updated; it only ever held
-        # build files, so replace it with a fresh one. (A plain commit lookup
+        # over from an older history and a normal update is refused; it only
+        # ever held build files, so reset it to match. (A plain commit lookup
         # won't do: GitHub finds a fork's commits through the shared network.)
         HEAD=$(gh api "repos/$REPO/commits/HEAD" --jq .sha 2>/dev/null)
         RELATION=$(gh api "repos/$UPSTREAM/compare/$HEAD...HEAD" --jq .status 2>/dev/null) || RELATION=""
+        say "Updating your copy of Classic Voices."
         if [ -n "$HEAD" ] && [ -z "$RELATION" ]; then
-            say "Your copy of Classic Voices is out of date in a way that can't be updated,"
-            say "so it will be replaced. Your browser may open once to approve that."
-            gh auth status 2>&1 | grep -q delete_repo \
-                || gh auth refresh --hostname github.com --scopes workflow,delete_repo </dev/tty \
-                || fail "couldn't get permission to replace your copy."
-            gh repo delete "$REPO" --yes >/dev/null 2>&1 || fail "couldn't remove your old copy ($REPO)."
-            for _ in $(seq 30); do gh repo view "$REPO" >/dev/null 2>&1 || break; sleep 2; done
-            make_copy
+            gh repo sync "$REPO" --source "$UPSTREAM" --force >/dev/null || fail "couldn't replace the contents of $REPO."
         else
-            say "Updating your copy of Classic Voices."
             gh repo sync "$REPO" --source "$UPSTREAM" >/dev/null || fail "couldn't update $REPO from $UPSTREAM."
         fi
     else

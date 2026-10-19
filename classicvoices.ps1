@@ -94,8 +94,8 @@
             GH repo view $repo --json name | Out-Null
             if ($ghOk) {
                 # A copy whose history shares nothing with Classic Voices itself is
-                # left over from an older history and can't be updated; it only ever
-                # held build files, so replace it with a fresh one. (A plain commit
+                # left over from an older history and a normal update is refused; it
+                # only ever held build files, so reset it to match. (A plain commit
                 # lookup won't do: GitHub finds a fork's commits through the shared network.)
                 $head = GH api "repos/$repo/commits/HEAD" --jq .sha
                 $known = $true
@@ -103,24 +103,11 @@
                     $relation = GH api "repos/$Upstream/compare/$head...HEAD" --jq .status
                     $known = ($ghOk -and $relation)
                 }
+                Say 'Updating your copy of Classic Voices.'
                 if (-not $known) {
-                    Say "Your copy of Classic Voices is out of date in a way that can't be updated,"
-                    Say 'so it will be replaced. Your browser may open once to approve that.'
-                    $scopes = & $gh auth status 2>&1
-                    if (-not ("$scopes" -match 'delete_repo')) {
-                        & $gh auth refresh --hostname github.com --scopes workflow,delete_repo
-                        if ($LASTEXITCODE -ne 0) { Fail "couldn't get permission to replace your copy." }
-                    }
-                    GH repo delete $repo --yes | Out-Null
-                    if (-not $ghOk) { Fail "couldn't remove your old copy ($repo)." }
-                    for ($i = 0; $i -lt 30; $i++) {
-                        GH repo view $repo --json name | Out-Null
-                        if (-not $ghOk) { break }
-                        Start-Sleep 2
-                    }
-                    MakeCopy
+                    GH repo sync $repo --source $Upstream --force | Out-Null
+                    if (-not $ghOk) { Fail "couldn't replace the contents of $repo." }
                 } else {
-                    Say 'Updating your copy of Classic Voices.'
                     GH repo sync $repo --source $Upstream | Out-Null
                     if (-not $ghOk) { Fail "couldn't update $repo from $Upstream." }
                 }
