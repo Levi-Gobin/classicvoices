@@ -80,6 +80,7 @@ enum SpeakTimeTest {
                 let u = AVSpeechUtterance(string: "Hello there. This is a sentence long enough to measure.")
                 u.voice = v
                 u.pitchMultiplier = pitch
+                if CommandLine.arguments.contains("-mute") { u.volume = 0 }  // checks on a device wired to speakers
                 d.ranges = 0
                 let t0 = Date()
                 synth.speak(u)

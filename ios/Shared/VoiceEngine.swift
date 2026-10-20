@@ -193,23 +193,12 @@ enum VoiceCatalog {
     /// <store>/<gen>/MacinTalk ... Only the extension process has one.
     static let extensionStore: URL? = {
         guard Bundle.main.bundleURL.pathExtension == "appex",
-              let base = FileManager.default.urls(for: persistentDirectory, in: .userDomainMask).first
+              let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
         let store = base.appendingPathComponent("EnhancedVoices")
         try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
         return store
     }()
-
-    /// Where an app may keep files between launches. Apple TV gives an app
-    /// no persistent storage except Caches, which the system can clear when
-    /// the disk fills, so there voices may need downloading again.
-    static var persistentDirectory: FileManager.SearchPathDirectory {
-        #if os(tvOS)
-        .cachesDirectory
-        #else
-        .applicationSupportDirectory
-        #endif
-    }
 
     /// Voices downloaded by earlier versions into the App Group, when there is one.
     static var legacyGroupRoot: URL? {

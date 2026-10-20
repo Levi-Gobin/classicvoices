@@ -60,9 +60,7 @@ enum Diagnostics {
 
     #if !os(macOS)
     private static var osName: String {
-        #if os(tvOS)
-        "tvOS"
-        #elseif os(visionOS)
+        #if os(visionOS)
         "visionOS"
         #else
         "iOS"
@@ -86,9 +84,7 @@ struct DiagnosticsView: View {
         ScrollView {
             Text(text)
                 .font(.body.monospaced())
-                #if !os(tvOS)
                 .textSelection(.enabled)
-                #endif
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
         }
@@ -97,7 +93,7 @@ struct DiagnosticsView: View {
                 #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
-                #elseif !os(tvOS)  // Apple TV has no pasteboard
+                #else
                 UIPasteboard.general.string = text
                 #endif
                 copied = true

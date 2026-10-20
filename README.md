@@ -37,8 +37,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/mai
 ```
 
 It asks what to build: on Windows, the iPhone app and the NVDA add-on; on a
-Mac, the iPhone app and the Mac app; on either, also the Apple TV and Apple
-Vision Pro apps. Then it signs you in to GitHub in your
+Mac, the iPhone app and the Mac app; on either, also the Apple Vision Pro
+app. Then it signs you in to GitHub in your
 browser (the one-time code is copied for you), makes your own copy of this
 repository, builds there, and reads out each step as it finishes. About half
 an hour later:
@@ -54,14 +54,10 @@ an hour later:
   Open Anyway.
 - **iPhone**: `ClassicVoices.ipa` is saved in your Downloads folder and
   Sideloadly opens, if you have it, so you can install it.
-- **Apple TV**: `ClassicVoicesTV.ipa` is saved in Downloads. Sideloadly can
-  install it over Wi-Fi (its Apple TV mode), and so can Xcode's Devices window.
-  Apple TV has no Files app and gives apps only cache storage, so there is no
-  Add from Files there, and tvOS may remove downloaded voices when the disk is
-  full; the app downloads them again.
 - **Apple Vision Pro**: `ClassicVoicesVision.ipa` is saved in Downloads.
   Install it with Xcode (Developer Mode on in the headset's settings) or a
-  sideloading tool that supports Vision Pro, such as SideStore.
+  sideloading tool that supports Vision Pro, such as SideStore. (There is no
+  Apple TV app: tvOS doesn't let apps add speech voices.)
 
 Run the same line again any time to update.
 

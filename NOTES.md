@@ -219,39 +219,28 @@ team-prefixed group. So, since 2026-10-18:
   and the compact would have spoken for nothing); the fallback's own pitched
   output equals the compact voice at that pitch.
 
-## Apple TV and Apple Vision Pro (2026-10-20)
+## Apple Vision Pro, and why not Apple TV (2026-10-20)
 
-- Targets ClassicVoicesTV/SynthTV (tvOS 17) and ClassicVoicesVision/
-  SynthVision (visionOS 1.0) share the iOS sources through `targetTemplates`
-  in project.yml (same bundle ids, entitlements, PRODUCT_NAME ClassicVoices /
-  Synth so the packaging and `Synth.appex` lookups don't change).
-  `tools/package_ipa.sh appletv|visionpro` -> build/ClassicVoicesTV.ipa /
-  ClassicVoicesVision.ipa; the workflow's iphone job builds them when the
-  targets input has `appletv` / `visionpro`; the one-line scripts offer them
-  as choices 4 and 5 (several numbers may be typed).
-- tvOS has no `AUMessageChannel` (unavailable in the SDK), so the Apple TV app
-  can't fill the extension's store over the channel: VoiceStore there goes
-  straight to the App Group fallback (`#if os(tvOS)` in VoiceStore,
-  FileChannel and the audio unit). A sideloaded build without the group
-  entitlement therefore can't download voices on Apple TV; the bundled compact
-  voices still speak. tvOS also has no Files picker (AddFilesView compiled
-  out), no pasteboard, no Slider/Stepper (rate buttons), no textSelection,
-  and only Caches for persistent storage (`VoiceCatalog.persistentDirectory`).
-- Guards elsewhere are `canImport(UIKit)` / `!os(macOS)` rather than
-  `os(iOS)`, which is false on tvOS and visionOS.
-- Both compile for generic devices (no signing) on 2026-10-20; neither has
-  been run: no simulator runtimes fit on the disk and there is no Apple TV or
-  Vision Pro here. Sideloading: Sideloadly lists Apple TV (Wi-Fi pairing);
-  Vision Pro takes Xcode (Developer Mode) or SideStore.
-- `SpeechSettings` (`settings.json` in the store, written by the app through
-  the channel, read by the extension per request with an mtime check): two
-  defaults (rules, pitchFallback, both on) plus per-voice overrides by
-  identifier. UI: "Speech Settings" page from each tab's root, and a "For
-  This Voice" section on every voice page (Default/On/Off pickers). `-rules
-  <key> <text>` prints what the rules do to a text.
-- The browser's root page has a search field: matching voices from the whole
-  catalog (both platforms, every version, downloadable ones too), grouped by
-  version, replace the page while the query is non-empty.
+- Targets ClassicVoicesVision/SynthVision (visionOS 1.0) share the iOS
+  sources through `targetTemplates` in project.yml (same bundle ids,
+  entitlements, PRODUCT_NAME ClassicVoices / Synth so packaging and the
+  `Synth.appex` lookups don't change). `tools/package_ipa.sh visionpro` ->
+  build/ClassicVoicesVision.ipa; the workflow's iphone job builds it when the
+  targets input has `visionpro`; the one-line scripts offer it as choice 4
+  (several numbers may be typed). Guards are `canImport(UIKit)` /
+  `!os(macOS)` rather than `os(iOS)`, which is false on visionOS.
+- **tvOS is out.** The tvOS SDK declares AVSpeechSynthesisProviderAudioUnit
+  for tvos(16.0) and a tvOS build compiled, but installing it in the tvOS 27
+  simulator failed: "NSExtensionPointIdentifier com.apple.AudioUnit ... does
+  not correspond to a known extension point". The runtime's own definition,
+  `System/Library/ExtensionKit/ExtensionPoints/com.apple.audio.units.appexpt`,
+  lists `EXSupportedPlatforms = [iOS, xrOS]` for `com.apple.AudioUnit`: audio
+  unit extensions, and so third-party voices, don't exist on Apple TV. (tvOS
+  also lacks AUMessageChannel, a Files picker, pasteboard, Slider/Stepper,
+  textSelection, and persists only Caches, had it mattered.) The tvOS targets
+  and guards were removed the same day.
+- Sideloading to Vision Pro: Xcode (Developer Mode on the headset) or
+  SideStore; Sideloadly doesn't list it.
 
 ## Devices with 3 GB of RAM (iPad Air 3, iPhone XR/XS/11, iPad 7-9, mini 5)
 

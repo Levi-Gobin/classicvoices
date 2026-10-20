@@ -1,10 +1,9 @@
 #!/bin/sh
-# Build Classic Voices for iPhone (default), Apple TV or Apple Vision Pro
+# Build Classic Voices for iPhone (default) or Apple Vision Pro
 # without a developer account and package it as an .ipa for AltStore,
 # SideStore or Sideloadly to sign with your own Apple ID:
 #
 #   tools/package_ipa.sh            -> build/ClassicVoices.ipa        (iPhone and iPad)
-#   tools/package_ipa.sh appletv    -> build/ClassicVoicesTV.ipa      (Apple TV)
 #   tools/package_ipa.sh visionpro  -> build/ClassicVoicesVision.ipa  (Apple Vision Pro)
 #
 # Run tools/fetch_firmware.sh and tools/build_engines.sh first.
@@ -17,9 +16,8 @@ ROOT=$(pwd)
 
 case "${1:-iphone}" in
 iphone)    SCHEME=ClassicVoices;       SDK=iphoneos;    PLATFORM=iOS;      NAME=ClassicVoices ;;
-appletv)   SCHEME=ClassicVoicesTV;     SDK=appletvos;   PLATFORM=tvOS;     NAME=ClassicVoicesTV ;;
 visionpro) SCHEME=ClassicVoicesVision; SDK=xros;        PLATFORM=visionOS; NAME=ClassicVoicesVision ;;
-*) echo "usage: $0 [iphone|appletv|visionpro]" >&2; exit 2 ;;
+*) echo "usage: $0 [iphone|visionpro]" >&2; exit 2 ;;
 esac
 DD=$ROOT/build/ipa-derived
 OUT=$ROOT/build/$NAME.ipa

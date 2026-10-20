@@ -8,7 +8,7 @@
 # (fork) of Classic Voices, runs the build there and waits for it. Then it
 # installs the Mac app, and saves ClassicVoices.ipa in your Downloads folder
 # and opens Sideloadly if you have it, so you can install the iPhone app. It
-# can also build the Apple TV and Apple Vision Pro apps.
+# can also build the Apple Vision Pro app.
 # Running it again later updates your copy and builds the newest version.
 #
 # Everything it prints is plain lines, so it reads well with VoiceOver.
@@ -48,16 +48,14 @@ if [ -z "$TARGETS" ]; then
     say "  1. iPhone and Mac"
     say "  2. iPhone only"
     say "  3. Mac only"
-    say "  4. Apple TV"
-    say "  5. Apple Vision Pro"
+    say "  4. Apple Vision Pro"
     read -r -p "Type the numbers you want, like 1 or 2 4, and press Return (Return alone means 1): " choice </dev/tty || choice=1
     [ -n "$choice" ] || choice=1
     TARGETS=""
     case "$choice" in *1*) TARGETS="iphone mac" ;; esac
     case "$choice" in *2*) TARGETS="$TARGETS iphone" ;; esac
     case "$choice" in *3*) TARGETS="$TARGETS mac" ;; esac
-    case "$choice" in *4*) TARGETS="$TARGETS appletv" ;; esac
-    case "$choice" in *5*) TARGETS="$TARGETS visionpro" ;; esac
+    case "$choice" in *4*) TARGETS="$TARGETS visionpro" ;; esac
     TARGETS=${TARGETS# }
     [ -n "$TARGETS" ] || TARGETS="iphone mac"
 fi
@@ -127,7 +125,7 @@ done
 [ -n "$RUN" ] || fail "the build didn't appear. See https://github.com/$REPO/actions."
 
 # One line per finished step, read from GitHub every 30 seconds.
-STEPS='.jobs[].steps[] | select(.status == "completed") | {"Fetch firmware from Apple": "Firmware downloaded from Apple", "Generate the fast engines": "Engines generated", "Build the app": "iPhone app built", "Build the Apple TV app": "Apple TV app built", "Build the Vision Pro app": "Vision Pro app built", "Build the Mac app": "Mac app built", "Run actions/upload-artifact@v4": "Upload finished"}[.name] as $n | select($n) | $n + (if .conclusion == "success" then "" else " (" + .conclusion + ")" end)'
+STEPS='.jobs[].steps[] | select(.status == "completed") | {"Fetch firmware from Apple": "Firmware downloaded from Apple", "Generate the fast engines": "Engines generated", "Build the app": "iPhone app built", "Build the Vision Pro app": "Vision Pro app built", "Build the Mac app": "Mac app built", "Run actions/upload-artifact@v4": "Upload finished"}[.name] as $n | select($n) | $n + (if .conclusion == "success" then "" else " (" + .conclusion + ")" end)'
 seen=""
 while true; do
     steps=$(gh run view "$RUN" -R "$REPO" --json jobs --jq "$STEPS" 2>/dev/null) || { sleep 20; continue; }
@@ -212,16 +210,6 @@ if has iphone; then
         say "choose ClassicVoices.ipa from your Downloads folder."
     fi
     say "Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content."
-fi
-
-if has appletv; then
-    gh run download "$RUN" -R "$REPO" -n ClassicVoicesTV -D "$TMP" || fail "couldn't download the Apple TV app."
-    unzip -q -o -P "$PASSWORD" "$TMP/ClassicVoicesTV-ipa.zip" -d "$TMP" || fail "couldn't open the Apple TV app download."
-    mv -f "$TMP/ClassicVoicesTV.ipa" "$OUT/ClassicVoicesTV.ipa"
-    say "Saved $OUT/ClassicVoicesTV.ipa"
-    say "Install it on your Apple TV with Sideloadly (pair the Apple TV over Wi-Fi in its Apple TV"
-    say "mode), or with Xcode: Window, Devices and Simulators, then drag the file onto the Apple TV."
-    say "Then open Classic Voices once on the Apple TV, and its voices appear in VoiceOver."
 fi
 
 if has visionpro; then

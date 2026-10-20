@@ -20,12 +20,10 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
 
     public override var outputBusses: AUAudioUnitBusArray { busses }
 
-    #if !os(tvOS)  // tvOS has no message channels; the Apple TV app uses the App Group
     private let fileChannel = FileChannel()
     public override func messageChannel(for channelName: String) -> any AUMessageChannel {
         fileChannel
     }
-    #endif
 
     public override var speechVoices: [AVSpeechSynthesisProviderVoice] {
         get {
