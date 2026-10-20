@@ -4,6 +4,8 @@ options:
   deploymentTarget:
     iOS: "17.0"
     macOS: "14.0"
+    tvOS: "17.0"
+    visionOS: "1.0"
 settings:
   base:
     DEVELOPMENT_TEAM: 7WV49AN2BX
@@ -15,12 +17,13 @@ settings:
     SWIFT_OBJC_BRIDGING_HEADER: Shared/Bridging.h
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     WARNING_CFLAGS: ["-Wno-unused-label", "-Wno-unused-variable", "-Wno-unused-function"]
-targets:
-  ClassicVoices:
-    type: application
-    platform: iOS
+
+# The app and its speech extension are built for iPhone/iPad, Mac, Apple TV
+# and Apple Vision Pro from the same sources: each platform's pair of targets
+# below only adds the platform, bundle identifiers and entitlements.
+targetTemplates:
+  Engine:  # the C engines and generated code every target carries
     sources:
-      - App
       - Shared
       - path: ../core
         includes: ["thumb.c", "vxengine.c", "vxstream.c"]
@@ -36,62 +39,36 @@ targets:
         excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
       - path: ../third_party/glint
         includes: ["aac_decoder.cpp"]
-    entitlements:
-      path: App/ClassicVoices.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_UIFileSharingEnabled: YES
-        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
-        GENERATE_INFOPLIST_FILE: YES
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "2"
+  App:
+    templates: [Engine]
+    type: application
+    sources: [App]
     dependencies:
-      - target: Synth
       - sdk: Accelerate.framework
       - sdk: AudioToolbox.framework
       - sdk: libsqlite3.tbd
       - sdk: libbz2.tbd
       - sdk: libz.tbd
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
   Synth:
+    templates: [Engine]
     type: app-extension
-    platform: iOS
-    sources:
-      - Synth
-      - Shared
-      - path: ../core
-        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
-      - path: ../build/gen
-      - path: ../build/gen3
-      - path: ../build/gen4
-      - path: ../build/gen5
-      - path: ../build/gen7
-      - path: ../build/gen10
-      - path: ../core/x86
-        includes: ["x86.c"]
-      - path: ../core/mt
-        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
-      - path: ../third_party/glint
-        includes: ["aac_decoder.cpp"]
+    sources: [Synth]
     dependencies:
       - sdk: Accelerate.framework
       - sdk: AudioToolbox.framework
       - sdk: libsqlite3.tbd
-    entitlements:
-      path: Synth/Synth.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.Synth
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Synth/Info.plist
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "2"
     postBuildScripts:
       - name: Bundle firmware voices
         script: |
@@ -120,26 +97,64 @@ targets:
             fi
           done
         basedOnDependencyAnalysis: false
+  # iPhone, Apple TV and Vision Pro share bundle identifiers and entitlements
+  # (sideloading tools replace both with the user's own).
+  DeviceApp:
+    templates: [App]
+    dependencies:
+      - target: ${synth}
+    entitlements:
+      path: App/ClassicVoices.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_NAME: ClassicVoices
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+  DeviceSynth:
+    templates: [Synth]
+    entitlements:
+      path: Synth/Synth.entitlements
+      properties:
+        com.apple.security.application-groups: [group.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_NAME: Synth
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.Synth
+
+targets:
+  ClassicVoices:
+    templates: [DeviceApp]
+    templateAttributes: { synth: Synth }
+    platform: iOS
+  Synth:
+    templates: [DeviceSynth]
+    platform: iOS
+
+  ClassicVoicesTV:
+    templates: [DeviceApp]
+    templateAttributes: { synth: SynthTV }
+    platform: tvOS
+  SynthTV:
+    templates: [DeviceSynth]
+    platform: tvOS
+
+  ClassicVoicesVision:
+    templates: [DeviceApp]
+    templateAttributes: { synth: SynthVision }
+    platform: visionOS
+  SynthVision:
+    templates: [DeviceSynth]
+    platform: visionOS
+
   ClassicVoicesMac:
-    type: application
+    templates: [App]
     platform: macOS
-    sources:
-      - App
-      - Shared
-      - path: ../core
-        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
-      - path: ../build/gen
-      - path: ../build/gen3
-      - path: ../build/gen4
-      - path: ../build/gen5
-      - path: ../build/gen7
-      - path: ../build/gen10
-      - path: ../core/x86
-        includes: ["x86.c"]
-      - path: ../core/mt
-        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
-      - path: ../third_party/glint
-        includes: ["aac_decoder.cpp"]
+    dependencies:
+      - target: SynthMac
     entitlements:
       path: App/ClassicVoicesMac.entitlements
       properties:
@@ -151,41 +166,9 @@ targets:
       base:
         PRODUCT_NAME: Classic Voices
         PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "2"
-    dependencies:
-      - target: SynthMac
-      - sdk: Accelerate.framework
-      - sdk: AudioToolbox.framework
-      - sdk: libsqlite3.tbd
-      - sdk: libbz2.tbd
-      - sdk: libz.tbd
   SynthMac:
-    type: app-extension
+    templates: [Synth]
     platform: macOS
-    sources:
-      - Synth
-      - Shared
-      - path: ../core
-        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
-      - path: ../build/gen
-      - path: ../build/gen3
-      - path: ../build/gen4
-      - path: ../build/gen5
-      - path: ../build/gen7
-      - path: ../build/gen10
-      - path: ../core/x86
-        includes: ["x86.c"]
-      - path: ../core/mt
-        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
-      - path: ../third_party/glint
-        includes: ["aac_decoder.cpp"]
-    dependencies:
-      - sdk: Accelerate.framework
-      - sdk: AudioToolbox.framework
-      - sdk: libsqlite3.tbd
     entitlements:
       path: Synth/SynthMac.entitlements
       properties:
@@ -195,35 +178,3 @@ targets:
       base:
         PRODUCT_NAME: Synth
         PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac.Synth
-        GENERATE_INFOPLIST_FILE: NO
-        INFOPLIST_FILE: Synth/Info.plist
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "2"
-    postBuildScripts:
-      - name: Bundle firmware voices
-        script: |
-          set -e
-          for B in ios7 ios6 ios5 ios4 ios3; do
-            SRC="$SRCROOT/../extracted/$B/VoiceServices.framework"
-            DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$B"
-            mkdir -p "$DST"
-            cp "$SRC/Support/voiced" "$DST/voiced"
-            rsync -a --delete "$SRC/TTSResources/" "$DST/TTSResources/"
-          done
-          # iOS 10's speech bundle: only the engine for Mavericks premium voices
-          mkdir -p "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10"
-          cp "$SRCROOT/../extracted/ios10/TTSSpeechBundle.speechbundle/TTSSpeechBundle" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/ios10/voiced"
-          # MacinTalk generations (Alex is copied onto each device separately: ~400-670 MB)
-          for G in mt104 mt105 mt106 mt107; do
-            if [ -e "$SRCROOT/../extracted/$G/MacinTalk" ]; then
-              rsync -aL --delete --exclude Alex.SpeechVoice --exclude Alex-sequoia.SpeechVoice "$SRCROOT/../extracted/$G/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$G/"
-            fi
-          done
-          # Mac OS X compact voices and the common data the downloadable ones
-          # use (iOS 7 is only the engine for Mavericks voices)
-          for M in mac107 mac108 mac109; do
-            if [ -d "$SRCROOT/../extracted/$M" ]; then
-              rsync -a --delete "$SRCROOT/../extracted/$M/" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$M/"
-            fi
-          done
-        basedOnDependencyAnalysis: false

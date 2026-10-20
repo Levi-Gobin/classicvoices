@@ -10,17 +10,17 @@ enum Diagnostics {
         var out: [String] = []
         let info = Bundle.main.infoDictionary ?? [:]
         out.append("Classic Voices \(info["CFBundleShortVersionString"] ?? "?") (\(info["CFBundleVersion"] ?? "?"))")
-        #if os(iOS)
-        out.append("iOS \(ProcessInfo.processInfo.operatingSystemVersionString), \(modelIdentifier())")
-        #else
+        #if os(macOS)
         out.append("macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        #else
+        out.append("\(osName) \(ProcessInfo.processInfo.operatingSystemVersionString), \(modelIdentifier())")
         #endif
         out.append("Bundle ID: \(Bundle.main.bundleIdentifier ?? "?")")
 
         // The App Group: downloads live there, and the speech extension reads them from it.
         let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
         out.append("App Group: \(appGroup) \(container == nil ? "(NOT available)" : "(available)")")
-        #if os(iOS)
+        #if !os(macOS)
         let profile = profileAppGroups(Bundle.main.bundleURL.appendingPathComponent("embedded.mobileprovision"))
         out.append("Profile App Groups: \(profile.map { $0.isEmpty ? "none" : $0.joined(separator: ", ") } ?? "no profile")")
         if let alt = info["ALTAppGroups"] as? [String] { out.append("ALTAppGroups: \(alt.joined(separator: ", "))") }
@@ -28,7 +28,7 @@ enum Diagnostics {
         out.append("Voice store: \(VoiceStore.shared.mode)" + (VoiceStore.shared.hasPending ? ", installs waiting for the next launch" : ""))
         let ext = Bundle.main.builtInPlugInsURL?.appendingPathComponent("Synth.appex")
         out.append("Speech extension: \(ext.map { FileManager.default.fileExists(atPath: $0.path) ? "present" : "MISSING" } ?? "MISSING")")
-        #if os(iOS)
+        #if !os(macOS)
         if let ext, let groups = profileAppGroups(ext.appendingPathComponent("embedded.mobileprovision")) {
             out.append("Extension profile App Groups: \(groups.isEmpty ? "none" : groups.joined(separator: ", "))")
         }
@@ -58,7 +58,16 @@ enum Diagnostics {
         return out.joined(separator: "\n")
     }
 
-    #if os(iOS)
+    #if !os(macOS)
+    private static var osName: String {
+        #if os(tvOS)
+        "tvOS"
+        #elseif os(visionOS)
+        "visionOS"
+        #else
+        "iOS"
+        #endif
+    }
     nonisolated private static func modelIdentifier() -> String {
         var u = utsname()
         uname(&u)
@@ -77,17 +86,19 @@ struct DiagnosticsView: View {
         ScrollView {
             Text(text)
                 .font(.body.monospaced())
+                #if !os(tvOS)
                 .textSelection(.enabled)
+                #endif
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
         }
         .toolbar {
             Button(copied ? "Copied" : "Copy Report") {
-                #if os(iOS)
-                UIPasteboard.general.string = text
-                #else
+                #if os(macOS)
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
+                #elseif !os(tvOS)  // Apple TV has no pasteboard
+                UIPasteboard.general.string = text
                 #endif
                 copied = true
                 AccessibilityNotification.Announcement("Report copied").post()

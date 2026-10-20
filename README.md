@@ -37,7 +37,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/mai
 ```
 
 It asks what to build: on Windows, the iPhone app and the NVDA add-on; on a
-Mac, the iPhone app and the Mac app. Then it signs you in to GitHub in your
+Mac, the iPhone app and the Mac app; on either, also the Apple TV and Apple
+Vision Pro apps. Then it signs you in to GitHub in your
 browser (the one-time code is copied for you), makes your own copy of this
 repository, builds there, and reads out each step as it finishes. About half
 an hour later:
@@ -53,6 +54,14 @@ an hour later:
   Open Anyway.
 - **iPhone**: `ClassicVoices.ipa` is saved in your Downloads folder and
   Sideloadly opens, if you have it, so you can install it.
+- **Apple TV**: `ClassicVoicesTV.ipa` is saved in Downloads. Sideloadly can
+  install it over Wi-Fi (its Apple TV mode), and so can Xcode's Devices window.
+  Apple TV has no Files app and gives apps only cache storage, so there is no
+  Add from Files there, and tvOS may remove downloaded voices when the disk is
+  full; the app downloads them again.
+- **Apple Vision Pro**: `ClassicVoicesVision.ipa` is saved in Downloads.
+  Install it with Xcode (Developer Mode on in the headset's settings) or a
+  sideloading tool that supports Vision Pro, such as SideStore.
 
 Run the same line again any time to update.
 
@@ -100,9 +109,10 @@ Mavericks offered in System Preferences, from Apple's software update servers.
 
 The voices speak the way they did then. Apple's pronunciation rules from iOS 5
 and 6 are applied to the text ("iOS" is spelled out, "OS X" is "OS ten", and so
-on), and when VoiceOver changes the pitch, an enhanced or premium voice hands
-that part to its compact version, as iOS did, because those voices can't change
-pitch themselves. Both are on for every voice and can be turned off in Speech
+on), and when VoiceOver changes the pitch, a voice that can't change pitch
+itself (the iOS 5 and 6 enhanced voices, and the Lion and Mountain Lion premium
+voices) hands that part to its compact version, as iOS did. Mavericks premium
+voices change pitch on their own and keep doing so. Both are on for every voice and can be turned off in Speech
 Settings or per voice. A search field at the top of each tab finds any voice in
 the catalog.
 

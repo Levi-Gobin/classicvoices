@@ -360,7 +360,12 @@ struct PlatformTab: View {
             Page { VoiceButtons(items: items(language: lang), groupByVersion: versionID == "all", open: open) }
         case .voice(let id)?: VoiceDetail(id: id)
         case .diagnostics?: DiagnosticsView()
-        case .addFiles?: AddFilesView()
+        case .addFiles?:
+            #if os(tvOS)
+            Text("Apple TV can\u{2019}t open files from other devices.")
+            #else
+            AddFilesView()
+            #endif
         case .settings?: SpeechSettingsView()
         }
     }
@@ -408,7 +413,9 @@ struct PlatformTab: View {
             }
             PageSection(nil) {
                 if platform == .macOS {
+                    #if !os(tvOS)  // no Files app on Apple TV
                     OpenButton(title: "Add from Files", detail: "MacinTalk from your own Mac OS X") { open(.addFiles) }
+                    #endif
                 }
                 OpenButton(title: "Speech Settings", detail: "pronunciation rules, pitch changes") { open(.settings) }
                 OpenButton(title: "Diagnostics", detail: "a report to send if voices don\u{2019}t work") { open(.diagnostics) }
@@ -484,7 +491,7 @@ struct OpenButton: View {
                     if let detail { Text(detail).font(.footnote).foregroundStyle(.secondary) }
                 }
                 Spacer()
-                #if os(iOS)
+                #if !os(macOS)
                 if opens {
                     Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
                 }
@@ -649,8 +656,16 @@ struct VoiceDetail: View {
                     TextField("Text to speak", text: $text, axis: .vertical)
                         .accessibilityLabel("Text to speak")
                     VStack(alignment: .leading) {
+                        #if os(tvOS)  // no sliders or steppers on Apple TV
+                        HStack {
+                            Text("Rate: \(Int(rate))%")
+                            Button("Slower") { rate = max(50, rate - 10) }
+                            Button("Faster") { rate = min(400, rate + 10) }
+                        }
+                        #else
                         Text("Rate: \(Int(rate))%")
                         Slider(value: $rate, in: 50...400, step: 10) { Text("Rate") }
+                        #endif
                     }
                     HStack {
                         Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item)) } label: {

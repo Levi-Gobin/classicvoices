@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct ClassicVoicesApp: App {
-    #if os(iOS)
+    #if canImport(UIKit)
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
     #endif
 
@@ -97,7 +97,7 @@ struct ClassicVoicesApp: App {
     }
 }
 
-#if os(iOS)
+#if canImport(UIKit)
 final class AppDelegate: NSObject, UIApplicationDelegate {
     /// Downloads finished while the app wasn't running.
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
@@ -414,7 +414,7 @@ final class DirectPlayer: ObservableObject {
     }
 
     func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil) {
-        #if os(iOS)
+        #if !os(macOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif

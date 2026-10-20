@@ -76,6 +76,16 @@ enum VoiceCatalog {
             return "\(name) (\(buildName)\(enhanced ? " Enhanced" : ""))"
         }
         var key: String { macDir.map { "\(build)/\($0)" } ?? "\(tag)/\(language)" }  // engine voice key
+        /// Voices whose pitch the engine can't change: the iOS 5 and 6
+        /// enhanced voices and the Lion and Mountain Lion premium voices
+        /// (Vocalizer 5.2.3 unit selection). Mavericks premium voices run on
+        /// the iOS 10 engine, which changes their pitch itself, as every
+        /// compact voice does.
+        var fixedPitch: Bool {
+            if macinTalk { return false }
+            if macDir != nil { return premium && (build == "mac107" || build == "mac108") }
+            return enhanced && (build == "ios5" || build == "ios6")
+        }
     }
 
     /// Mac OS X MacinTalk generations (Apple's own engine, run on the x86
@@ -183,12 +193,23 @@ enum VoiceCatalog {
     /// <store>/<gen>/MacinTalk ... Only the extension process has one.
     static let extensionStore: URL? = {
         guard Bundle.main.bundleURL.pathExtension == "appex",
-              let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+              let base = FileManager.default.urls(for: persistentDirectory, in: .userDomainMask).first
         else { return nil }
         let store = base.appendingPathComponent("EnhancedVoices")
         try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
         return store
     }()
+
+    /// Where an app may keep files between launches. Apple TV gives an app
+    /// no persistent storage except Caches, which the system can clear when
+    /// the disk fills, so there voices may need downloading again.
+    static var persistentDirectory: FileManager.SearchPathDirectory {
+        #if os(tvOS)
+        .cachesDirectory
+        #else
+        .applicationSupportDirectory
+        #endif
+    }
 
     /// Voices downloaded by earlier versions into the App Group, when there is one.
     static var legacyGroupRoot: URL? {
@@ -310,13 +331,11 @@ enum VoiceCatalog {
     /// folder of the same release for a Mac voice. Pitch changes speak with
     /// it (see SpeechSettings.pitchFallback).
     static func compactCounterpart(of e: Entry) -> Entry? {
-        if e.macinTalk { return nil }
+        guard e.fixedPitch else { return nil }
         let all = entries
         if let dir = e.macDir {
-            guard e.premium else { return nil }
             return all.first { $0.build == e.build && $0.macDir == dir + "Compact" }
         }
-        guard e.enhanced else { return nil }
         return all.first { $0.build == e.build && $0.language == e.language && !$0.enhanced && $0.macDir == nil }
     }
 

@@ -1,6 +1,6 @@
 # Builds Classic Voices in your own fork, from firmware downloaded from
-# Apple's servers during the run: the iPhone app, the Mac app and the NVDA
-# add-on. Nothing Apple made is stored in this repository: the engines and
+# Apple's servers during the run: the iPhone, Apple TV and Apple Vision Pro
+# apps, the Mac app and the NVDA add-on. Nothing Apple made is stored in this repository: the engines and
 # voices are fetched, and the fast engine code is generated from them, inside
 # your run only.
 #
@@ -15,12 +15,12 @@ on:
   workflow_dispatch:
     inputs:
       targets:
-        description: "What to build: any of iphone, mac, nvda"
+        description: "What to build: any of iphone, mac, nvda, appletv, visionpro"
         default: "iphone mac nvda"
 
 jobs:
-  iphone:
-    if: contains(inputs.targets, 'iphone')
+  iphone:  # also Apple TV and Vision Pro: the same firmware and engines
+    if: contains(inputs.targets, 'iphone') || contains(inputs.targets, 'appletv') || contains(inputs.targets, 'visionpro')
     runs-on: macos-15
     timeout-minutes: 150
     steps:
@@ -55,20 +55,49 @@ jobs:
         run: tools/build_engines.sh
 
       - name: Build the app
-        run: tools/package_ipa.sh
+        if: contains(inputs.targets, 'iphone')
+        run: tools/package_ipa.sh iphone
+
+      - name: Build the Apple TV app
+        if: contains(inputs.targets, 'appletv')
+        run: tools/package_ipa.sh appletv
+
+      - name: Build the Vision Pro app
+        if: contains(inputs.targets, 'visionpro')
+        run: tools/package_ipa.sh visionpro
 
       - name: Protect the download
         env:
           IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
         run: |
-          mkdir build/upload
           cd build
-          zip -q -P "$IPA_PASSWORD" upload/ClassicVoices-ipa.zip ClassicVoices.ipa
+          for N in ClassicVoices ClassicVoicesTV ClassicVoicesVision; do
+            [ -f "$N.ipa" ] || continue
+            mkdir -p "upload-$N"
+            zip -q -P "$IPA_PASSWORD" "upload-$N/$N-ipa.zip" "$N.ipa"
+          done
 
       - uses: actions/upload-artifact@v4
+        if: contains(inputs.targets, 'iphone')
         with:
           name: ClassicVoices
-          path: build/upload/*
+          path: build/upload-ClassicVoices/*
+          retention-days: 3
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        if: contains(inputs.targets, 'appletv')
+        with:
+          name: ClassicVoicesTV
+          path: build/upload-ClassicVoicesTV/*
+          retention-days: 3
+          compression-level: 0
+
+      - uses: actions/upload-artifact@v4
+        if: contains(inputs.targets, 'visionpro')
+        with:
+          name: ClassicVoicesVision
+          path: build/upload-ClassicVoicesVision/*
           retention-days: 3
           compression-level: 0
 

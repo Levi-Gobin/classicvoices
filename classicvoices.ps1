@@ -33,10 +33,23 @@
             Say '  1. The iPhone app and the NVDA add-on'
             Say '  2. The iPhone app only'
             Say '  3. The NVDA add-on only'
-            $choice = Read-Host 'Type 1, 2 or 3 and press Enter (Enter alone means 1)'
-            $targets = switch ("$choice".Trim()) { '2' { 'iphone' } '3' { 'nvda' } default { 'iphone nvda' } }
+            Say '  4. The Apple TV app'
+            Say '  5. The Apple Vision Pro app'
+            $choice = Read-Host 'Type the numbers you want, like 1 or 2 4, and press Enter (Enter alone means 1)'
+            $choice = "$choice".Trim()
+            if (-not $choice) { $choice = '1' }
+            $targets = @()
+            if ($choice -match '1') { $targets += 'iphone', 'nvda' }
+            if ($choice -match '2') { $targets += 'iphone' }
+            if ($choice -match '3') { $targets += 'nvda' }
+            if ($choice -match '4') { $targets += 'appletv' }
+            if ($choice -match '5') { $targets += 'visionpro' }
+            if (-not $targets) { $targets = @('iphone', 'nvda') }
+            $targets = ($targets | Select-Object -Unique) -join ' '
         }
         $wantIphone = $targets -match 'iphone'
+        $wantAppleTV = $targets -match 'appletv'
+        $wantVisionPro = $targets -match 'visionpro'
         $wantNvda = $targets -match 'nvda'
 
         # --- GitHub's command line tool, kept in %LOCALAPPDATA%\ClassicVoices ---
@@ -147,7 +160,8 @@
 
         # One line per finished step, read from GitHub every 30 seconds.
         $names = @{ 'Fetch firmware from Apple' = 'Firmware downloaded from Apple'; 'Generate the fast engines' = 'Engines generated';
-                    'Build the app' = 'iPhone app built'; 'Build the NVDA add-on' = 'NVDA add-on built';
+                    'Build the app' = 'iPhone app built'; 'Build the Apple TV app' = 'Apple TV app built';
+                    'Build the Vision Pro app' = 'Vision Pro app built'; 'Build the NVDA add-on' = 'NVDA add-on built';
                     'Build NVDA''s voices and fast engines' = 'NVDA voices and fast engines built' }
         $seen = @{}
         while ($true) {
@@ -234,6 +248,29 @@
                 Say 'choose ClassicVoices.ipa from your Downloads folder.'
             }
             Say 'Then open Classic Voices once, and its voices appear in VoiceOver and Spoken Content.'
+        }
+
+        if ($wantAppleTV) {
+            GH run download $run -R $repo -n ClassicVoicesTV -D $tmp | Out-Null
+            if (-not $ghOk) { Fail "couldn't download the Apple TV app." }
+            Unlock (Join-Path $tmp 'ClassicVoicesTV-ipa.zip') $tmp
+            $tv = Join-Path $Out 'ClassicVoicesTV.ipa'
+            Move-Item -Force (Join-Path $tmp 'ClassicVoicesTV.ipa') $tv
+            Say "Saved $tv"
+            Say 'Install it on your Apple TV with Sideloadly: pair the Apple TV over Wi-Fi in its Apple TV mode,'
+            Say 'choose ClassicVoicesTV.ipa from your Downloads folder, and press Start.'
+            Say 'Then open Classic Voices once on the Apple TV, and its voices appear in VoiceOver.'
+        }
+
+        if ($wantVisionPro) {
+            GH run download $run -R $repo -n ClassicVoicesVision -D $tmp | Out-Null
+            if (-not $ghOk) { Fail "couldn't download the Vision Pro app." }
+            Unlock (Join-Path $tmp 'ClassicVoicesVision-ipa.zip') $tmp
+            $vp = Join-Path $Out 'ClassicVoicesVision.ipa'
+            Move-Item -Force (Join-Path $tmp 'ClassicVoicesVision.ipa') $vp
+            Say "Saved $vp"
+            Say 'Install it on your Apple Vision Pro with a sideloading tool that supports it, such as SideStore,'
+            Say 'or from a Mac with Xcode. Then open Classic Voices once, and its voices appear in VoiceOver.'
         }
         Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     } catch {

@@ -210,6 +210,39 @@ team-prefixed group. So, since 2026-10-18:
   whole-utterance pitch renders byte-identical to the compact voice itself.
   `VoiceCatalog.compactCounterpart(of:)`: ios6e/<lang> -> ios6/<lang>,
   mac107/Karen -> mac107/KarenCompact; MacinTalk none.
+- Which voices actually ignore pitch (`Entry.fixedPitch`), measured 2026-10-20
+  with fbtest at 100% vs 140% (F0 by autocorrelation on the float output):
+  ios5e/ios6e enhanced, mac107 and mac108 premium -> byte-identical, F0
+  unchanged (Vocalizer 5.2.3 unit selection has no pitch control). Every
+  compact voice and the mac109 premium voices (iOS 10 engine) -> F0 x1.4.
+  So Mavericks premium voices get no fallback (they changed pitch themselves
+  and the compact would have spoken for nothing); the fallback's own pitched
+  output equals the compact voice at that pitch.
+
+## Apple TV and Apple Vision Pro (2026-10-20)
+
+- Targets ClassicVoicesTV/SynthTV (tvOS 17) and ClassicVoicesVision/
+  SynthVision (visionOS 1.0) share the iOS sources through `targetTemplates`
+  in project.yml (same bundle ids, entitlements, PRODUCT_NAME ClassicVoices /
+  Synth so the packaging and `Synth.appex` lookups don't change).
+  `tools/package_ipa.sh appletv|visionpro` -> build/ClassicVoicesTV.ipa /
+  ClassicVoicesVision.ipa; the workflow's iphone job builds them when the
+  targets input has `appletv` / `visionpro`; the one-line scripts offer them
+  as choices 4 and 5 (several numbers may be typed).
+- tvOS has no `AUMessageChannel` (unavailable in the SDK), so the Apple TV app
+  can't fill the extension's store over the channel: VoiceStore there goes
+  straight to the App Group fallback (`#if os(tvOS)` in VoiceStore,
+  FileChannel and the audio unit). A sideloaded build without the group
+  entitlement therefore can't download voices on Apple TV; the bundled compact
+  voices still speak. tvOS also has no Files picker (AddFilesView compiled
+  out), no pasteboard, no Slider/Stepper (rate buttons), no textSelection,
+  and only Caches for persistent storage (`VoiceCatalog.persistentDirectory`).
+- Guards elsewhere are `canImport(UIKit)` / `!os(macOS)` rather than
+  `os(iOS)`, which is false on tvOS and visionOS.
+- Both compile for generic devices (no signing) on 2026-10-20; neither has
+  been run: no simulator runtimes fit on the disk and there is no Apple TV or
+  Vision Pro here. Sideloading: Sideloadly lists Apple TV (Wi-Fi pairing);
+  Vision Pro takes Xcode (Developer Mode) or SideStore.
 - `SpeechSettings` (`settings.json` in the store, written by the app through
   the channel, read by the extension per request with an mtime check): two
   defaults (rules, pitchFallback, both on) plus per-voice overrides by

@@ -1,3 +1,4 @@
+#if !os(tvOS)  // Apple TV has no file picker
 import AVFoundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -109,3 +110,4 @@ struct AddFilesView: View {
         }
     }
 }
+#endif

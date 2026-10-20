@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-#if os(iOS)
+#if canImport(UIKit)
 import UIKit
 #endif
 
@@ -37,7 +37,9 @@ final class VoiceStore: @unchecked Sendable {
     }
 
     private enum Backend {
+        #if !os(tvOS)
         case channel(AVAudioUnit, AUMessageChannel)
+        #endif
         case group(StoreOps)
     }
 
@@ -56,12 +58,16 @@ final class VoiceStore: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if let backend { return backend }
         assert(!Thread.isMainThread, "VoiceStore blocks; use it off the main thread")
+        var failure: String?
+        #if os(tvOS)
+        // tvOS has no audio unit message channels: only the App Group below.
+        failure = "Apple TV has no channel to the speech extension"
+        #else
         var desc = AudioComponentDescription(componentType: kAudioUnitType_SpeechSynthesizer, componentSubType: 0x63766F78,
                                              componentManufacturer: 0x436C566F, componentFlags: 0, componentFlagsMask: 0)
         _ = desc
         let sem = DispatchSemaphore(value: 0)
         var unit: AVAudioUnit?
-        var failure: String?
         AVAudioUnit.instantiate(with: desc, options: []) { u, e in
             unit = u
             failure = e?.localizedDescription
@@ -78,6 +84,7 @@ final class VoiceStore: @unchecked Sendable {
             }
             failure = "the speech extension has no file channel (an older copy still running?)"
         }
+        #endif
         lastFailure = failure
         // Fallback: an App Group we can reach.
         if let group = VoiceCatalog.legacyGroupRoot {
@@ -102,7 +109,9 @@ final class VoiceStore: @unchecked Sendable {
     private func call(_ message: [AnyHashable: Any]) throws -> [AnyHashable: Any] {
         let reply: [AnyHashable: Any]?
         switch try connect() {
+        #if !os(tvOS)
         case .channel(_, let ch): reply = ch.callAudioUnit?(message)
+        #endif
         case .group(let ops): reply = ops.perform(message)
         }
         guard let reply else { disconnect(); throw StoreError("The speech extension stopped answering.") }
@@ -216,7 +225,7 @@ final class VoiceStore: @unchecked Sendable {
     }
 
     private static var pendingRoot: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let base = FileManager.default.urls(for: VoiceCatalog.persistentDirectory, in: .userDomainMask).first!
             .appendingPathComponent("PendingInstalls")
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         return base
@@ -235,7 +244,7 @@ final class VoiceStore: @unchecked Sendable {
     /// Whether the app is in front: hosting the extension from the background
     /// is unreliable, so jobs wait for the next foreground.
     @MainActor static var isForeground: Bool {
-        #if os(iOS)
+        #if canImport(UIKit)
         UIApplication.shared.applicationState == .active
         #else
         true

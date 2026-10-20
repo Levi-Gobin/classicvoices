@@ -1,3 +1,4 @@
+#if !os(tvOS)  // no AUMessageChannel on Apple TV
 import AudioToolbox
 import Foundation
 
@@ -24,3 +25,4 @@ final class FileChannel: NSObject, AUMessageChannel {
         return reply
     }
 }
+#endif
