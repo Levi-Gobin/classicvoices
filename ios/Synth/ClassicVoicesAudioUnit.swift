@@ -43,7 +43,9 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let n = Int(renderCount.pointee)
         guard n > 0, requestStart.pointee > 0 else { return }
         var tb = mach_timebase_info_data_t(); mach_timebase_info(&tb)
-        let ms = { (t: UInt64) in Double(t - self.requestStart.pointee) * Double(tb.numer) / Double(tb.denom) / 1e6 }
+        // A render can be logged between the count reset and the new start time, so never subtract past zero.
+        let start = requestStart.pointee
+        let ms = { (t: UInt64) in Double(t > start ? t - start : 0) * Double(tb.numer) / Double(tb.denom) / 1e6 }
         let parts = (0..<min(n, 8)).map { i -> String in
             let (t, asked, given) = renderLog[i]
             return String(format: "+%.0fms ask=%d got=%d", ms(t), asked, given)

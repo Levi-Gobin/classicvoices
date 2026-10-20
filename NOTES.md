@@ -219,6 +219,25 @@ team-prefixed group. So, since 2026-10-18:
   and the compact would have spoken for nothing); the fallback's own pitched
   output equals the compact voice at that pitch.
 
+## Heap overflow in speak_segmented (fixed 2026-10-20)
+
+- 13 Synth crashes on the phone in one afternoon, all "BUG IN CLIENT OF
+  LIBMALLOC: memory corruption of free block", detected at random malloc
+  sites (dumpRenderLog, NSXPC decoding, the ios10 recompiled code, vx_open).
+  Cause (pre-existing since the Mavericks voices, 85b1cf4 2026-10-11): for
+  the percent-pitch engines (ios7/ios10 = Mavericks voices) speak_segmented
+  rewrites inline `ESC\pitch=N\` commands to percent values, which can be a
+  byte or two longer than the originals, but the segment buffer was sized to
+  the input text and only grew when the command itself didn't fit at that
+  moment, so the trailing NUL (and later characters) went past the end. Every
+  Mavericks utterance with a capital letter corrupted the heap a little.
+  Found in seconds with `tests/fbstress.sh` (Address Sanitizer build of a
+  VoiceOver-like stress: fallbacks, pitch tags, cancels, preloads); clean for
+  3 x 400 iterations after the fix (buffer tracks its capacity and grows
+  before every write). Also fixed: dumpRenderLog could trap on arithmetic
+  overflow when a render was logged between the count reset and the new start
+  time (Mac crash 2026-10-17).
+
 ## Apple Vision Pro, and why not Apple TV (2026-10-20)
 
 - Targets ClassicVoicesVision/SynthVision (visionOS 1.0) share the iOS

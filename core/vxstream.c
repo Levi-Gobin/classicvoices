@@ -440,8 +440,10 @@ static int pitch_value_to_percent(int v) {
 static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const char *fallback_key, int rate, int volume,
                            Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch) {
     static const char kEos[] = "\x1b\\eos=1\\", kPitch[] = "\x1b\\pitch=";
-    size_t n = strlen(text);
-    char *seg = malloc(n + 1);
+    // The segment buffer grows as needed: rescaled pitch commands (below) can
+    // be longer than the ones in the text.
+    size_t cap = strlen(text) + 1;
+    char *seg = malloc(cap);
     size_t m = 0;
     int rc = 0;
     const char *p = text;
@@ -491,11 +493,12 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
             if (*p) p++;
             char cmd[32];
             int len = snprintf(cmd, sizeof cmd, "%s%d\\", kPitch, pitch_value_to_percent(v));
-            if (m + (size_t)len > n) { seg = realloc(seg, n + (size_t)len + 1); n += (size_t)len; }
+            if (m + (size_t)len + 1 > cap) { cap = (m + (size_t)len + 1) * 2; seg = realloc(seg, cap); }
             memcpy(seg + m, cmd, (size_t)len);
             m += (size_t)len;
             continue;
         }
+        if (m + 2 > cap) { cap *= 2; seg = realloc(seg, cap); }
         seg[m++] = *p++;
     }
     free(seg);
