@@ -1,0 +1,520 @@
+#!/usr/bin/env python3
+"""classicvoices-data: get the Classic Voices voices onto this Linux machine.
+
+Nothing of Apple's comes with Classic Voices. This tool takes the speech
+engines and voices out of iPhone firmware (from your own copy, or streamed
+from Apple's servers on request), downloads the enhanced iOS voices and the
+Mac OS X voices from Apple, builds the optional fast engine code with your
+compiler, and installs the Speech Dispatcher module.
+
+  classicvoices-data status
+  classicvoices-data firmware                  which firmware is needed, Apple's links
+  classicvoices-data import FILE.ipsw ...      import firmware you have
+  classicvoices-data import ios6 ios3 ...      stream it from Apple (only the root
+                                               filesystem is kept, temporarily)
+  classicvoices-data import all
+  classicvoices-data voices                    voices you can download now
+  classicvoices-data download WHAT ...         e.g. "enhanced en-US", Karen, all-enhanced
+  classicvoices-data native [ios6 ...]         build fast engine code (needs clang)
+  classicvoices-data android-pack [--ndk DIR] [--abi arm64-v8a,armeabi-v7a] [-o pack.zip] [ios6 ...]
+                                               the same for an Android phone, as a data pack
+                                               for the app's "Import a data pack" (needs the NDK)
+  classicvoices-data install-module            install sd_classicvoices for Speech Dispatcher
+
+Data lives in $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
+(~/.local/share/classicvoices): Voices/, Downloads/, Native/<arch>/.
+MacinTalk (Fred, Victoria, Alex ...) is Panthera Speech's job:
+https://github.com/tgeczy/panthera-speech
+"""
+import os
+import platform
+import shlex
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+import zlib
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+# installed: <prefix>/lib/classicvoices/{_classicvoices, tools, core ...}; in the repo: linux/ next to nvda/
+for cand in (os.path.join(HERE, "..", "lib", "classicvoices"), os.path.join(HERE, "lib"),
+             os.path.join(HERE, "..", "nvda", "addon", "synthDrivers")):
+    if os.path.isdir(os.path.join(cand, "_classicvoices")):
+        sys.path.insert(0, os.path.realpath(cand))
+        LIB = os.path.realpath(cand)
+        break
+else:
+    sys.exit("classicvoices-data: can't find its _classicvoices library next to it")
+
+from _classicvoices import download, firmware, voices  # noqa: E402
+
+UA = "classicvoices-linux/1.0 (python-urllib)"
+
+# Apple's own links for the firmware Classic Voices runs (as listed by ipsw.me).
+FIRMWARE = {
+    "ios3": ("7E18", "https://secure-appldnld.apple.com/iPhone/061-7472.20100202.8tugj/iPhone2,1_3.1.3_7E18_Restore.ipsw", 305122343),
+    "ios4": ("8L1", "https://secure-appldnld.apple.com/iPhone4/041-1965.20110721.gxUB5/iPhone2,1_4.3.5_8L1_Restore.ipsw", 440577895),
+    "ios5": ("9B206", "https://secure-appldnld.apple.com/iOS5.1.1/041-4347.20120427.o2yov/iPhone2,1_5.1.1_9B206_Restore.ipsw", 720391327),
+    "ios6": ("10B500", "https://secure-appldnld.apple.com/iOS6.1/091-3457.20140221.Btt3e/iPhone2,1_6.1.6_10B500_Restore.ipsw", 822970962),
+    "ios7": ("11D257", "https://secure-appldnld.apple.com/iOS7.1/031-4812.20140627.cq6y8/iPhone3,1_7.1.2_11D257_Restore.ipsw", 1204958925),
+    "ios10": ("14G61", "https://updates.cdn-apple.com/2019/ios/091-25277-20190722-0C1B94DE-992C-11E9-A2EE-E2C9A77C2E40/iPhone_4.0_32bit_10.3.4_14G61_Restore.ipsw", 2000796302),
+}
+PURPOSE = {
+    "ios3": "the iOS 3 voices", "ios4": "the iOS 4 voices", "ios5": "the iOS 5 voices and their enhanced versions",
+    "ios6": "the iOS 6 voices and their enhanced versions; also the Lion and Mountain Lion voices",
+    "ios7": "engine only: Mavericks compact voices", "ios10": "engine only: Mavericks premium voices",
+}
+
+
+def data_root():
+    d = os.environ.get("CLASSICVOICES_DATA")
+    if d:
+        return d
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "classicvoices")
+
+
+def arch():
+    m = platform.machine().lower()
+    return {"x86_64": "x86_64", "amd64": "x86_64", "aarch64": "arm64-v8a", "arm64": "arm64-v8a",
+            "armv7l": "armeabi-v7a", "i686": "x86", "i386": "x86"}.get(m, m)
+
+
+VOICES = os.path.join(data_root(), "Voices")
+DOWNLOADS = os.path.join(data_root(), "Downloads")
+NATIVE = os.path.join(data_root(), "Native", arch())
+
+
+class Progress:
+    def __init__(self):
+        self.last = 0
+        self.msg = ""
+
+    def __call__(self, message, fraction):
+        if message:
+            if self.msg:
+                sys.stderr.write("\n")
+            self.msg = message
+            sys.stderr.write(message)
+            sys.stderr.flush()
+            self.last = 0
+        if fraction is not None and time.time() - self.last > 1:
+            self.last = time.time()
+            sys.stderr.write("\r%s: %d%%" % (self.msg, int(fraction * 100)))
+            sys.stderr.flush()
+
+    def done(self):
+        if self.msg:
+            sys.stderr.write("\n")
+        self.msg = ""
+
+
+# ---------------------------------------------------------------- remote IPSW
+
+def _get(url, start=None, end=None):
+    h = {"User-Agent": UA}
+    if start is not None:
+        h["Range"] = "bytes=%d-%s" % (start, "" if end is None else end)
+    return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=120)
+
+
+def _remote_rootfs(url):
+    """(name, method, compressed size, local header offset) of the largest
+    .dmg in a remote zip, read from its central directory with range requests."""
+    with _get(url, 0, 0) as r:
+        size = int(r.headers["Content-Range"].split("/")[1])
+    tail_at = max(0, size - 65536)
+    with _get(url, tail_at, size - 1) as r:
+        tail = r.read()
+    i = tail.rfind(b"PK\x05\x06")
+    if i < 0:
+        raise firmware.ImportError_("not a zip: " + url)
+    cdsize, cdoff = struct.unpack("<II", tail[i + 12:i + 20])
+    if cdoff == 0xFFFFFFFF:  # zip64
+        j = tail.rfind(b"PK\x06\x07")
+        off64 = struct.unpack("<Q", tail[j + 8:j + 16])[0]
+        with _get(url, off64, off64 + 55) as r:
+            z = r.read()
+        cdsize, cdoff = struct.unpack("<QQ", z[40:56])
+    if cdoff >= tail_at:
+        cd = tail[cdoff - tail_at:cdoff - tail_at + cdsize]
+    else:
+        with _get(url, cdoff, cdoff + cdsize - 1) as r:
+            cd = r.read()
+    best, p = None, 0
+    while cd[p:p + 4] == b"PK\x01\x02":
+        method = struct.unpack("<H", cd[p + 10:p + 12])[0]
+        csz, usz = struct.unpack("<II", cd[p + 20:p + 28])
+        nl, el, cl = struct.unpack("<HHH", cd[p + 28:p + 34])
+        lho = struct.unpack("<I", cd[p + 42:p + 46])[0]
+        name = cd[p + 46:p + 46 + nl].decode("utf-8", "replace")
+        extra = cd[p + 46 + nl:p + 46 + nl + el]
+        if 0xFFFFFFFF in (csz, usz, lho):  # zip64 extra field
+            q = 0
+            while q + 4 <= len(extra):
+                hid, hl = struct.unpack("<HH", extra[q:q + 4])
+                if hid == 1:
+                    vals = list(struct.unpack("<%dQ" % (hl // 8), extra[q + 4:q + 4 + hl]))
+                    if usz == 0xFFFFFFFF: usz = vals.pop(0)
+                    if csz == 0xFFFFFFFF: csz = vals.pop(0)
+                    if lho == 0xFFFFFFFF: lho = vals.pop(0)
+                q += 4 + hl
+        if name.lower().endswith(".dmg") and (best is None or usz > best[4]):
+            best = (name, method, csz, lho, usz)
+        p += 46 + nl + el + cl
+    if not best:
+        raise firmware.ImportError_("no disk images in the firmware")
+    return best
+
+
+def stream_rootfs(url, dest, progress):
+    """Download only the root filesystem out of a remote IPSW, inflating it on
+    the way into `dest`. Returns the image's name inside the IPSW."""
+    name, method, csize, lho, usize = _remote_rootfs(url)
+    with _get(url, lho, lho + 29) as r:
+        h = r.read()
+    nl, el = struct.unpack("<HH", h[26:30])
+    start = lho + 30 + nl + el
+    progress("Downloading the root filesystem (%d MB of the firmware)" % (csize >> 20), 0.0)
+    inflater = zlib.decompressobj(-15) if method == 8 else None
+    got = 0
+    with _get(url, start, start + csize - 1) as r, open(dest, "wb") as out:
+        while True:
+            b = r.read(1 << 20)
+            if not b:
+                break
+            got += len(b)
+            out.write(inflater.decompress(b) if inflater else b)
+            progress(None, got / max(1, csize))
+        if inflater:
+            out.write(inflater.flush())
+    if got != csize:
+        raise firmware.ImportError_("download ended early (%d of %d bytes)" % (got, csize))
+    return os.path.basename(name)
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_status(_args):
+    print("Data folder: %s" % data_root())
+    for b, (build, _url, _size) in FIRMWARE.items():
+        have = voices.has_engine(VOICES, b)
+        print("  %-6s %-7s %s  (%s)" % (b, build, "imported" if have else "missing ", PURPOSE[b]))
+    from_cv = voices.scan(VOICES, DOWNLOADS)
+    print("Voices: %d" % len(from_cv))
+    nat = sorted(f for f in os.listdir(NATIVE)) if os.path.isdir(NATIVE) else []
+    print("Fast engine code (%s): %s" % (arch(), ", ".join(nat) if nat else "none (run: classicvoices-data native)"))
+    mod = os.path.join(os.path.expanduser("~"), ".local", "libexec", "speech-dispatcher-modules", "sd_classicvoices")
+    print("Speech Dispatcher module: %s" % ("installed" if os.path.exists(mod) else "not installed (run: classicvoices-data install-module)"))
+
+
+def cmd_firmware(_args):
+    print("Classic Voices runs these iPhone firmware builds (each only for its speech files):\n")
+    for b, (build, url, size) in FIRMWARE.items():
+        dev, nice = firmware.SUPPORTED[build][1], firmware.SUPPORTED[build][2]
+        print("%s  %s (%s) for %s, %d MB\n    %s\n    %s\n" % (b, nice, build, dev, size >> 20, PURPOSE[b], url))
+    print("Import a file you have with:  classicvoices-data import FILE.ipsw")
+    print("or stream one from Apple:     classicvoices-data import ios6")
+
+
+def cmd_import(args):
+    if not args:
+        sys.exit("import what? an .ipsw file, a build (ios3 ios4 ios5 ios6 ios7 ios10) or all")
+    if args == ["all"]:
+        args = list(FIRMWARE)
+    os.makedirs(VOICES, exist_ok=True)
+    for a in args:
+        pr = Progress()
+        try:
+            if os.path.isfile(a):
+                key = firmware.import_ipsw(a, VOICES, pr)
+            elif a in FIRMWARE or a.startswith("http"):
+                b = a if a in FIRMWARE else None
+                url = FIRMWARE[b][1] if b else a
+                build = FIRMWARE[b][0] if b else None
+                if not build:
+                    for k, (bb, u, _s) in FIRMWARE.items():
+                        if u == url:
+                            build = bb
+                    if not build:
+                        sys.exit("unknown firmware URL; use one listed by: classicvoices-data firmware")
+                nice = firmware.SUPPORTED[build][2]
+                pr("Streaming %s from Apple" % nice, None)
+                fd, tmp = tempfile.mkstemp(prefix="cv_rootfs_", suffix=".dmg", dir=VOICES)
+                os.close(fd)
+                try:
+                    name = stream_rootfs(url, tmp, pr)
+                    key = firmware.import_rootfs(tmp, name, build, VOICES, pr)
+                finally:
+                    if os.path.exists(tmp):
+                        os.remove(tmp)
+            else:
+                sys.exit("not a file or a known build: %s" % a)
+            pr.done()
+            print("imported %s" % key)
+        except firmware.ImportError_ as e:
+            pr.done()
+            sys.exit("import failed: %s" % e)
+
+
+def _available():
+    return download.available(VOICES, DOWNLOADS)
+
+
+def cmd_voices(_args):
+    av = _available()
+    if not av:
+        print("Nothing to download: import firmware first (classicvoices-data import ios6), or everything is installed.")
+        return
+    for kind, entry, label, size in av:
+        print("%-60s %5d MB" % (label, size >> 20))
+    print("\nDownload with: classicvoices-data download \"<name or language>\" ... (or all-enhanced, all-mac)")
+
+
+def cmd_download(args):
+    av = _available()
+    want = []
+    for a in args:
+        al = a.lower()
+        if al == "all-enhanced":
+            want += [x for x in av if x[0] == "enhanced"]
+            continue
+        if al == "all-mac":
+            want += [x for x in av if x[0] == "mac"]
+            continue
+        hits = [x for x in av if al == x[2].lower() or al in x[2].lower()]
+        if not hits:
+            print("no downloadable voice matches %r (see: classicvoices-data voices)" % a)
+        want += hits
+    seen = set()
+    for kind, entry, label, size in want:
+        if label in seen:
+            continue
+        seen.add(label)
+        pr = Progress()
+        try:
+            if kind == "enhanced":
+                download.download_enhanced(entry, DOWNLOADS, pr)
+            else:
+                installed = download.download_mac_voice(entry, DOWNLOADS, pr) or []
+                for folder in installed:  # the voice's language, for the voice list
+                    with open(os.path.join(DOWNLOADS, entry["era"], folder, "locale"), "w") as f:
+                        f.write(entry.get("locale", ""))
+        except download.DownloadError as e:
+            print("\n%s failed: %s" % (label, e))
+        pr.done()
+
+
+def _compiler():
+    """The C compiler as an argument list ($CC may be "zig cc")."""
+    env = shlex.split(os.environ.get("CC", ""))
+    if env and shutil.which(env[0]):
+        return env
+    for c in ("clang", "clang-19", "clang-18", "clang-17", "clang-16", "clang-15", "cc", "gcc"):
+        if shutil.which(c):
+            return [c]
+    return None
+
+
+def _recompiler():
+    """(tools dir, core dir, native_glue.c) of the recompiler, installed or in the repo."""
+    repo = os.path.realpath(os.path.join(LIB, "..", "..", ".."))
+    src = LIB if os.path.isdir(os.path.join(LIB, "tools")) else repo
+    tools = os.path.join(src, "tools")
+    glue = next((g for g in (os.path.join(src, "native_glue.c"), os.path.join(src, "nvda", "src", "native_glue.c"))
+                 if os.path.isfile(g)), None)
+    if not glue or not os.path.isfile(os.path.join(tools, "recomp.py")):
+        sys.exit("recompiler not found under %s" % tools)
+    return tools, os.path.join(src, "core"), glue
+
+
+def _generate(b, work):
+    """Recompile one imported engine into C under work/gen_<b>; None if it can't be."""
+    tools, _core, _glue = _recompiler()
+    voiced = os.path.join(VOICES, b, "voiced")
+    if not os.path.isfile(voiced):
+        print("skipping %s: not imported" % b)
+        return None
+    gen = os.path.join(work, "gen_" + b)
+    cmd = [sys.executable, "-I", os.path.join(tools, "recomp.py"), voiced,
+           os.path.join(tools, "profiles", b + ".txt"), gen, "--prefix", b]
+    if b in ("ios3", "ios4", "ios5"):  # stripped engines: function boundaries from a disassembly
+        objdump = next((o for o in ("llvm-objdump", "llvm-objdump-19", "llvm-objdump-18", "llvm-objdump-17",
+                                    "llvm-objdump-16", "llvm-objdump-15") if shutil.which(o)), None)
+        if not objdump:
+            print("skipping %s: its engine is stripped, and that needs llvm-objdump (sudo apt install llvm)" % b)
+            return None
+        dis = os.path.join(work, b + ".dis")
+        os.makedirs(work, exist_ok=True)
+        with open(dis, "w") as fh:
+            subprocess.check_call([objdump, "-d", "--triple=thumbv7-apple-ios", "--no-show-raw-insn", voiced], stdout=fh)
+        cmd += ["--dis", dis]
+    shutil.rmtree(gen, ignore_errors=True)
+    print("recompiling %s" % b)
+    subprocess.check_call(cmd)
+    return gen
+
+
+def _compile(b, gen, cc, flags, ldflags, out):
+    """Compile generated C (plus the glue) into one shared library, in parallel."""
+    _tools, core, glue = _recompiler()
+    objdir = os.path.join(gen, "obj_" + os.path.basename(os.path.dirname(out)))
+    os.makedirs(objdir, exist_ok=True)
+    objs, procs = [], []
+    for f in sorted(os.listdir(gen)) + [glue]:
+        if not f.endswith(".c"):
+            continue
+        src = f if os.path.isabs(f) else os.path.join(gen, f)
+        o = os.path.join(objdir, os.path.basename(src) + ".o")
+        objs.append(o)
+        procs.append(cc + ["-O2", "-std=gnu11", "-ffp-contract=off", "-fPIC", "-w", "-I", core, "-DCV_BUILD=" + b]
+                     + flags + ["-c", src, "-o", o])
+    print("compiling %s for %s (%d files)" % (b, os.path.basename(os.path.dirname(out)), len(procs)))
+    jobs = max(1, (os.cpu_count() or 2))
+    running = []
+    for c in procs:
+        running.append(subprocess.Popen(c))
+        if len(running) >= jobs and running.pop(0).wait():
+            sys.exit("compile failed")
+    for r in running:
+        if r.wait():
+            sys.exit("compile failed")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    subprocess.check_call(cc + ["-shared", "-s", "-o", out] + objs + ldflags)
+    shutil.rmtree(objdir, ignore_errors=True)
+    print("  -> %s (%.1f MB)" % (out, os.path.getsize(out) / 1e6))
+
+
+def cmd_native(args):
+    builds = args or [b for b in FIRMWARE if voices.has_engine(VOICES, b)]
+    cc = _compiler()
+    if not cc:
+        sys.exit("no C compiler: install clang (e.g. sudo apt install clang)")
+    if not any("clang" in os.path.basename(a) or "zig" in a for a in cc):
+        print("warning: %s is not clang; gcc optimizes this generated code very slowly" % " ".join(cc))
+    work = os.path.join(data_root(), "build")
+    for b in builds:
+        gen = _generate(b, work)
+        if gen:
+            _compile(b, gen, cc, [], [], os.path.join(NATIVE, "cvnative_%s.so" % b))
+            shutil.rmtree(gen, ignore_errors=True)
+
+
+# Android ABIs: (clang target, extra flags). 32-bit phones give the emulated
+# iPhone a 512 MB address space, and the fast code must be compiled to match.
+ANDROID_ABIS = {
+    "arm64-v8a": ("aarch64-linux-android21", []),
+    "armeabi-v7a": ("armv7a-linux-androideabi21", ["-DGUEST_MEM_SIZE=0x20000000u", "-mthumb"]),
+    "x86_64": ("x86_64-linux-android21", []),
+    "x86": ("i686-linux-android21", ["-DGUEST_MEM_SIZE=0x20000000u"]),
+}
+
+
+def _find_ndk(given):
+    cands = [given, os.environ.get("ANDROID_NDK"), os.environ.get("ANDROID_NDK_HOME"),
+             os.environ.get("ANDROID_NDK_ROOT")]
+    for sdk in (os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT"),
+                os.path.expanduser("~/Android/Sdk"), os.path.expanduser("~/Library/Android/sdk")):
+        if sdk and os.path.isdir(os.path.join(sdk, "ndk")):
+            cands += sorted((os.path.join(sdk, "ndk", d) for d in os.listdir(os.path.join(sdk, "ndk"))), reverse=True)
+    for c in cands:
+        if c and os.path.isdir(os.path.join(c, "toolchains", "llvm", "prebuilt")):
+            return c
+    return None
+
+
+def cmd_android_pack(args):
+    ndk, abis, out, builds = None, ["arm64-v8a", "armeabi-v7a"], None, []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--ndk":
+            ndk, i = args[i + 1], i + 2
+        elif a == "--abi":
+            abis, i = args[i + 1].split(","), i + 2
+        elif a == "-o":
+            out, i = args[i + 1], i + 2
+        else:
+            builds.append(a)
+            i += 1
+    ndk = _find_ndk(ndk)
+    if not ndk:
+        sys.exit("the Android NDK wasn't found: download it from developer.android.com/ndk and pass --ndk DIR")
+    pre = os.path.join(ndk, "toolchains", "llvm", "prebuilt")
+    host = sorted(d for d in os.listdir(pre) if not d.startswith(".") and os.path.isdir(os.path.join(pre, d)))[0]
+    clang = os.path.join(ndk, "toolchains", "llvm", "prebuilt", host, "bin", "clang")
+    for a in abis:
+        if a not in ANDROID_ABIS:
+            sys.exit("unknown ABI %s (one of %s)" % (a, ", ".join(ANDROID_ABIS)))
+    builds = builds or [b for b in FIRMWARE if voices.has_engine(VOICES, b)]
+    out = out or os.path.join(os.getcwd(), "ClassicVoices-android-fast-code.zip")
+    work = os.path.join(data_root(), "build", "android")
+    stage = os.path.join(work, "pack")
+    shutil.rmtree(stage, ignore_errors=True)
+    for b in builds:
+        gen = _generate(b, work)
+        if not gen:
+            continue
+        for a in abis:
+            target, flags = ANDROID_ABIS[a]
+            # 16 KB pages: Android 15+ phones may use them
+            _compile(b, gen, [clang, "--target=" + target], flags, ["-Wl,-z,max-page-size=16384"],
+                     os.path.join(stage, "Native", a, "cvnative_%s.so" % b))
+        shutil.rmtree(gen, ignore_errors=True)
+    import zipfile
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for base, _dirs, files in os.walk(stage):
+            for f in files:
+                p = os.path.join(base, f)
+                z.write(p, os.path.relpath(p, stage))
+    shutil.rmtree(stage, ignore_errors=True)
+    print("built %s (%.1f MB). It is derived from Apple's code: keep it for your own phone.\n"
+          "On the phone: Classic Voices, Import a data pack (.zip)." % (out, os.path.getsize(out) / 1e6))
+
+
+def cmd_install_module(_args):
+    mod = None
+    for c in (os.path.join(HERE, "sd_classicvoices"), os.path.join(HERE, "..", "libexec", "sd_classicvoices"),
+              os.path.join(HERE, "..", "libexec", "speech-dispatcher-modules", "sd_classicvoices")):
+        if os.path.isfile(c):
+            mod = c
+            break
+    if not mod:
+        sys.exit("sd_classicvoices not found next to this tool (build it with linux/build.sh)")
+    dest_dir = os.path.join(os.path.expanduser("~"), ".local", "libexec", "speech-dispatcher-modules")
+    os.makedirs(dest_dir, exist_ok=True)
+    dest = os.path.join(dest_dir, "sd_classicvoices")
+    shutil.copy2(mod, dest + ".new")
+    os.replace(dest + ".new", dest)
+    os.chmod(dest, 0o755)
+    print("installed %s" % dest)
+    conf = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"),
+                        "speech-dispatcher", "speechd.conf")
+    if os.path.isfile(conf) and "AddModule" in "".join(l for l in open(conf) if not l.lstrip().startswith("#")):
+        print("note: %s lists its modules with AddModule, which turns off autodetection;\n"
+              "      add this line to it:  AddModule \"classicvoices\" \"sd_classicvoices\" \"classicvoices.conf\"" % conf)
+    # Speech Dispatcher restarts on demand; stop the running one so it sees the module
+    subprocess.call(["pkill", "-u", str(os.getuid()), "-x", "speech-dispatcher"], stderr=subprocess.DEVNULL)
+    print("Speech Dispatcher will pick it up when it next starts. Try:\n"
+          "  spd-say -o classicvoices \"Hello from Classic Voices\"\n"
+          "  spd-say -o classicvoices -L     (lists the voices)\n"
+          "In Orca: Preferences, Voice, Speech synthesizer: Classic Voices.")
+
+
+COMMANDS = {"status": cmd_status, "firmware": cmd_firmware, "import": cmd_import, "voices": cmd_voices,
+            "download": cmd_download, "native": cmd_native, "android-pack": cmd_android_pack,
+            "install-module": cmd_install_module}
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        print(__doc__.strip())
+        sys.exit(0 if len(sys.argv) < 2 else 2)
+    COMMANDS[sys.argv[1]](sys.argv[2:])
+
+
+if __name__ == "__main__":
+    main()

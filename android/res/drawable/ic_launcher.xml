@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A speech bubble with three sound bars. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp" android:viewportWidth="48" android:viewportHeight="48">
+    <path android:fillColor="#2E5E8C" android:pathData="M8,6h32a4,4 0 0 1 4,4v22a4,4 0 0 1 -4,4H20l-9,8v-8H8a4,4 0 0 1 -4,-4V10a4,4 0 0 1 4,-4z" />
+    <path android:fillColor="#FFFFFF" android:pathData="M15,15h3v12h-3zM22.5,11h3v20h-3zM30,17h3v8h-3z" />
+</vector>

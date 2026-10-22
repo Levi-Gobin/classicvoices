@@ -132,6 +132,17 @@ was tested with these:
 - OS X 10.7 Lion and OS X 10.8 Mountain Lion (Apple's InstallMacOSX downloads)
 - OS X 10.9.5 Mavericks
 
+## Android and Linux
+
+Classic Voices also runs as an **Android** text-to-speech engine (for
+TalkBack and every app that speaks, Android 5.0 and later) and as a
+**Speech Dispatcher** module on **Linux** (for Orca). Neither needs a Mac or a
+GitHub build: the app or `classicvoices-data` streams the firmware from
+Apple, copies out only the engines and voices, and downloads the enhanced and
+Mac OS X voices the same way. MacinTalk on those platforms is Panthera
+Speech's job. See [android/README.md](android/README.md) and
+[linux/README.md](linux/README.md).
+
 ## Building (macOS)
 
 ```sh

@@ -51,6 +51,9 @@ def find_hfs(read_at, size, what):
     if block0[:2] != b"ER":
         if read_at(1024, 2) in (b"H+", b"HX"):
             return 0
+        gpt = _find_hfs_gpt(read_at)
+        if gpt is not None:
+            return gpt
         raise SystemExit(
             "%s has no Apple partition map and is not an HFS volume." % what)
     stride = struct.unpack(">H", block0[2:4])[0] or 512
@@ -68,6 +71,27 @@ def find_hfs(read_at, size, what):
         if kind in ("Apple_HFS", "Apple_HFSX"):  # iOS root filesystems are HFSX
             return start * stride
     raise SystemExit("no Apple_HFS partition in %s" % what)
+
+
+# Apple HFS+ partition type 48465300-0000-11AA-AA11-00306543ECAC, as stored on disk.
+_GPT_HFS = bytes.fromhex("005346480000AA11AA1100306543ECAC")
+
+
+def _find_hfs_gpt(read_at):
+    """The HFS+ partition in a GUID partition table, or None. iOS 10.3's root
+    filesystem image is laid out this way (it becomes APFS on the device)."""
+    for sector in (512, 4096):
+        h = read_at(sector, 92)
+        if h[:8] != b"EFI PART":
+            continue
+        lba, count, esize = struct.unpack("<QII", h[72:88])
+        for i in range(min(count, 128)):
+            e = read_at(lba * sector + i * esize, esize)
+            if e[:16] == _GPT_HFS:
+                start = struct.unpack("<Q", e[32:40])[0] * sector
+                if read_at(start + 1024, 2) in (b"H+", b"HX"):
+                    return start
+    return None
 
 
 # ---- HFS+ ---------------------------------------------------------------
@@ -158,7 +182,11 @@ class Volume(object):
                    for j in range(8)]
             ext = [e for e in ext if e[1]]
             mode = struct.unpack(">H", data[42:44])[0]
-            entry = [name, False, node_id, size, ext, mode]
+            rfork = data[168:248]  # the resource fork, where compressed files keep their data
+            rsize = struct.unpack(">Q", rfork[:8])[0] if len(rfork) == 80 else 0
+            rext = [e for e in (struct.unpack(">II", rfork[16 + 8 * j:24 + 8 * j]) for j in range(8)) if e[1]] \
+                if rsize else []
+            entry = [name, False, node_id, size, ext, mode, rsize, rext]
             self.kids.setdefault(parent, []).append(entry)
             if sum(c for _s, c in ext) < blocks:
                 # More than eight extents: the rest are in the extents
@@ -190,6 +218,57 @@ class Volume(object):
                 entry[4] = entry[4] + ext
             if sum(c for _s, c in entry[4]) < blocks:
                 entry[4] = None                          # still short: refuse
+
+    # -- HFS+ compression (decmpfs) ---------------------------------------
+    def _attributes(self):
+        if getattr(self, "_attrs", None) is None:
+            self._attrs = {}
+            self.f.seek(self.base + 1024)
+            vh = self.f.read(512)
+
+            def rec(r):
+                if len(r) < 14:
+                    return
+                klen = struct.unpack(">H", r[:2])[0]
+                fid = struct.unpack(">I", r[4:8])[0]
+                nlen = struct.unpack(">H", r[12:14])[0]
+                name = r[14:14 + 2 * nlen].decode("utf-16-be", "replace")
+                if name == "com.apple.decmpfs":
+                    data = r[2 + klen:]
+                    if struct.unpack(">I", data[:4])[0] == 0x10:  # inline attribute data
+                        n = struct.unpack(">I", data[12:16])[0]
+                        self._attrs[fid] = data[16:16 + n]
+            self._read_tree(vh, 352, rec)  # the attributes file
+        return self._attrs
+
+    def compressed(self, entry):
+        """A file stored with HFS+ compression (an empty data fork and a
+        com.apple.decmpfs attribute), as iOS 10's root filesystem has them:
+        its decompressed contents, or None if it isn't compressed."""
+        if entry[1] or entry[3] or len(entry) < 8:
+            return None
+        hdr = self._attributes().get(entry[2])
+        if not hdr or hdr[:4] != b"fpmc":
+            return None
+        ctype, size = struct.unpack("<IQ", hdr[4:16])
+        if ctype == 3:  # zlib, inline in the attribute
+            body = hdr[16:]
+            return body[1:1 + size] if body[:1] == b"\xff" else zlib.decompress(body)
+        if ctype == 4:  # zlib chunks in the resource fork
+            rsrc = bytearray()
+            for start, count in entry[7]:
+                self.f.seek(self.base + start * self.bs)
+                rsrc += self.f.read(count * self.bs)
+            rsrc = bytes(rsrc[:entry[6]])
+            head = struct.unpack(">I", rsrc[:4])[0]
+            n = struct.unpack("<I", rsrc[head + 4:head + 8])[0]
+            out = bytearray()
+            for i in range(n):
+                off, ln = struct.unpack("<II", rsrc[head + 8 + 8 * i:head + 16 + 8 * i])
+                chunk = rsrc[head + 4 + off:head + 4 + off + ln]
+                out += chunk[1:] if chunk[:1] == b"\xff" else zlib.decompress(chunk)
+            return bytes(out[:size])
+        raise SystemExit("%s uses HFS+ compression type %d, which this reader can't expand" % (entry[0], ctype))
 
     # -- lookup -----------------------------------------------------------
     def entry(self, path):

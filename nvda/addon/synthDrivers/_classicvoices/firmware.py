@@ -4,7 +4,7 @@
 # Voices/<build>/. Nothing of Apple's is downloaded or redistributed here;
 # the IPSW is the user's own. Follows tools/ipswtool.py from this repo.
 import ctypes
-import ctypes.wintypes
+import ctypes.util
 import hashlib
 import hmac
 import io
@@ -48,7 +48,7 @@ class ImportError_(Exception):
 
 # ---------------------------------------------------------------- AES via CNG
 
-class _Aes:
+class _CngAes:
     """AES-CBC decryption through Windows CNG (no third-party packages)."""
 
     def __init__(self, key):
@@ -67,7 +67,7 @@ class _Aes:
     def decrypt(self, iv, data):
         n = len(data) - (len(data) % 16)
         out = ctypes.create_string_buffer(n)
-        got = ctypes.wintypes.ULONG(0)
+        got = ctypes.c_ulong(0)
         ivbuf = ctypes.create_string_buffer(iv, 16)
         if self.bc.BCryptDecrypt(self.key, data, n, None, ivbuf, 16,
                                  out, n, ctypes.byref(got), 0):
@@ -79,6 +79,75 @@ class _Aes:
             self.bc.BCryptDestroyKey(self.key)
         if self.alg:
             self.bc.BCryptCloseAlgorithmProvider(self.alg, 0)
+
+
+class _OpenSslAes:
+    """AES-CBC decryption through OpenSSL's libcrypto (present on every Linux
+    distribution), for the Linux importer."""
+
+    def __init__(self, key):
+        name = ctypes.util.find_library("crypto")
+        for cand in ([name] if name else []) + ["libcrypto.so.3", "libcrypto.so.1.1", "libcrypto.so"]:
+            try:
+                self.lib = ctypes.CDLL(cand)
+                break
+            except OSError:
+                continue
+        else:
+            raise ImportError_("OpenSSL's libcrypto not found")
+        L = self.lib
+        L.EVP_CIPHER_CTX_new.restype = ctypes.c_void_p
+        L.EVP_aes_128_cbc.restype = ctypes.c_void_p
+        L.EVP_CIPHER_CTX_free.argtypes = [ctypes.c_void_p]
+        L.EVP_DecryptInit_ex.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+                                         ctypes.c_char_p, ctypes.c_char_p]
+        L.EVP_CIPHER_CTX_set_padding.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        L.EVP_DecryptUpdate.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int),
+                                        ctypes.c_char_p, ctypes.c_int]
+        self.key = bytes(key)
+
+    def decrypt(self, iv, data):
+        L = self.lib
+        n = len(data) - (len(data) % 16)
+        out = ctypes.create_string_buffer(n + 16)
+        got = ctypes.c_int(0)
+        ctx = L.EVP_CIPHER_CTX_new()
+        try:
+            if (L.EVP_DecryptInit_ex(ctx, L.EVP_aes_128_cbc(), None, self.key, bytes(iv)) != 1
+                    or L.EVP_CIPHER_CTX_set_padding(ctx, 0) != 1
+                    or L.EVP_DecryptUpdate(ctx, out, ctypes.byref(got), bytes(data[:n]), n) != 1):
+                raise ImportError_("AES decrypt failed")
+        finally:
+            L.EVP_CIPHER_CTX_free(ctx)
+        return out.raw[:got.value] + data[n:]
+
+    def close(self):
+        pass
+
+
+class _PyCaAes:
+    """AES-CBC through the `cryptography` package, where it is installed."""
+
+    def __init__(self, key):
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        self._make = lambda iv: Cipher(algorithms.AES(bytes(key)), modes.CBC(bytes(iv))).decryptor()
+
+    def decrypt(self, iv, data):
+        n = len(data) - (len(data) % 16)
+        d = self._make(iv)
+        return d.update(bytes(data[:n])) + d.finalize() + data[n:]
+
+    def close(self):
+        pass
+
+
+def _Aes(key):
+    if os.name == "nt":
+        return _CngAes(key)
+    try:
+        return _PyCaAes(key)
+    except ImportError:
+        return _OpenSslAes(key)
 
 
 class EncrcdsaStream(io.RawIOBase):
@@ -213,6 +282,11 @@ def _volume_from_stream(f, size, what):
 
 def _copy_entry(vol, entry, dest):
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+    packed = vol.compressed(entry)  # iOS 10 keeps system files compressed
+    if packed is not None:
+        with open(dest, "wb") as o:
+            o.write(packed)
+        return
     r = applereaders.ForkReader(vol, entry)
     left = entry[3]  # logical size: extents are whole allocation blocks
     with open(dest, "wb") as o:
@@ -368,17 +442,29 @@ def import_ipsw(path, voices_root, progress):
                     out.write(b)
                     done += len(b)
                     progress(None, done / max(1, rootfs.file_size))
+        return import_rootfs(tmp, os.path.basename(rootfs.filename), build, voices_root, progress)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def import_rootfs(tmp, rootfs_name, build, voices_root, progress):
+    """Copy the engine and voices out of an (encrypted or plain) root
+    filesystem image already on disk: the second half of import_ipsw, also
+    used by importers that stream the image straight from Apple."""
+    build_key, device, nice = SUPPORTED[build]
+    try:
         f = open(tmp, "rb")
         try:
             magic = f.read(8)
             if magic == b"encrcdsa":
                 progress("Fetching the decryption key from The Apple Wiki", None)
-                key_hex = fetch_rootfs_key(build, device, os.path.basename(rootfs.filename))
+                key_hex = fetch_rootfs_key(build, device, rootfs_name)
                 progress("Reading the encrypted filesystem", None)
                 stream = EncrcdsaStream(f, key_hex)
-                vol = _volume_from_stream(stream, stream.size, rootfs.filename)
+                vol = _volume_from_stream(stream, stream.size, rootfs_name)
             else:
-                vol = _volume_from_stream(f, os.path.getsize(tmp), rootfs.filename)
+                vol = _volume_from_stream(f, os.path.getsize(tmp), rootfs_name)
             dest = os.path.join(voices_root, build_key)
             if os.path.isdir(dest):
                 shutil.rmtree(dest)

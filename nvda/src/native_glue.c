@@ -6,6 +6,12 @@
 // library. CV_BUILD is the table prefix (ios6, ...), set on the command line.
 #include "thumb.h"
 
+#ifdef _WIN32
+#define CV_EXPORT __declspec(dllexport)
+#else
+#define CV_EXPORT __attribute__((visibility("default")))
+#endif
+
 typedef int (*CvRtCall)(Cpu *, uint32_t);
 typedef int (*CvRtImport)(Cpu *, uint32_t, uint32_t);
 typedef void (*CvFaultMem)(const char *, uint32_t, uint32_t);
@@ -26,16 +32,16 @@ void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc) { p_undef(hw1, hw2, pc); 
 extern const NativeEntry CV_CAT(vx_native_, CV_BUILD)[];
 extern const size_t CV_CAT(CV_CAT(vx_native_, CV_BUILD), _count);
 
-__declspec(dllexport) int cv_native_abi(void) { return 1; }
+CV_EXPORT int cv_native_abi(void) { return 1; }
 
-__declspec(dllexport) void cv_native_bind(CvRtCall rc, CvRtImport ri, CvFaultMem fm, CvUndef ud) {
+CV_EXPORT void cv_native_bind(CvRtCall rc, CvRtImport ri, CvFaultMem fm, CvUndef ud) {
     p_rt_call = rc;
     p_rt_import = ri;
     p_fault_mem = fm;
     p_undef = ud;
 }
 
-__declspec(dllexport) const NativeEntry *cv_native_table(size_t *count) {
+CV_EXPORT const NativeEntry *cv_native_table(size_t *count) {
     *count = CV_CAT(CV_CAT(vx_native_, CV_BUILD), _count);
     return CV_CAT(vx_native_, CV_BUILD);
 }

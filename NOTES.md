@@ -261,6 +261,59 @@ team-prefixed group. So, since 2026-10-18:
 - Sideloading to Vision Pro: Xcode (Developer Mode on the headset) or
   SideStore; Sideloadly doesn't list it.
 
+## Android and Linux (2026-10-22)
+
+- One shared C layer: `ports/posix/` (os_log shim, Darwin rune table,
+  dlopen loader for `cvnative_<build>.so`, QoS no-op, force-included
+  `vx_posix.h`) and `ports/host/` (voice catalogue after the NVDA add-on's
+  voices.py with the iOS app's compact fallbacks, SSML parser after the
+  Swift SSMLParser with marks splitting segments, PCRE2 pronunciation rules
+  loaded by dlopen). MacinTalk is stubbed (nvda/src/mt_stub.c): Panthera
+  Speech covers it on both platforms (its Android APK runs Tiger-Lion via
+  Box64; its Linux host is a CLI, no speechd module).
+- Data layout everywhere: Voices/<build>, Downloads/<build|era>, the NVDA
+  add-on's; Mac voice folders get a `locale` file (else the broker's
+  langcode is mapped). Native/<abi>/cvnative_<build>.so.
+- Output is byte-identical across Mac (arm64), Linux (x86_64, zig cc) and
+  Android (arm64 emulator, through the TextToSpeech API), interpreter and
+  fast code alike.
+- **Firmware facts the importers rely on** (all six fetched and checked):
+  every IPSW deflates its root filesystem (no random access into the zip,
+  so it is streamed and inflated into a temp file; the IPSW itself is never
+  stored). iOS 3-7 rootfs are encrcdsa, and the plaintext is a **UDIF
+  (zlib) image**, not a bare volume: the decrypted header starts 78 01.
+  iOS 10.3.4's rootfs is unencrypted UDIF holding **HFSX in a GPT** (EFI
+  partition + "disk image" Apple_HFSX); it is not APFS (that conversion
+  happens on the device). iOS 7's `voiced` and iOS 10's `TTSSpeechBundle`
+  are **HFS+-compressed** (empty data fork, com.apple.decmpfs type 4: zlib
+  chunks in the resource fork). The NVDA reader (applereaders.py) gained
+  GPT and decmpfs support, so iOS 7 and 10 imports work on Windows too
+  (before, they produced empty engines). Keys: The Apple Wiki API.
+- Enhanced voice URLs are http://appldnld.apple.com; the same files are at
+  https://secure-appldnld.apple.com (Android blocks cleartext).
+- Linux: `sd_classicvoices` vendors speechd's BSD module helpers
+  (linux/speechd/, upstream 5f44f03) with tiny type headers, so it needs no
+  dev package. Its own server-audio writer (module_tts_output_server reads
+  stdin between chunks, unsafe off the main thread). speechd sends
+  `<speak>` SSML with `<mark name="__spd_N"/>` after every sentence; volume
+  100 is speechd's default and maps to the voice's own level (80). The
+  server then scales samples itself (x0.925 at volume 100). Autodetected in
+  ~/.local/libexec/speech-dispatcher-modules (speechd 0.11+). Tested with
+  speechd 0.12.0 unpacked into $HOME (SPEECHD_PLUGIN_DIR, -C, -m) and ALSA's
+  file plugin as the sink: 138 voices listed, audio = engine output x0.925.
+- Android: no Gradle (android/build.sh: NDK clang, aapt2, javac -source 8,
+  d8 --min-api 21, zipalign -P 16, apksigner); minSdk 21 is the NDK r30
+  floor, targetSdk 34. 16 KB pages: max-page-size=16384, libs stored
+  uncompressed. `dlopen` of fast code from the app's data dir works with
+  targetSdk 34 on Android 13 when the file is read-only (pack import marks
+  it so). 32-bit ABIs: GUEST_MEM_SIZE 512 MB, MAX_ENGINES 1, and the fast
+  code for them must be compiled with the same GUEST_MEM_SIZE (the bounds
+  checks are inlined). Data in device-protected storage, service
+  directBootAware.
+- Speed (emulator on M-series, arm64): interpreter 1.1-1.9x real time; iOS 6
+  fast code 4.7-8.6x (first audio 42-80 ms); Lion premium 12x. Linux VM
+  (2 vCPU x86_64): 0.9x interpreted, 6.1x with fast code.
+
 ## Devices with 3 GB of RAM (iPad Air 3, iPhone XR/XS/11, iPad 7-9, mini 5)
 
 A process there may map only ~1.3 GB of anonymous memory (mmap fails with

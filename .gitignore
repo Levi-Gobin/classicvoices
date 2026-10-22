@@ -9,6 +9,9 @@
 !/tools/
 !/tests/
 !/third_party/
+!/linux/
+!/ports/
+!/android/
 !/README.md
 !/NOTES.md
 !/LICENSE
