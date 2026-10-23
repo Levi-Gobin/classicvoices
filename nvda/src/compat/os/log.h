@@ -6,3 +6,5 @@
 void vx_winlog(int dummy, const char *fmt, ...);
 #define os_log vx_winlog
 #define os_log_error vx_winlog
+#define os_log_info vx_winlog
+#define os_log_debug vx_winlog
