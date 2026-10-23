@@ -261,6 +261,17 @@ team-prefixed group. So, since 2026-10-18:
 - Sideloading to Vision Pro: Xcode (Developer Mode on the headset) or
   SideStore; Sideloadly doesn't list it.
 
+## NVDA importer: iOS 7 and 10 engines (fixed 2026-10-23, add-on 0.1.1)
+
+- The add-on's "Import firmware (IPSW)" produced empty engines for iOS 7
+  and 10: their `voiced` / `TTSSpeechBundle` are HFS+-compressed (empty data
+  fork, com.apple.decmpfs type 4, zlib chunks in the resource fork), and
+  iOS 10.3.4's rootfs is HFSX inside a GPT (not an Apple partition map, and
+  not APFS). applereaders.py now reads GPT and decmpfs types 3/4; firmware.py
+  gained an OpenSSL/cryptography AES path besides CNG and a reusable
+  import_rootfs(). Verified with import_ipsw on the real IPSWs: iOS 3, 7 and
+  10 engines and voice folders byte-identical to the Mac's hdiutil
+  extraction; DLLs and the add-on still build (zig cc for MinGW).
 ## Android and Linux (2026-10-22)
 
 - One shared C layer: `ports/posix/` (os_log shim, Darwin rune table,
