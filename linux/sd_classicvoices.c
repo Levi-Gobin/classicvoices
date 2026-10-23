@@ -144,15 +144,19 @@ static const CvVoice *choose_voice(const char *synth_voice, const char *language
     if (synth_voice[0] && strcmp(synth_voice, "NULL")) v = cv_find_voice(g_voices, g_nvoices, synth_voice);
     if (v) return v;
     const char *lang = language[0] && strcmp(language, "NULL") ? language : "en-US";
-    // voice type: prefer a voice of that gender in the language
+    // voice type: prefer a voice of that gender for the same locale and generation (speechd's
+    // default type is MALE1, which shouldn't turn American English into British Daniel)
     int want_female = -1;
     if (!strncasecmp(voice_type, "female", 6) || !strncasecmp(voice_type, "child_female", 12)) want_female = 1;
     else if (!strncasecmp(voice_type, "male", 4) || !strncasecmp(voice_type, "child_male", 10)) want_female = 0;
     const CvVoice *best = cv_pick_voice(g_voices, g_nvoices, lang);
+    // a language no voice speaks (or none, as with the C locale): American English, not the first voice listed
+    if (!best) best = cv_pick_voice(g_voices, g_nvoices, "en-US");
     if (best && want_female >= 0 && best->female != want_female) {
         for (size_t i = 0; i < g_nvoices; i++) {
             const CvVoice *c = &g_voices[i];
-            if (c->female == want_female && cv_pick_voice(c, 1, lang) && strncmp(c->key, best->key, 4) == 0) return c;
+            if (c->female == want_female && !strcmp(c->language, best->language) && strncmp(c->key, best->key, 4) == 0)
+                return c;
         }
     }
     return best ? best : (g_nvoices ? &g_voices[0] : NULL);
