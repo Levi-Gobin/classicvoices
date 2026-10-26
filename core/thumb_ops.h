@@ -9,6 +9,22 @@
 #define VX_OPS_INLINE static inline
 #endif
 
+// RBIT: clang's builtin, else the same in C (GCC has no bit-reverse builtin)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_bitreverse32)
+#define VX_BITREV32(x) __builtin_bitreverse32(x)
+#endif
+#endif
+#ifndef VX_BITREV32
+static inline uint32_t vx_bitrev32(uint32_t x) {
+    x = ((x >> 1) & 0x55555555u) | ((x & 0x55555555u) << 1);
+    x = ((x >> 2) & 0x33333333u) | ((x & 0x33333333u) << 2);
+    x = ((x >> 4) & 0x0f0f0f0fu) | ((x & 0x0f0f0f0fu) << 4);
+    return __builtin_bswap32(x);
+}
+#define VX_BITREV32(x) vx_bitrev32(x)
+#endif
+
 #ifndef GUEST_MEM_SIZE
 #define GUEST_MEM_SIZE 0x40000000u  // 1 GB flat guest address space (mostly unbacked)
 #endif
@@ -973,7 +989,7 @@ VX_OPS_INLINE void exec32(Core *c, uint32_t hw1, uint32_t hw2, uint32_t pc) {
             else if (op1 == 9 && op2 == 8) r = __builtin_bswap32(m);
             else if (op1 == 9 && op2 == 9) r = ((m & 0x00ff00ff) << 8) | ((m >> 8) & 0x00ff00ff);
             else if (op1 == 9 && op2 == 0xB) r = sext(((m & 0xff) << 8) | ((m >> 8) & 0xff), 16);
-            else if (op1 == 9 && op2 == 0xA) r = __builtin_bitreverse32(m);
+            else if (op1 == 9 && op2 == 0xA) r = VX_BITREV32(m);
             else UNDEF();
             c->r[rd] = r;
             return;
