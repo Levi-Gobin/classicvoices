@@ -43,8 +43,21 @@ a restart, before the phone is first unlocked.
 The engine emulates the iPhone's processor. On a recent phone that is about
 real time or a little faster; on older phones it can fall behind. Fast engine
 code, recompiled from your own firmware into native code, is several times
-faster and bit-identical. It can't be built on the phone: build it on a
-Linux or Mac computer with the Android NDK,
+faster and bit-identical.
+
+The app builds it on the phone, by itself, after each firmware import (and
+when it opens, for firmware imported before): **Speed up the voices** shows
+it and its progress bar, and has a Stop button. It downloads the free
+[Zig](https://ziglang.org) C compiler from ziglang.org (about 53 MB, checked
+against the SHA-256 ziglang.org publishes) and deletes it when it's done; it
+takes a few minutes per firmware, depending on the phone. `Recompiler.java` is tools/recomp.py in Java (it writes the same
+files), and Android doesn't let an app start a program it downloaded, so Zig
+runs through `libcvzig.so` (android/jni/cv_zigrun.c), a small program in the
+app's lib folder that maps Zig into memory and starts it. 64-bit phones
+(arm64-v8a, x86_64) only.
+
+If a build fails or you stop it, it starts again only from that page. A
+data pack still works too, and is the way for 32-bit phones:
 
 ```
 classicvoices-data import all
@@ -53,8 +66,9 @@ classicvoices-data android-pack --ndk ~/android-ndk-r30
 
 (`classicvoices-data` is the Linux tool, see [../linux/README.md](../linux/README.md);
 it runs on a Mac too), copy `ClassicVoices-android-fast-code.zip` to the
-phone, and import it with **Speed up the voices**, **Import a data pack (.zip)**. It is derived from
-Apple's code, so it never ships with the app: keep it for your own phone.
+phone, and import it with **Speed up the voices**, **Import a data pack (.zip)**.
+Fast code is derived from Apple's code, so it never ships with the app: what
+the phone builds stays on it.
 
 ## Building
 

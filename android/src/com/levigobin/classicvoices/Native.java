@@ -29,5 +29,11 @@ final class Native {
 
     static native double[] lastTiming();
 
+    /** Starts the engine afresh (new fast engine code is used from the next utterance). */
+    static native void reload();
+
+    /** Unpacks the paths in keep from a .tar.xz into dest; null when done, else what went wrong. */
+    static native String untarXz(String archive, String dest, String[] keep, Progress p);
+
     static final int SAMPLE_RATE = 22050;
 }

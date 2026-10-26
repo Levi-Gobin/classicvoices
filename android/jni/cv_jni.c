@@ -19,8 +19,11 @@ void cv_set_native_dir(const char *dir);
 long long cv_native_status(const char *build);
 
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
+// g_stream is replaced (init, reload) only with g_life held for writing;
+// calls that don't take g_mu (cancel can't wait for it) hold it for reading.
+static pthread_rwlock_t g_life = PTHREAD_RWLOCK_INITIALIZER;
 static VxStream *g_stream;
-static char g_voices_root[1024], g_downloads_root[1024];
+static char g_voices_root[1024], g_downloads_root[1024], g_native_dir[1024];
 
 // the utterance being read (one at a time: Android synthesizes serially)
 static CvUtterance g_utt;
@@ -68,17 +71,39 @@ JNIEXPORT jboolean JNICALL Java_com_levigobin_classicvoices_Native_init(JNIEnv *
     pthread_mutex_lock(&g_mu);
     int same = g_stream && !strcmp(v, g_voices_root) && !strcmp(d, g_downloads_root);
     if (!same) {
+        pthread_rwlock_wrlock(&g_life);
         if (g_stream) vxs_destroy(g_stream);
         snprintf(g_voices_root, sizeof g_voices_root, "%s", v);
         snprintf(g_downloads_root, sizeof g_downloads_root, "%s", d);
+        snprintf(g_native_dir, sizeof g_native_dir, "%s", n);
         cv_set_native_dir(n);
         g_stream = vxs_create(g_voices_root);
         if (g_stream) vxs_set_asset_root(g_stream, g_downloads_root);
+        pthread_rwlock_unlock(&g_life);
     }
     jboolean ok = g_stream != NULL;
     pthread_mutex_unlock(&g_mu);
     free(v); free(d); free(n);
     return ok;
+}
+
+// Fast engine code was built: start the engine afresh at the next utterance,
+// so it's used from then on (never cutting off speech under way).
+static atomic_int g_reload;
+
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_reload(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    atomic_store(&g_reload, 1);
+}
+
+static void reload_if_asked(void) {  // with g_mu held
+    if (!atomic_exchange(&g_reload, 0) || !g_stream) return;
+    pthread_rwlock_wrlock(&g_life);
+    vxs_destroy(g_stream);
+    cv_set_native_dir(g_native_dir);
+    g_stream = vxs_create(g_voices_root);
+    if (g_stream) vxs_set_asset_root(g_stream, g_downloads_root);
+    pthread_rwlock_unlock(&g_life);
 }
 
 // One string per voice: key \t name \t voice \t language \t fallback \t quality \t female
@@ -108,6 +133,12 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
     if (!g_stream) return -1;
     char *k = dup_utf(env, key), *f = dup_utf(env, fallback), *t = bytes_utf(env, text);
     pthread_mutex_lock(&g_mu);
+    reload_if_asked();
+    if (!g_stream) {
+        pthread_mutex_unlock(&g_mu);
+        free(k); free(f); free(t);
+        return -1;
+    }
     cv_free_utterance(&g_utt);
     if (ssml) cv_parse_ssml(t, rate, pitch, volume, &g_utt);
     else cv_parse_plain(t, rate, pitch, volume, &g_utt);
@@ -161,19 +192,26 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_read(JNIEnv *env,
 JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_cancel(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
     atomic_store(&g_cancel, 1);
+    pthread_rwlock_rdlock(&g_life);
     if (g_stream) vxs_cancel(g_stream);
+    pthread_rwlock_unlock(&g_life);
 }
 
 JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_preload(JNIEnv *env, jclass cls, jstring key) {
     (void)cls;
     char *k = dup_utf(env, key);
+    pthread_rwlock_rdlock(&g_life);
     if (g_stream && k) vxs_preload(g_stream, k);
+    pthread_rwlock_unlock(&g_life);
     free(k);
 }
 
 JNIEXPORT jstring JNICALL Java_com_levigobin_classicvoices_Native_lastError(JNIEnv *env, jclass cls) {
     (void)cls;
-    return utf8_string(env, g_stream ? vxs_last_error(g_stream) : "engine not started");
+    pthread_rwlock_rdlock(&g_life);
+    jstring r = utf8_string(env, g_stream ? vxs_last_error(g_stream) : "engine not started");
+    pthread_rwlock_unlock(&g_life);
+    return r;
 }
 
 // -1 not tried yet, 0 tried and absent, else the number of native functions.
@@ -189,8 +227,10 @@ JNIEXPORT jlong JNICALL Java_com_levigobin_classicvoices_Native_nativeStatus(JNI
 JNIEXPORT jdoubleArray JNICALL Java_com_levigobin_classicvoices_Native_lastTiming(JNIEnv *env, jclass cls) {
     (void)cls;
     jdoubleArray a = (*env)->NewDoubleArray(env, 3);
-    if (!g_stream) return a;
-    double t[3] = {vxs_last_first_audio_ms(g_stream), vxs_last_synth_ms(g_stream), vxs_last_audio_ms(g_stream)};
+    pthread_rwlock_rdlock(&g_life);
+    double t[3] = {0, 0, 0};
+    if (g_stream) t[0] = vxs_last_first_audio_ms(g_stream), t[1] = vxs_last_synth_ms(g_stream), t[2] = vxs_last_audio_ms(g_stream);
+    pthread_rwlock_unlock(&g_life);
     (*env)->SetDoubleArrayRegion(env, a, 0, 3, t);
     return a;
 }

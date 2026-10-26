@@ -13,6 +13,7 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         outputBus = try AUAudioUnitBus(format: format)
         busses = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outputBus])
         VoiceCatalog.adoptLegacy()
+        DispatchQueue.global(qos: .utility).async { VoiceCatalog.unprotectVoices() }
         // Warm up the most recently used voice so the first utterance is fast.
         VoiceEngine.shared.preload(UserDefaults.standard.string(forKey: "lastVoiceKey") ?? "ios6/en-US")
         log.notice("CLASSICVOICES audio unit created; root=\(VoiceCatalog.root?.path ?? "nil", privacy: .public) voices=\(VoiceCatalog.entries.count)")

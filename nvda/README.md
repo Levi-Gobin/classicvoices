@@ -5,9 +5,9 @@ Lion / Mountain Lion / Mavericks voices, as an NVDA add-on. The voices run on
 Apple's original ARM engines, executed by the same bit-exact emulator the iOS
 app uses. The add-on itself ships interpreter-only (~2× real time, ~80 ms to
 first audio), because the recompiled fast paths are generated from firmware
-and are never distributed — but you can build them yourself, see **Fast
-engine code** below; with them iOS 6 Samantha reaches first audio in ~14 ms
-and runs ~10× real time, matching the iPhone app.
+and are never distributed: it builds them on your computer after each
+import, see **Fast engine code** below; with them iOS 6 Samantha reaches
+first audio in ~14 ms and runs ~10× real time, matching the iPhone app.
 
 MacinTalk is deliberately out of scope: [Panthera Speech]
 (https://github.com/tgeczy/panthera-speech) by Tamas Geczy already runs
@@ -19,9 +19,10 @@ of Apple's. Its MIT-licensed HFS+/UDIF/xar/cpio reader is vendored here as
 ## How users get voices
 
 1. Install the add-on. It contains no voices, only the emulator and tools.
-2. NVDA menu → Tools → **Classic Voices data…** → *Import firmware (IPSW)*.
-   Supply your own firmware for the builds you want (downloadable from Apple;
-   the add-on never fetches firmware itself):
+2. NVDA menu → Tools → **Classic Voices data…** → *Get firmware from Apple*
+   streams the speech files of every firmware from Apple's servers (only the
+   part of each firmware they're in). *Import firmware (IPSW)* reads a
+   firmware file you have instead:
    - iPhone OS 3.1.3 (7E18, iPhone2,1) — the iOS 3 voices
    - iOS 4.3.5 (8L1, iPhone2,1) — the iOS 4 voices
    - iOS 5.1.1 (9B206, iPhone2,1) — the iOS 5 voices
@@ -29,11 +30,11 @@ of Apple's. Its MIT-licensed HFS+/UDIF/xar/cpio reader is vendored here as
    - iOS 7.1.2 (11D257, iPhone3,1) — engine only, for Mavericks compacts
    - iOS 10.3.4 (14G61, iPhone5,1) — engine only, for Mavericks premium
 
-   The importer unzips the IPSW, fetches the root-filesystem key from The
-   Apple Wiki, decrypts on the fly (Windows CNG AES; only the blocks actually
-   read are decrypted, so an import takes ~30 s), reads the HFS+ volume, and
-   copies out just the speech engine and voices — verified byte-identical to
-   a Mac `hdiutil` extraction.
+   The importer fetches the root-filesystem key from The Apple Wiki,
+   decrypts on the fly (Windows CNG AES; only the blocks actually read are
+   decrypted), reads the HFS+ volume, and copies out just the speech engine
+   and voices — verified byte-identical to a Mac `hdiutil` extraction. Then
+   it builds the fast engine code.
 3. Once an engine is in place, the same dialog lists what can be downloaded
    from Apple's still-live servers: enhanced iOS voices (MobileAsset zips)
    and the Mac OS X voices (software-update packages; xar → gzip cpio →
@@ -51,23 +52,32 @@ caches one engine (address space is scarce under WOW64), so the largest Mac
 premium voices (~750 MB data) need 64-bit NVDA; everything else works on
 both.
 
-## Fast engine code (optional, recommended)
+## Fast engine code
 
 `tools/recomp.py` — the same static recompiler the iOS app uses — turns each
 engine's hot functions into C that calls the interpreter's own instruction
 semantics with constant encodings; clang folds that into real native code, so
 the output is bit-identical to the interpreter by construction (verified:
-same WAV bytes). After importing firmware with the add-on:
+same WAV bytes).
+
+The add-on builds it by itself after each import (or with **Build fast
+code** in the data dialog, for firmware imported before): the first time it
+downloads the free Zig C compiler from ziglang.org (about 100 MB, checked
+against the SHA-256 ziglang.org publishes), then takes a few minutes per
+firmware. The dialog can be closed meanwhile; NVDA says when it's ready and
+loads Classic Voices again to use it. It writes
+`cvnative_<build>_<bits>.dll` (64- and 32-bit) into `<data folder>/Native`.
+The builder is `_classicvoices/fastcode.py`, shared with the Windows and
+Linux app; the add-on carries the recompiler in `_classicvoices/recompiler/`.
+
+From a command line instead:
 
 ```
-python nvda/build_native.py        # needs clang (scoop install llvm) —
-                                   # MSVC can't fold this code, gcc takes hours
+python nvda/build_native.py        # needs clang (scoop install llvm)
 ```
 
-reads `<NVDA config>/classicvoices/Voices` and drops
-`cvnative_<build>_<bits>.dll` into `<NVDA config>/classicvoices/Native`,
-where the engine picks them up on the next synthesizer load (the data-manager
-status shows which builds have them).
+reads `<NVDA config>/classicvoices/Voices` and drops the same DLLs into
+`<NVDA config>/classicvoices/Native`.
 
 These DLLs derive from Apple's code: keep them on your machine. The
 `nvda-native.yml` workflow builds them in your own fork instead (set a

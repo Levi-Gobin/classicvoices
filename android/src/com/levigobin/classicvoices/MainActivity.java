@@ -153,6 +153,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         // test hooks (adb shell am start ... --es import ios6,ios3 / --es selftest ios6/en-US), in
         // debuggable builds only: the activity is exported, and a pack can bring native code
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) testHooks();
+        // fast code for firmware imported before it could be built here, or by an older version of the app
+        if (!FastCode.autoOff(this)) FastCode.startIfNeeded(this);
 
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -725,6 +727,41 @@ public class MainActivity extends Activity implements ImportService.Listener {
             text(getString(Library.fastCode(this, b.key) ? R.string.fast_ready : R.string.fast_missing, b.nice));
         }
         if (!any) text(getString(R.string.fast_import_first));
+        ImportService.Job j = currentOrQueued(FastCode.JOB, FastCode.JOB);
+        final ImportService.Job job = j != null ? j : currentOrQueued(FastCode.JOB, FastCode.AGAIN);
+        if (job != null) {
+            Button stop = button("fast:stop", getString(R.string.fast_stop, "", step(job)), new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    FastCode.autoOff(MainActivity.this, true);  // stopped on purpose: don't restart it at launch
+                    ImportService.cancel(FastCode.JOB, job.arg);
+                    refreshPage();
+                }
+            });
+            stepLabel(stop, job, R.string.fast_stop, "");
+            jobBar(FastCode.JOB, job.arg, getString(R.string.fast_bar));
+        } else if (!FastCode.supported(this)) {
+            text(getString(R.string.fast_not_here, Data.abi()));
+        } else if (!FastCode.missing(this).isEmpty()) {
+            button("fast:build", getString(R.string.fast_build_now), new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    FastCode.autoOff(MainActivity.this, false);
+                    FastCode.startIfNeeded(MainActivity.this);
+                    refreshPage();
+                }
+            });
+        } else if (any) {
+            button("fast:again", getString(R.string.fast_again), new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    FastCode.autoOff(MainActivity.this, false);
+                    ImportService.enqueue(MainActivity.this,
+                            new ImportService.Job(FastCode.JOB, FastCode.AGAIN, getString(R.string.fast_job)));
+                    refreshPage();
+                }
+            });
+        }
         button("pack", getString(R.string.import_pack), new View.OnClickListener() {
             @Override
             public void onClick(View v) {

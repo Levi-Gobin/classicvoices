@@ -39,6 +39,7 @@ def _lib_paths():
 
 
 sys.path.insert(0, _lib_paths())
+from _classicvoices import fastcode as cv_fastcode  # noqa: E402
 from _classicvoices import voices as cv_voices  # noqa: E402
 
 # ---------------------------------------------------------------- data folder
@@ -84,11 +85,7 @@ def native_dir():
 
 
 def native_files(build):
-    """The fast-code files a build needs here (Windows: both bitnesses, for
-    32- and 64-bit programs)."""
-    if IS_WIN:
-        return ["cvnative_%s_64.dll" % build, "cvnative_%s_32.dll" % build]
-    return ["cvnative_%s.so" % build]
+    return cv_fastcode.native_files(build)
 
 
 def nvda_data_root():
@@ -108,8 +105,10 @@ def open_folder(path):
 
 # ---------------------------------------------------------------- settings
 
-# The two settings the engines read, named as they read them.
-SETTINGS = {"PronunciationRules": True, "PitchFallback": True}
+# The two settings the engines read, named as they read them, and the app's
+# own: FastCodeAuto is turned off when a fast-code build fails or is stopped,
+# so it then starts only from the Speed up the voices page.
+SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "FastCodeAuto": True}
 
 if IS_WIN:
     def get_setting(name):
@@ -410,195 +409,30 @@ def speechd_module_installed():
     return not IS_WIN and os.path.exists(speechd_module_path())
 
 # ---------------------------------------------------------------- fast code
+# (built by the add-on package's fastcode module, which NVDA's add-on uses too)
 
-ZIG_INDEX = "https://ziglang.org/download/index.json"
 
-
-def _cache_dir():
-    if IS_WIN:
-        return os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Classic Voices")
-    return os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache"),
-                        "classicvoices")
+def _recompiler_candidates():
+    root, lib = bundle_dir(), os.path.dirname(HERE)  # repo or frozen app; Linux install (lib/classicvoices)
+    return ((os.path.join(root, "tools"), os.path.join(root, "core"), os.path.join(root, "nvda", "src", "native_glue.c")),
+            (os.path.join(lib, "tools"), os.path.join(lib, "core"), os.path.join(lib, "native_glue.c")))
 
 
 def find_compiler():
-    """A C compiler for the fast code, as an argument list, or None. Linux
-    prefers the system's clang; otherwise a Zig this app downloaded."""
-    if not IS_WIN:
-        for c in ("clang", "clang-19", "clang-18", "clang-17", "clang-16", "clang-15"):
-            if shutil.which(c):
-                return [shutil.which(c)]
-    z = _cached_zig()
-    return [z, "cc"] if z else None
-
-
-def _cached_zig():
-    root = os.path.join(_cache_dir(), "zig")
-    exe = "zig.exe" if IS_WIN else "zig"
-    if os.path.isdir(root):
-        for d in sorted(os.listdir(root), reverse=True):
-            p = os.path.join(root, d, exe)
-            if os.path.isfile(p):
-                return p
-    return None
-
-
-def _zig_target():
-    m = platform.machine().lower()
-    arch = "aarch64" if m in ("arm64", "aarch64") else "x86_64" if m in ("amd64", "x86_64") else "x86"
-    return "%s-%s" % (arch, "windows" if IS_WIN else "linux")
+    return cv_fastcode.find_compiler()
 
 
 def download_zig(progress):
-    """Fetch Zig (its C compiler builds the fast code) from ziglang.org,
-    checked against the SHA-256 in its own index. Returns the zig path."""
-    import hashlib
-    import tarfile
-    import urllib.request
-    import zipfile
-    progress("Finding the Zig compiler", None)
-    with urllib.request.urlopen(ZIG_INDEX, timeout=60) as r:
-        index = json.load(r)
-    version = next(k for k in index if k != "master")
-    entry = index[version][_zig_target()]
-    root = os.path.join(_cache_dir(), "zig")
-    os.makedirs(root, exist_ok=True)
-    archive = os.path.join(root, os.path.basename(entry["tarball"]))
-    h = hashlib.sha256()
-    with urllib.request.urlopen(entry["tarball"], timeout=120) as r, open(archive + ".part", "wb") as f:
-        total = int(r.headers.get("Content-Length") or entry.get("size") or 0)
-        got = 0
-        progress("Downloading the Zig compiler (%d MB)" % (total >> 20), 0.0)
-        while True:
-            b = r.read(1 << 20)
-            if not b:
-                break
-            f.write(b)
-            h.update(b)
-            got += len(b)
-            progress(None, got / total if total else None)
-    if h.hexdigest() != entry["shasum"]:
-        os.remove(archive + ".part")
-        raise OSError("the Zig download doesn't match its checksum")
-    os.replace(archive + ".part", archive)
-    progress("Unpacking the Zig compiler", None)
-    dest = os.path.join(root, version)
-    tmp = dest + ".tmp"
-    shutil.rmtree(tmp, ignore_errors=True)
-    if archive.endswith(".zip"):
-        with zipfile.ZipFile(archive) as z:
-            z.extractall(tmp)
-    else:
-        with tarfile.open(archive) as t:
-            t.extractall(tmp, filter="data")
-    inner = os.path.join(tmp, os.listdir(tmp)[0])
-    shutil.rmtree(dest, ignore_errors=True)
-    os.replace(inner, dest)
-    shutil.rmtree(tmp, ignore_errors=True)
-    os.remove(archive)
-    return _cached_zig()
+    return cv_fastcode.download_zig(progress)
 
 
 def recompiler():
     """(tools dir, core dir, native_glue.c) of the recompiler bundled with the app."""
-    root, lib = bundle_dir(), os.path.dirname(HERE)  # repo or frozen app; Linux install (lib/classicvoices)
-    for tools, core, glue in ((os.path.join(root, "tools"), os.path.join(root, "core"),
-                               os.path.join(root, "nvda", "src", "native_glue.c")),
-                              (os.path.join(lib, "tools"), os.path.join(lib, "core"),
-                               os.path.join(lib, "native_glue.c"))):
-        if os.path.isfile(os.path.join(tools, "recomp.py")) and os.path.isfile(glue):
-            return tools, core, glue
-    return None
-
-
-def native_targets():
-    """(output file name pattern, extra compiler args) per file a build needs."""
-    if IS_WIN:
-        return [("cvnative_%s_64.dll", ["-target", "x86_64-windows-gnu"]),
-                ("cvnative_%s_32.dll", ["-target", "x86-windows-gnu", "-DGUEST_MEM_SIZE=0x20000000u"])]
-    return [("cvnative_%s.so", ["-fPIC"])]
+    return cv_fastcode.recompiler(_recompiler_candidates())
 
 
 def build_fast_code(build, cc, progress):
     """Recompile one imported engine and compile it into this system's
     fast-code files. progress(message, fraction) may raise to cancel."""
-    import tempfile
-    tools, core, glue = recompiler()
-    voiced = os.path.join(voices_root(), build, "voiced")
-    work = tempfile.mkdtemp(prefix="cv_fast_", dir=_ensure(_cache_dir()))
-    try:
-        gen = os.path.join(work, "gen")
-        progress("Translating the %s engine" % build, None)
-        args = [voiced, os.path.join(tools, "profiles", build + ".txt"), gen, "--prefix", build]
-        if build in ("ios3", "ios4", "ios5"):  # stripped: function boundaries from the BL targets
-            args.append("--scan-bl")
-        if FROZEN:  # no separate Python to run it with
-            _run_recomp(args, tools)
-        else:
-            subprocess.run([sys.executable, "-I", os.path.join(tools, "recomp.py")] + args, check=True,
-                           stdout=subprocess.DEVNULL)
-        sources = sorted(os.path.join(gen, f) for f in os.listdir(gen) if f.endswith(".c")) + [glue]
-        targets = native_targets()
-        steps, finished = len(sources) * len(targets), 0
-        os.makedirs(native_dir(), exist_ok=True)
-        jobs = max(1, min(os.cpu_count() or 2, 8))
-        for n, (pattern, extra) in enumerate(targets):
-            objdir = os.path.join(work, "obj%d" % n)
-            os.makedirs(objdir)
-            objs, running = [], []
-            for src in sources + [None]:
-                while running and (src is None or len(running) >= jobs):
-                    finished += _reap(running)
-                    progress("Compiling the %s engine" % build, finished / steps)
-                if src is None:
-                    break
-                o = os.path.join(objdir, os.path.basename(src) + ".o")
-                objs.append(o)
-                running.append(subprocess.Popen(cc + extra + ["-O2", "-std=gnu11", "-ffp-contract=off", "-w",
-                                                              "-I", core, "-DCV_BUILD=" + build, "-c", src, "-o", o],
-                                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
-            out = os.path.join(native_dir(), pattern % build)
-            tmp = out + ".new"
-            subprocess.run(cc + extra + ["-shared", "-s", "-o", tmp] + objs, check=True,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            if os.path.exists(out):
-                try:
-                    os.remove(out)
-                except OSError:  # a program has it loaded: the new one is used next time
-                    os.replace(out, out + ".old")
-            os.replace(tmp, out)
-            if not IS_WIN:
-                os.chmod(out, 0o444)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-def _reap(running):
-    """Wait for one compile to end; raise if it failed. Returns 1."""
-    while True:
-        for p in running:
-            if p.poll() is not None:
-                running.remove(p)
-                if p.returncode:
-                    err = p.stderr.read().decode("utf-8", "replace")[-2000:]
-                    for q in running:
-                        q.kill()
-                    raise OSError("compiling failed: " + err)
-                return 1
-        time.sleep(0.05)
-
-
-def _run_recomp(argv, tools):
-    sys.path.insert(0, tools)
-    import recomp
-    old = sys.argv
-    sys.argv = ["recomp.py"] + argv
-    try:
-        recomp.main()
-    finally:
-        sys.argv = old
-
-
-def _ensure(d):
-    os.makedirs(d, exist_ok=True)
-    return d
+    cv_fastcode.build(build, voices_root(), native_dir(), cc, progress, _recompiler_candidates(),
+                      python=None if FROZEN else sys.executable)

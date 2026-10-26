@@ -18,11 +18,14 @@ What the phone and Mac apps get built in, this app gets for you:
   voices), or reads a firmware file or extracted folder you have. Each
   version says which firmware it needs: Lion's voices need iOS 5 and 6, for
   example.
-- **Speed up the voices**: builds the fast engine code from your firmware on
-  this computer. It's bit-identical to the slow interpreter, and starts
-  speaking several times sooner. Windows downloads the Zig C compiler for
-  it (checked against ziglang.org's checksum); Linux uses clang if you have
-  it. A firmware takes one to three minutes.
+- **Speed up the voices**: the fast engine code, built from your firmware on
+  this computer, by itself after each firmware import (and when the app
+  opens, for firmware imported before). It's bit-identical to the slow
+  interpreter, and starts speaking several times sooner. Windows downloads
+  the Zig C compiler for it (checked against ziglang.org's checksum); Linux
+  uses clang if you have it, else Zig too. A firmware takes one to three
+  minutes. If a build fails or you stop it, it starts again only from this
+  page.
 - **Settings**: Apple's pronunciation rules and the compact voice for pitch
   changes, as on iOS. On Windows, re-registering the Windows voices; on
   Linux, the Speech Dispatcher module's status.

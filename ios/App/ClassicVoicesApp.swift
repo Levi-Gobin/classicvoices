@@ -48,6 +48,8 @@ struct ClassicVoicesApp: App {
                 print("LAT done"); fflush(stdout); exit(0)
             }
         }
+        // voices earlier versions stored in the App Group: readable before the first unlock too
+        DispatchQueue.global(qos: .utility).async { VoiceCatalog.unprotectVoices() }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
         if CommandLine.arguments.contains("-latency") { LatencyTest.run() }
         if let i = CommandLine.arguments.firstIndex(of: "-rules"), i + 2 < CommandLine.arguments.count {

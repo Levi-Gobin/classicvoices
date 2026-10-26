@@ -372,7 +372,7 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     return name, resume
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("voiced")
     ap.add_argument("profile")
@@ -387,7 +387,7 @@ def main():
                                   "(needed for stripped binaries)")
     ap.add_argument("--scan-bl", action="store_true",
                     help="find those BL targets without a disassembly (the same set)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     mo = MachO(a.voiced)
     if a.profile.endswith(".txt"):

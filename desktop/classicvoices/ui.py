@@ -384,8 +384,10 @@ class Browser(wx.Panel):
         lib = self.lib
         p.text("On their own, the engines run on an emulated iPhone processor. Fast code is that same engine "
                "translated into this computer's own code, from your own firmware: it sounds identical and starts "
-               "speaking several times sooner. Building it takes a few minutes per firmware" +
-               (", and downloads the Zig C compiler (about 50 MB) the first time." if system.IS_WIN else "."))
+               "speaking several times sooner. Classic Voices builds it by itself after each firmware import. "
+               "It takes a few minutes per firmware" +
+               (", and the first time it downloads the free Zig C compiler from ziglang.org (about 100 MB)."
+                if system.IS_WIN else ", with your clang, or the Zig C compiler it downloads (about 55 MB)."))
         imported = [f for f in L.FIRMWARE_NAMES if lib.firmware_imported(f)]
         p.section("Fast code")
         if not imported:
@@ -401,7 +403,7 @@ class Browser(wx.Panel):
             if todo:
                 p.button("Build fast code for %s" % ("the new firmware" if len(todo) < len(imported)
                                                      else "all imported firmware"),
-                         lambda: lib.build_fast_code(todo))
+                         lambda: (system.set_setting("FastCodeAuto", True), lib.build_fast_code(None)))
             else:
                 p.button("Build it again", lambda: lib.build_fast_code(imported))
 

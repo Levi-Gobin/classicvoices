@@ -392,6 +392,80 @@ team-prefixed group. So, since 2026-10-18:
   speech-dispatcher can't match (process names keep 15 characters); now
   -x speech-dispatch. It also copies over a running module by renaming.
 
+## Downloaded voices after a restart (2026-10-26)
+
+- The user restarted the iPhone with VoiceOver on Tom (mac107, downloaded):
+  every downloaded voice, Alex included, failed and VoiceOver showed the
+  voice as "(null)" and spoke with Apple's Alex, until the app was opened.
+  Cause: VoiceOver starts the extension before the first unlock, when files
+  of the default protection class can't be read; scanEnhanced found nothing,
+  and the scan was cached by folder modification times, which the unlock
+  doesn't change. Opening the app asks the system to update the voices,
+  whose speechVoices getter clears the cache.
+- Fix: the extension's store (and new files in it) has no data protection,
+  and unprotectVoices takes it off older files, each process its own (the
+  extension can't change the App Group files the app wrote: 663 "don't have
+  permission"). A scan made while a class-C probe file is unreadable is not
+  cached; the first complete one afterwards calls
+  AVSpeechSynthesisProviderVoice.updateSpeechVoices(). Not on macOS.
+
+## Fast code built where the voices are (2026-10-26)
+
+The user wants fast code everywhere ("so that everyone has an equal
+experience"), never shipping Apple's code, as frictionless as possible.
+
+- Windows/Linux app and NVDA add-on: one builder,
+  `_classicvoices/fastcode.py` (moved out of desktop/system.py). It runs
+  after every firmware import, and the app also at launch for firmware
+  imported before; a failed or stopped build turns that off (app setting
+  FastCodeAuto, Android pref fast_auto_off) until the user starts one from
+  "Speed up the voices". Compiler: clang if there is one (Linux), else Zig
+  from ziglang.org, SHA-256 from its index.json. Windows runs every compiler
+  with CREATE_NO_WINDOW (a console per compile took the focus). The add-on
+  carries recomp.py, the six Vocalizer profiles, thumb.h/thumb_ops.h/
+  recomp_rt.h and native_glue.c in `_classicvoices/recompiler/` (added by
+  nvda/build.py) and runs recomp.py in NVDA's own process
+  (recomp.main(argv)); its dialog gained "Get firmware from Apple" (all
+  missing firmware, streamed as the app does) and "Build fast code", can be
+  closed while fast code builds, and reloads the synth when done.
+- Android builds it on the phone: `Recompiler.java` is recomp.py in Java
+  (byte-identical output for all six engines, checked on the Mac with the
+  JDK, also with --per-file 1500, which the phone uses to keep compiles
+  small); Zig 0.17.0 (aarch64-linux / x86_64-linux tarball, unpacked by
+  android/jni/cv_untar.c with XZ Embedded, keeping only zig, lib/include and
+  the musl headers: 194 MB) compiles with `-target <arch>-linux-musl` and
+  links `-shared -nostdlib` against a stand-in libc.so so the library gets
+  DT_NEEDED libc.so (without it dlopen fails on memcpy, RTLD_LOCAL; the
+  stand-in must define what's used and the link needs --no-as-needed, or
+  the dependency is dropped). Musl and bionic agree on everything the
+  generated code touches (Cpu holds only a jmp_buf pointer).
+- Android forbids exec of app data files for targetSdk 29+
+  (execute_no_trans), but allows mmap PROT_EXEC of them (the avc log says
+  "granted { execute }"), and allows exec from the APK's lib folder. So
+  `libcvzig.so` (cv_zigrun.c, a PIE program in lib/<abi>/, which needs
+  extractNativeLibs=true) maps Zig's static ET_EXEC segments at their link
+  addresses (MAP_FIXED_NOREPLACE, 0x1000000 up), builds the stack (argv,
+  envp, auxv with AT_PHDR/AT_RANDOM/AT_HWCAP/AT_SYSINFO_EHDR) and jumps to
+  the entry point. Zig re-runs itself through /proc/self/exe (the loader),
+  which finds Zig again through CV_ZIG; ZIG_LIB_DIR points at its lib.
+- Measured on the emulator (4 cores, 3 GB: one compile at a time): iOS 6 in
+  7 min, iOS 3 in 5; output WAV identical to the interpreter's; iOS 6 first
+  audio 103 ms against 1.5 s, iOS 3 12x real time against 1.6x. A compile
+  of the biggest generated file takes ~900 MB, so FastCode runs
+  (free memory - 400 MB) / 1.2 GB compiles at once, at most 4. The engine
+  is restarted at the next utterance (Native.reload, never mid-speech; a
+  rwlock keeps cancel/preload off a stream being replaced). Zig is deleted
+  when the build ends. 32-bit Android: no (memory, and the soft-float
+  calling convention untested); data packs still work there.
+- GitHub's iPhone/Mac build now also runs tools/build_mt_native.sh mt107
+  (Lion's MacinTalk, which it already fetches from Apple). Tiger, Leopard
+  and Snow Leopard aren't in that build: candidates on archive.org are
+  deadmoo-tiger-x86 (1.4 GB raw HFS+, the exact mt104 source),
+  MacOSX10.6-Snow-Leopard-Retail-2Z691-6428-A (5.6 GB, the exact mt106
+  source) and Mac_OS_X_Leopard_Install_DVD_Version_10.5_2Z691-6037-A_Apple_Inc._2007
+  (8.1 GB; mt105's exact source is unknown). Fetching them needs partial
+  reads, not whole downloads.
+
 ## One layout, and progress the screen reader reports (2026-10-26)
 
 - Every app has the same tabs and pages: iOS, macOS, Settings; a version

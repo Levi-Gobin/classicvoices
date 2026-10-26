@@ -28,7 +28,7 @@ LIB = os.path.join(ROOT, "nvda", "addon", "synthDrivers", "_classicvoices")
 # what they use: name it here.
 HIDDEN = ["bz2", "base64", "codecs", "ctypes.util", "hashlib", "hmac", "io", "json", "lzma", "plistlib",
           "queue", "struct", "tarfile", "tempfile", "urllib.parse", "urllib.request", "zipfile", "zlib",
-          "winreg", "bisect", "argparse", "collections"]
+          "winreg", "bisect", "argparse", "collections", "importlib.util", "platform"]
 
 
 def main():

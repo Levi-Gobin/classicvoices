@@ -156,6 +156,7 @@ class Library:
         self._wake = threading.Condition(self._lock)
         threading.Thread(target=self._worker, daemon=True).start()
         self.refresh()
+        self.start_fast_code()  # firmware imported before the app built fast code by itself
 
     # ---- what's there
     def refresh(self):
@@ -285,13 +286,26 @@ class Library:
                 cv_firmware.import_ipsw(path, system.voices_root(), job.progress)
         self._queue(Job("firmware", "file:" + path, os.path.basename(path), 0, run))
 
+    def fast_code_missing(self):
+        return [f for f in FIRMWARE_NAMES if self.firmware_imported(f) and not self.fast_code(f)]
+
+    def start_fast_code(self):
+        """Builds fast code for imported firmware that has none, unless a build
+        failed or was stopped (then the Speed up the voices page starts it)."""
+        if system.recompiler() and system.get_setting("FastCodeAuto") and self.fast_code_missing():
+            self.build_fast_code(None)
+
     def build_fast_code(self, builds):
+        """builds=None: whatever has no fast code when the job starts."""
         def run(job):
+            todo = builds if builds is not None else self.fast_code_missing()
+            if not todo:
+                return
             cc = system.find_compiler()
             if not cc:
                 system.download_zig(job.progress)
                 cc = system.find_compiler()
-            for b in builds:
+            for b in todo:
                 system.build_fast_code(b, cc, job.progress)
         self._queue(Job("fast", "fast", "Fast engine code", 0, run))
 
@@ -339,8 +353,16 @@ class Library:
                 self.errors.append((job.label, job.error))
             with self._lock:
                 self.jobs.remove(job)
-            if not job.cancelled and not job.error:
+            ok = not job.cancelled and not job.error
+            if ok:
                 self.finished.append(job.label)
+            if job.kind == "fast":
+                try:
+                    system.set_setting("FastCodeAuto", ok)
+                except OSError:
+                    pass
+            elif ok and job.kind in ("firmware", "copy"):
+                self.start_fast_code()
             self.refresh()
             self.on_change()
 

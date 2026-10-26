@@ -196,9 +196,66 @@ enum VoiceCatalog {
               let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
         let store = base.appendingPathComponent("EnhancedVoices")
+        // No data protection: after a restart VoiceOver speaks before the first
+        // unlock, when protected files can't be read (voices aren't private).
+        // New files take their folder's class.
+        #if os(macOS)
         try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true)
+        #else
+        try? FileManager.default.createDirectory(at: store, withIntermediateDirectories: true,
+                                                 attributes: [.protectionKey: FileProtectionType.none])
+        try? FileManager.default.setAttributes([.protectionKey: FileProtectionType.none], ofItemAtPath: store.path)
+        #endif
         return store
     }()
+
+    /// Once per folder: takes data protection off voices stored before their
+    /// folder had none. Each process does the files it owns: the extension its
+    /// store, the app the App Group voices of earlier versions (the store only
+    /// links to those). Possible only after the first unlock; tried again
+    /// until it has worked.
+    static func unprotectVoices() {
+        #if !os(macOS)  // a Mac has no first-unlock protection
+        guard let root = extensionStore ?? legacyGroupRoot, protectedDataReadable else { return }
+        let fm = FileManager.default
+        let done = root.appendingPathComponent(".unprotected")
+        guard fm.fileExists(atPath: root.path), !fm.fileExists(atPath: done.path) else { return }
+        var failed = 0, firstFailure = "", changed = 0
+        func walk(_ path: String, depth: Int) {
+            if (try? fm.destinationOfSymbolicLink(atPath: path)) != nil { return }  // the other process's
+            if (try? fm.attributesOfItem(atPath: path)[.protectionKey] as? FileProtectionType) != FileProtectionType.none {
+                do {
+                    try fm.setAttributes([.protectionKey: FileProtectionType.none], ofItemAtPath: path)
+                    changed += 1
+                } catch {
+                    if failed == 0 { firstFailure = "\(path): \(error.localizedDescription)" }
+                    failed += 1
+                }
+            }
+            guard depth < 12, let names = try? fm.contentsOfDirectory(atPath: path) else { return }
+            for n in names where n != ".unlock-probe" {  // that one must stay protected
+                walk(path + "/" + n, depth: depth + 1)
+            }
+        }
+        walk(root.path, depth: 0)
+        if failed == 0 { fm.createFile(atPath: done.path, contents: nil, attributes: [.protectionKey: FileProtectionType.none]) }
+        log.notice("CLASSICVOICES voices unprotected in \(root.lastPathComponent, privacy: .public): \(changed) changed, \(failed) failed \(firstFailure, privacy: .public)")
+        #endif
+    }
+
+    /// Whether files protected until the first unlock can be read yet: not
+    /// right after a restart. A voice scan made before then is incomplete.
+    static var protectedDataReadable: Bool {
+        #if os(macOS)
+        return true
+        #else
+        guard let dir = extensionStore ?? legacyGroupRoot else { return true }
+        let probe = dir.appendingPathComponent(".unlock-probe")
+        if FileManager.default.fileExists(atPath: probe.path) { return (try? Data(contentsOf: probe)) != nil }
+        try? Data("1".utf8).write(to: probe, options: .completeFileProtectionUntilFirstUserAuthentication)
+        return true
+        #endif
+    }
 
     /// Voices downloaded by earlier versions into the App Group, when there is one.
     static var legacyGroupRoot: URL? {
@@ -290,9 +347,26 @@ enum VoiceCatalog {
         if let c = scanned, c.stamps == sig { scanLock.unlock(); return c.entries }
         scanLock.unlock()
         let found = scanEnhanced(base)
-        scanLock.lock(); scanned = (sig, found); lookups = [:]; scanLock.unlock()
+        guard protectedDataReadable else {
+            // Before the first unlock after a restart: the voices' files can't be read, so
+            // this list is short. Don't keep it; once they can be, the system hears the list changed.
+            scanLock.lock(); scannedLocked = true; scanLock.unlock()
+            return found
+        }
+        scanLock.lock()
+        scanned = (sig, found); lookups = [:]
+        let wasLocked = scannedLocked
+        scannedLocked = false
+        scanLock.unlock()
+        if wasLocked, Bundle.main.bundleURL.pathExtension == "appex" {
+            log.notice("CLASSICVOICES voices readable after the first unlock: \(found.count) downloaded")
+            AVSpeechSynthesisProviderVoice.updateSpeechVoices()
+            DispatchQueue.global(qos: .utility).async { unprotectVoices() }
+        }
         return found
     }
+
+    nonisolated(unsafe) private static var scannedLocked = false
 
     nonisolated(unsafe) private static var scanned: (stamps: [Int], entries: [Entry])?
     /// entry(forIdentifier:) / entry(forKey:) answers for the current scan

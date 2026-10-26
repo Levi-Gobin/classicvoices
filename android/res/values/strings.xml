@@ -78,11 +78,27 @@
     <string name="waiting">waiting</string>
 
     <!-- fast code -->
-    <string name="fast_explained">On their own, the engines run on an emulated iPhone processor. Fast code is that same engine translated into this phone\'s own code, from your own firmware: it sounds identical and starts speaking several times sooner. It can\'t be built on the phone: build it on a Linux or Mac computer with classicvoices-data android-pack, then import the zip here. It\'s made from Apple\'s code, so keep it for your own devices.</string>
+    <string name="fast_explained">On their own, the engines run on an emulated iPhone processor. Fast code is that same engine translated into this phone\'s own code, from your own firmware: it sounds identical and starts speaking several times sooner. Classic Voices builds it here after each firmware import: it downloads the free Zig compiler from ziglang.org (about 53 MB) and deletes it when it\'s done, and it takes a few minutes per firmware. Fast code is made from Apple\'s code, so it stays on this phone.</string>
     <string name="fast_heading">Fast code for this phone (%1$s)</string>
     <string name="fast_ready">%1$s: fast code ready</string>
     <string name="fast_missing">%1$s: no fast code yet</string>
     <string name="fast_import_first">Import firmware first.</string>
+    <string name="fast_build_now">Build fast code now</string>
+    <string name="fast_again">Build it again</string>
+    <string name="fast_stop">Stop building fast code, %2$s</string>
+    <string name="fast_bar">Building fast code</string>
+    <string name="fast_not_here">This phone\'s processor (%1$s) can\'t build fast code: the voices use the emulated processor. A data pack built on a computer can still be imported.</string>
+    <string name="fast_job">Fast code</string>
+    <string name="fast_unsupported">This phone can\'t build fast code</string>
+    <string name="fast_no_space">Building fast code needs about 400 MB of free space</string>
+    <string name="fast_translating">Translating the %1$s engine</string>
+    <string name="fast_compiling">Compiling the %1$s engine</string>
+    <string name="fast_cant_save">Couldn\'t save the fast code</string>
+    <string name="fast_finding_zig">Finding the Zig compiler</string>
+    <string name="fast_zig_index">ziglang.org\'s download list couldn\'t be read</string>
+    <string name="fast_downloading_zig">Downloading the Zig compiler, %1$s</string>
+    <string name="fast_zig_checksum">The Zig download doesn\'t match its checksum</string>
+    <string name="fast_unpacking_zig">Unpacking the Zig compiler</string>
 
     <string name="copy_report">Copy the report</string>
     <string name="copied">Copied</string>

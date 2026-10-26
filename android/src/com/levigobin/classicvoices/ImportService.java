@@ -40,7 +40,7 @@ public class ImportService extends Service {
     }
 
     static final class Job {
-        final String kind;   // "firmware", "ipsw", "download", "pack"
+        final String kind;   // "firmware", "ipsw", "download", "pack", "fast"
         final String arg;    // build key, download id, or content Uri
         final String label;
 
@@ -217,6 +217,8 @@ public class ImportService extends Service {
             synchronized (LOCK) {
                 currentJob = null;  // done: the screen shows it as such when it hears
             }
+            if (j.kind.equals(FastCode.JOB)) FastCode.autoOff(this, error != null);
+            else if (error == null && !cancelAll && !FastCode.autoOff(this)) FastCode.startIfNeeded(this);
             Data.refresh(this);
             tell(true, error != null ? error : j.label + " " + getString(R.string.import_done_suffix), -1,
                     error == null ? j.label : null, error);
@@ -283,6 +285,9 @@ public class ImportService extends Service {
                 throw new IOException(getString(R.string.import_not_available));
             case "pack":
                 importPack(Uri.parse(j.arg), p);
+                break;
+            case FastCode.JOB:
+                FastCode.build(this, p, j.arg.equals(FastCode.AGAIN));
                 break;
             default:
                 throw new IOException("unknown job " + j.kind);

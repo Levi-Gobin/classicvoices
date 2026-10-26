@@ -121,6 +121,16 @@ def package():
                 if APPLE_FILE_RE.search(rel.replace("\\", "/")):
                     sys.exit("refusing to package Apple-derived file: %s" % rel)
                 z.write(p, rel)
+        # the recompiler, so the add-on can build fast engine code from the user's own firmware
+        # (_classicvoices/fastcode.py): recomp.py, its profiles (addresses only), the instruction
+        # semantics its C includes, and the glue
+        rc = "synthDrivers/_classicvoices/recompiler/"
+        z.write(os.path.join(ROOT, "tools", "recomp.py"), rc + "recomp.py")
+        for b in ("ios3", "ios4", "ios5", "ios6", "ios7", "ios10"):
+            z.write(os.path.join(ROOT, "tools", "profiles", b + ".txt"), rc + "profiles/%s.txt" % b)
+        for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
+            z.write(os.path.join(ROOT, "core", h), rc + h)
+        z.write(os.path.join(NVDA, "src", "native_glue.c"), rc + "native_glue.c")
         for bits in (32, 64):
             dll = os.path.join(OUT, "cvengine%d.dll" % bits)
             if not os.path.exists(dll):
