@@ -36,11 +36,6 @@ void vx_sleep_ns(long long ns);
 #define pthread_attr_set_qos_class_np(attr, cls, pri) 0
 #define QOS_CLASS_USER_INTERACTIVE 0
 
-#ifndef __clang__
-// GCC has no __builtin_bitreverse32 (used by one RBIT case in thumb_ops.h).
-unsigned int vx_bitrev32(unsigned int v);
-#define __builtin_bitreverse32(x) vx_bitrev32(x)
-#endif
 
 #ifdef __cplusplus
 }
