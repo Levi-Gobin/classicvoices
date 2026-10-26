@@ -36,6 +36,10 @@ cp tools/recomp.py "$L/tools/"
 cp tools/profiles/*.txt "$L/tools/profiles/"
 cp core/thumb.h core/thumb_ops.h core/recomp_rt.h "$L/core/"
 cp nvda/src/native_glue.c "$L/"
+# the app (the voice browser, as on the Mac and iPhone): wxPython, from the distribution
+cp -R desktop/classicvoices "$L/"
+rm -rf "$L/classicvoices/__pycache__"
+cp linux/classicvoices "$OUT/stage/bin/"
 cp linux/install.sh linux/README.md LICENSE "$OUT/stage/"
 # refuse to package anything of Apple's
 if find "$OUT/stage" \( -name voiced -o -name '*.dat' -o -name 'broker.hdr*' -o -name '*.ipsw' -o -name 'cvnative_*' \) | grep -q .; then

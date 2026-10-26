@@ -89,6 +89,27 @@ and SideStore can do it automatically), and Classic Voices counts as two of
 the three apps you may have installed at once (the app and its speech
 extension).
 
+### If you have a paid Apple developer account
+
+With an Apple Developer Program membership, Classic Voices keeps working for a
+year instead of a week, and the three-app limit doesn't apply:
+
+1. Build `ClassicVoices.ipa` as above (the one-line script or the Actions
+   run). Nothing changes in the build.
+2. In Sideloadly (or AltStore or SideStore), sign in with the Apple ID that
+   holds your developer membership, not a free one, and install the .ipa as
+   usual.
+3. The install now lasts one year, or until your membership ends if that's
+   sooner. Nothing needs refreshing in between. Install a new build the same
+   way whenever you update, and before the year is up.
+
+If you build in Xcode with your own team instead, put your Team ID in
+`DEVELOPMENT_TEAM` and your own prefix in `bundleIdPrefix` (ios/project.yml).
+Then change the App Group `group.com.levigobin.ClassicVoices` to one of
+yours: in ios/project.yml, ios/App/ClassicVoices.entitlements and
+ios/Synth/Synth.entitlements. App Group names are unique across all of Apple's
+developers, so you can't register that one.
+
 ## What the build includes
 
 | From | Voices |
@@ -132,16 +153,23 @@ was tested with these:
 - OS X 10.7 Lion and OS X 10.8 Mountain Lion (Apple's InstallMacOSX downloads)
 - OS X 10.9.5 Mavericks
 
-## Android and Linux
+## Windows, Android and Linux
+
+On **Windows**, the Classic Voices app (in the Start menu, from
+`ClassicVoicesSetup.exe`) gets and manages the voices the way the iPhone and
+Mac apps do, and installs them as Windows speech (SAPI 5) voices for 64- and
+32-bit programs: JAWS, NVDA's SAPI 5 option, Balabolka and the rest. NVDA
+users can also use the add-on, which shares the app's voices. See
+[desktop/README.md](desktop/README.md) and [windows/sapi/README.md](windows/sapi/README.md).
 
 Classic Voices also runs as an **Android** text-to-speech engine (for
 TalkBack and every app that speaks, Android 5.0 and later) and as a
-**Speech Dispatcher** module on **Linux** (for Orca). Neither needs a Mac or a
-GitHub build: the app or `classicvoices-data` streams the firmware from
-Apple, copies out only the engines and voices, and downloads the enhanced and
-Mac OS X voices the same way. MacinTalk on those platforms is Panthera
-Speech's job. See [android/README.md](android/README.md) and
-[linux/README.md](linux/README.md).
+**Speech Dispatcher** module on **Linux** (for Orca), where the same app
+manages the voices. None of these needs a Mac: the apps (or
+`classicvoices-data`) stream the firmware from Apple, copy out only the
+engines and voices, and download the enhanced and Mac OS X voices the same
+way. MacinTalk on these platforms is Panthera Speech's job. See
+[android/README.md](android/README.md) and [linux/README.md](linux/README.md).
 
 ## Building (macOS)
 

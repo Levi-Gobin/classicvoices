@@ -269,8 +269,16 @@ final class Downloads {
     // ---------------------------------------------------------------- enhanced
 
     static void downloadEnhanced(Context c, Item it, Progress p) throws IOException {
-        File dest = new File(Data.downloadsDir(c), it.build + "/" + it.name);
         File tmp = new File(Data.downloadsDir(c), it.build + "/" + it.name + ".downloading");
+        try {
+            downloadEnhanced(c, it, tmp, p);
+        } finally {
+            Firmware.deleteTree(tmp);  // stopped or failed: nothing is left behind
+        }
+    }
+
+    private static void downloadEnhanced(Context c, Item it, File tmp, Progress p) throws IOException {
+        File dest = new File(Data.downloadsDir(c), it.build + "/" + it.name);
         Firmware.deleteTree(tmp);
         //noinspection ResultOfMethodCallIgnored
         tmp.mkdirs();
@@ -415,8 +423,13 @@ final class Downloads {
                 //noinspection ResultOfMethodCallIgnored
                 dest.mkdirs();
                 Bounded member = new Bounded(s, size);
-                untarRot13(member, dest);
-                member.drain();
+                try {
+                    untarRot13(member, dest);
+                    member.drain();
+                } catch (IOException | RuntimeException x) {
+                    Firmware.deleteTree(dest);  // stopped or failed: nothing is left behind
+                    throw x;
+                }
                 File fin = new File(eraDir, folder);
                 if (new File(dest, "broker.hdr").isFile()) {
                     Firmware.deleteTree(fin);

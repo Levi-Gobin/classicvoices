@@ -1,37 +1,110 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Classic Voices</string>
+
+    <!-- tabs and pages, worded as in the iOS, Mac, Windows and Linux apps -->
+    <string name="tab_ios">iOS</string>
+    <string name="tab_mac">macOS</string>
+    <string name="tab_settings">Settings</string>
+    <string name="role_tab">Tab</string>
+    <string name="back">Back</string>
+    <string name="current_location">Current location: %1$s</string>
+    <string name="all_versions">All versions</string>
+    <string name="version">Version</string>
+    <string name="search_all">Search all voices</string>
+    <string name="no_match">No voices match “%1$s”.</string>
+    <string name="found_n">Found %1$d</string>
+    <string name="get_the_voices">Get the voices</string>
+    <string name="needs_firmware">%1$s voices need Apple\'s %2$s firmware, which Classic Voices takes them from.</string>
+    <string name="needs_reimport">%1$s voices need their firmware imported again.</string>
+    <string name="and">" and "</string>
+    <string name="get_firmware">Get the firmware</string>
+    <string name="problems">Problems</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="languages">Languages</string>
+    <string name="language_one">%1$s, %2$d voice</string>
+    <string name="language_n">%1$s, %2$d voices</string>
+    <string name="more">More</string>
+    <string name="page_firmware">Get the voices</string>
+    <string name="page_fast">Speed up the voices</string>
+    <string name="page_diagnostics">Diagnostics</string>
+    <string name="diagnostics_row">Diagnostics, a report to send if voices don\'t work</string>
+    <string name="voices">Voices</string>
+    <string name="voices_of">%1$s voices</string>
+    <string name="voice">Voice</string>
+
+    <!-- voice rows: what pressing the row does comes first -->
+    <string name="download_voice">Download %1$s, %2$s</string>
+    <string name="stop_downloading">Stop downloading %1$s, %2$s</string>
+    <string name="downloading">Downloading %1$s</string>
+    <string name="using">using %1$s</string>
+    <string name="not_system_voice">not a system voice</string>
+
+    <!-- one voice -->
+    <string name="voice_gone">This voice isn\'t on this device.</string>
+    <string name="voice_version">Version: %1$s</string>
+    <string name="voice_language">Language: %1$s</string>
+    <string name="voice_type">Type: %1$s</string>
+    <string name="try_it">Try it</string>
+    <string name="text_to_speak">Text to speak</string>
+    <string name="speaking_rate">Speaking rate</string>
+    <string name="speak">Speak</string>
+    <string name="stop">Stop</string>
+    <string name="try_it_explained">Speaks through Classic Voices itself, at the rate chosen here, whichever engine Android uses.</string>
+    <string name="not_ready">The voices are still starting. Try again in a moment.</string>
+    <string name="system">For TalkBack and other apps</string>
+    <string name="use_as_system_voice">Use as a system voice</string>
+    <string name="default_for">Use for %1$s</string>
+    <string name="system_explained">Off hides this voice from TalkBack and other apps; it stays downloaded. Each language speaks with the voice chosen for it, or else the iOS 6 voice.</string>
+    <string name="remove_heading">Remove</string>
+    <string name="remove_voice">Remove this voice, frees %1$s</string>
+    <string name="remove_question">Remove %1$s? You can download it again later.</string>
+    <string name="remove">Remove</string>
+
+    <!-- getting the voices -->
+    <string name="firmware_explained">Classic Voices takes the voices out of Apple\'s iPhone firmware, each firmware only for its speech files. It streams just the part it needs from Apple, or reads a firmware (.ipsw) file you have. Use Wi-Fi.</string>
+    <string name="from_apple">From Apple</string>
+    <string name="firmware_get">Get %1$s from Apple, streams about %2$s. %3$s</string>
+    <string name="firmware_imported">%1$s: imported. Get it again</string>
+    <string name="stop_getting">Stop getting %1$s, %2$s</string>
+    <string name="getting">Getting %1$s</string>
+    <string name="reimport_question">Get %1$s again? It\'s already imported; this streams about %2$s.</string>
+    <string name="reimport_yes">Get it again</string>
+    <string name="from_a_file">From a file</string>
+    <string name="import_ipsw_file">Import a firmware file (.ipsw)</string>
+    <string name="import_pack">Import a data pack (.zip)</string>
+    <string name="stop_importing">Stop importing %1$s, %2$s</string>
+    <string name="importing">Importing %1$s</string>
+    <string name="waiting">waiting</string>
+
+    <!-- fast code -->
+    <string name="fast_explained">On their own, the engines run on an emulated iPhone processor. Fast code is that same engine translated into this phone\'s own code, from your own firmware: it sounds identical and starts speaking several times sooner. It can\'t be built on the phone: build it on a Linux or Mac computer with classicvoices-data android-pack, then import the zip here. It\'s made from Apple\'s code, so keep it for your own devices.</string>
+    <string name="fast_heading">Fast code for this phone (%1$s)</string>
+    <string name="fast_ready">%1$s: fast code ready</string>
+    <string name="fast_missing">%1$s: no fast code yet</string>
+    <string name="fast_import_first">Import firmware first.</string>
+
+    <string name="copy_report">Copy the report</string>
+    <string name="copied">Copied</string>
+
+    <!-- settings -->
+    <string name="speech">Speech</string>
+    <string name="setting_rules">Apple\'s pronunciation rules</string>
+    <string name="setting_rules_explained">The text rules iOS 5 and 6 applied before speaking, per language: “iOS” is spelled out, “OS X” is “OS ten”, St and Dr become Street and Drive, and so on.</string>
+    <string name="setting_fallback">Compact voice for pitch changes</string>
+    <string name="setting_fallback_explained">Enhanced and premium voices can\'t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch uses the voice\'s compact version. Voices without a compact version here are unaffected.</string>
+    <string name="tts_heading">Text-to-speech</string>
     <string name="open_tts_settings">Open text-to-speech settings</string>
-    <string name="summary_none">No voices yet. Nothing of Apple\'s comes with Classic Voices: import firmware below, and its voices are taken out of it.</string>
+    <string name="summary_none">No voices yet. Nothing of Apple\'s comes with Classic Voices: get the firmware in the iOS tab, and its voices are taken out of it.</string>
     <string name="summary_default">%1$d voices ready. Classic Voices is your text-to-speech engine.</string>
     <string name="summary_not_default">%1$d voices ready. To hear them in TalkBack and other apps, choose Classic Voices as the preferred engine in text-to-speech settings.</string>
-    <string name="cancel_imports">Cancel imports</string>
-    <string name="heading_firmware">Voices from iPhone firmware</string>
-    <string name="firmware_explained">Each firmware is streamed from Apple\'s own servers. Only its root filesystem is downloaded, the speech engine and voices are copied out, and the rest is deleted. Use Wi-Fi: the sizes are what will be downloaded.</string>
-    <string name="firmware_import">%1$s: import, %2$s download</string>
-    <string name="firmware_imported">%1$s: imported. Tap to import again</string>
-    <string name="reimport_question">Import %1$s again? It\'s already imported; this downloads %2$s.</string>
-    <string name="reimport_yes">Import again</string>
-    <string name="import_all_firmware">Import all firmware</string>
-    <string name="import_ipsw_file">Import an IPSW file already on this device</string>
-    <string name="heading_more_voices">More voices from Apple</string>
-    <string name="more_voices_explained">Enhanced iOS 5 and 6 voices, and the Mac OS X Lion, Mountain Lion and Mavericks voices, downloaded from Apple once the engine they need is imported.</string>
-    <string name="download_voices">Download voices</string>
-    <string name="heading_your_voices">Your voices</string>
-    <string name="choose_voices">Voices and defaults</string>
-    <string name="speak_sample">Speak a sample</string>
-    <string name="sample_text">This is Classic Voices.</string>
-    <string name="heading_settings">Settings</string>
-    <string name="setting_rules">Apple\'s pronunciation rules: iOS is spelled out, OS X is OS ten, and so on</string>
-    <string name="setting_fallback">Compact voice for pitch changes, as VoiceOver did: enhanced and premium voices can\'t change pitch themselves</string>
-    <string name="heading_fast">Fast engine code</string>
-    <string name="fast_none">None for this phone (%1$s). The voices run on an exact emulation of the iPhone\'s processor, which may be slower than real time on some phones. Fast engine code, built from your own firmware, makes them several times faster: import it from a data pack.</string>
-    <string name="fast_present">Fast engine code (%2$s): %1$s.</string>
-    <string name="import_pack">Import a data pack (.zip)</string>
     <string name="heading_macintalk">MacinTalk voices</string>
     <string name="macintalk_explained">Fred, Victoria, Alex and the other MacinTalk voices come from Panthera Speech, a separate app: github.com/tgeczy/panthera-speech</string>
+
+    <!-- the import service -->
     <string name="import_channel">Imports and downloads</string>
     <string name="import_preparing">Preparing</string>
+    <string name="import_starting">starting</string>
     <string name="import_cancelled">Cancelled</string>
     <string name="import_done_suffix">done</string>
     <string name="import_not_available">That download is no longer available</string>
@@ -41,18 +114,7 @@
     <string name="import_unpacking">Unpacking</string>
     <string name="import_unpacked_n">Unpacked %1$d files</string>
     <string name="import_pack_empty">The zip had no Voices, Downloads or Native folder</string>
-    <string name="import_queued">%1$s: queued</string>
-    <string name="import_starting">Starting</string>
     <string name="the_ipsw">The firmware file</string>
     <string name="the_pack">The data pack</string>
     <string name="no_file_picker">This phone has no file picker</string>
-    <string name="percent">%1$d percent</string>
-    <string name="downloads_none">Nothing to download now. Import iOS 5 or 6 for their enhanced voices, iOS 6 for the Lion and Mountain Lion voices, or iOS 7 for the Mavericks compact voices.</string>
-    <string name="downloads_count">%1$d voices to download</string>
-    <string name="group_enhanced">Enhanced iOS voices</string>
-    <string name="group_lion">Mac OS X Lion</string>
-    <string name="group_mountain_lion">Mac OS X Mountain Lion</string>
-    <string name="group_mavericks">Mac OS X Mavericks</string>
-    <string name="voices_explained">Tap a voice to make it the default for its language and hear it.</string>
-    <string name="voice_default">default</string>
 </resources>

@@ -21,6 +21,7 @@ final class StoreOps {
     private func fail(_ s: String) -> [AnyHashable: Any] { ["error": s] }
 
     func perform(_ message: [AnyHashable: Any]) -> [AnyHashable: Any] {
+        defer { VoiceCatalog.invalidateEnhanced() }  // voices may have been added or removed
         let fm = FileManager.default
         switch message["op"] as? String {
 

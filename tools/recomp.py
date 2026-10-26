@@ -80,6 +80,39 @@ class MachO:
         return struct.unpack("<H", self.read(addr, 2))[0]
 
 
+def scan_bl(mo):
+    """BL targets in __text, found the way llvm-objdump's linear sweep sees
+    them (an IT block's conditional BLs left out, as they print as "blne" ...):
+    the function boundaries of a stripped engine, without needing objdump."""
+    lo, hi = mo.text
+    data = mo.read(lo, hi - lo)
+    out = set()
+    a, n = 0, len(data)
+    it_left = 0  # instructions left in an IT block whose condition isn't "always"
+    while a + 2 <= n:
+        hw1 = data[a] | data[a + 1] << 8
+        in_it = it_left > 0
+        if in_it:
+            it_left -= 1
+        if hw1 & 0xFF00 == 0xBF00 and hw1 & 0xF:  # IT
+            mask = hw1 & 0xF
+            it_left = 0 if hw1 >> 4 & 0xF == 0xE else 5 - (mask & -mask).bit_length()
+            a += 2
+            continue
+        if hw1 >> 11 in (0x1D, 0x1E, 0x1F) and a + 4 <= n:  # 32-bit
+            hw2 = data[a + 2] | data[a + 3] << 8
+            if hw1 >> 11 == 0x1E and hw2 & 0xD000 == 0xD000 and not in_it:  # BL
+                s = hw1 >> 10 & 1
+                i1, i2 = 1 ^ (hw2 >> 13 & 1 ^ s), 1 ^ (hw2 >> 11 & 1 ^ s)
+                t = lo + a + 4 + sext(s << 24 | i1 << 23 | i2 << 22 | (hw1 & 0x3FF) << 12 | (hw2 & 0x7FF) << 1, 25)
+                if lo <= t < hi:
+                    out.add(t)
+            a += 4
+        else:
+            a += 2
+    return out
+
+
 def sext(v, bits):
     m = 1 << (bits - 1)
     return (v ^ m) - m
@@ -352,6 +385,8 @@ def main():
                     help="leave native code after VX_BUDGET instructions (bisecting translation bugs)")
     ap.add_argument("--dis", help="llvm-objdump disassembly; its BL targets become function boundaries "
                                   "(needed for stripped binaries)")
+    ap.add_argument("--scan-bl", action="store_true",
+                    help="find those BL targets without a disassembly (the same set)")
     a = ap.parse_args()
 
     mo = MachO(a.voiced)
@@ -372,6 +407,8 @@ def main():
                 t = int(m.group(1), 16)
                 if mo.text[0] <= t < mo.text[1]:
                     bound_set.add(t)
+    if a.scan_bl:
+        bound_set |= scan_bl(mo)
     bounds = sorted(bound_set)
     import bisect
 

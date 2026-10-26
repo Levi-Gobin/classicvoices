@@ -124,6 +124,8 @@ public class TtsService extends TextToSpeechService {
         CharSequence cs = Build.VERSION.SDK_INT >= 21 ? request.getCharSequenceText() : null;
         String text = cs != null ? cs.toString() : request.getText();
         if (text == null) text = "";
+        // test builds log what they're asked to say (adb logcat -s CVSPEAK), to check TalkBack's wording
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) Log.d("CVSPEAK", text);
         speak(this, v, text, request.getSpeechRate(), request.getPitch(), cb);
     }
 

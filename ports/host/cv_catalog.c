@@ -150,6 +150,29 @@ static void read_small(const char *path, char *out, size_t cap) {
     while (n && isspace((unsigned char)out[n - 1])) out[--n] = 0;
 }
 
+// Voices the user took out of the system's list in the app ("Use as a system
+// voice" off): <data>/hidden.txt, a voice key per line, beside Voices/.
+static void drop_hidden(const char *voices_root, List *l) {
+    char path[1200];
+    snprintf(path, sizeof path, "%s", voices_root);
+    size_t n = strlen(path);
+    while (n && (path[n - 1] == '/' || path[n - 1] == '\\')) path[--n] = 0;
+    while (n && path[n - 1] != '/' && path[n - 1] != '\\') n--;
+    snprintf(path + n, sizeof path - n, "hidden.txt");
+    FILE *f = fopen(path, "rb");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (!line[0]) continue;
+        size_t j = 0;
+        for (size_t i = 0; i < l->n; i++)
+            if (strcmp(l->v[i].key, line) != 0) l->v[j++] = l->v[i];
+        l->n = j;
+    }
+    fclose(f);
+}
+
 size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoice **out) {
     List l = {0};
     char p[1200];
@@ -235,6 +258,7 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
         }
         free_dirs(dirs, nd);
     }
+    drop_hidden(voices_root, &l);
     *out = l.v;
     return l.n;
 }

@@ -12,6 +12,8 @@
 !/linux/
 !/ports/
 !/android/
+!/windows/
+!/desktop/
 !/README.md
 !/NOTES.md
 !/LICENSE

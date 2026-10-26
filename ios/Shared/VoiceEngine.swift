@@ -276,13 +276,58 @@ enum VoiceCatalog {
 
     /// The extension's downloaded voices as it last reported them to the app
     /// (VoiceStore.refresh). nil in the extension itself.
-    nonisolated(unsafe) static var remoteEnhanced: [Entry]?
+    nonisolated(unsafe) static var remoteEnhanced: [Entry]? { didSet { invalidateEnhanced() } }
 
-    /// Re-scanned each time: voices can be downloaded while we run.
+    /// Voices can be downloaded while we run, but scanning them reads a file
+    /// per voice (tens of milliseconds, and every speech request looks voices
+    /// up), so the scan is kept until a folder that holds voices changes or
+    /// the store says so (invalidateEnhanced).
     static var enhanced: [Entry] {
         if let remoteEnhanced { return remoteEnhanced }
         guard let base = enhancedRoot else { return [] }
-        return scanEnhanced(base)
+        let sig = folderStamps(base)
+        scanLock.lock()
+        if let c = scanned, c.stamps == sig { scanLock.unlock(); return c.entries }
+        scanLock.unlock()
+        let found = scanEnhanced(base)
+        scanLock.lock(); scanned = (sig, found); lookups = [:]; scanLock.unlock()
+        return found
+    }
+
+    nonisolated(unsafe) private static var scanned: (stamps: [Int], entries: [Entry])?
+    /// entry(forIdentifier:) / entry(forKey:) answers for the current scan
+    nonisolated(unsafe) private static var lookups: [String: Entry?] = [:]
+    private static let scanLock = NSLock()
+
+    static func invalidateEnhanced() {
+        scanLock.lock(); scanned = nil; lookups = [:]; scanLock.unlock()
+    }
+
+    /// Looked up on every speech request, so remembered until the voices change.
+    private static func memo(_ key: String, _ find: ([Entry]) -> Entry?) -> Entry? {
+        let all = entries  // also notices changed voices, which clears `lookups`
+        scanLock.lock()
+        if let hit = lookups[key] { scanLock.unlock(); return hit }
+        scanLock.unlock()
+        let found = find(all)
+        scanLock.lock(); lookups[key] = found; scanLock.unlock()
+        return found
+    }
+
+    /// Modification times of the folders scanEnhanced lists (their entries
+    /// appear and disappear there), with plain stat: microseconds.
+    private static func folderStamps(_ base: URL) -> [Int] {
+        var out: [Int] = []
+        func add(_ path: String) {
+            var st = stat()
+            out.append(stat(path, &st) == 0 ? st.st_mtimespec.tv_sec * 1_000_000_000 + st.st_mtimespec.tv_nsec : -1)
+        }
+        let b = base.path
+        add(b)
+        for (build, _, _) in builds { add(b + "/" + build) }
+        for (era, _, _) in macEras { add(b + "/" + era) }
+        for (gen, _, _) in macinTalkEras { add(b + "/" + gen); add(b + "/" + gen + "/Voices") }
+        return out
     }
 
     /// Downloaded voices under one root: <build>/<lang>/, Mac eras, MacinTalk.
@@ -310,10 +355,10 @@ enum VoiceCatalog {
     /// The system prefixes our identifiers with the extension's bundle ID,
     /// so match on the suffix.
     static func entry(forIdentifier id: String) -> Entry? {
-        entries.first { id == $0.identifier || id.hasSuffix("." + $0.identifier) }
+        memo("id:" + id) { $0.first { id == $0.identifier || id.hasSuffix("." + $0.identifier) } }
     }
 
-    static func entry(forKey key: String) -> Entry? { entries.first { $0.key == key } }
+    static func entry(forKey key: String) -> Entry? { memo("key:" + key) { $0.first { $0.key == key } } }
 
     /// The compact version of an enhanced or premium voice, when it's here:
     /// the same firmware and language for an iOS voice, the "<Name>Compact"
@@ -371,16 +416,19 @@ enum VoiceCatalog {
 /// Plain text plus prosody pulled out of the SSML the system hands us.
 struct SpeechJob {
     var text = ""
-    var rate = 100     // percent of normal, engine accepts 50...400
+    var rate = 100     // percent of normal: 10...400 (MacinTalk's modern curve), Vocalizer 50...400
     var pitch = 100    // percent of normal, engine accepts 50...200
     var volume = -1    // 0...100, or -1 to leave the voice's default
     var trailingPauseMs = 0  // silence after the speech (an SSML <break> at the end)
 
     /// `rules` (Apple's text rules for the voice's language) are applied to
     /// the text itself, never to the prosody markup around it.
-    static func from(ssml: String, rules: PronunciationRules? = nil) -> SpeechJob {
+    /// `exactPitch`: pitch changes go to the engine as percents (ESC\pitchpct=N\),
+    /// for MacinTalk, which goes far beyond Vocalizer's 0.56-1.58 range.
+    static func from(ssml: String, rules: PronunciationRules? = nil, exactPitch: Bool = false) -> SpeechJob {
         let parser = SSMLParser()
         parser.rules = rules
+        parser.exactPitch = exactPitch
         let xml = XMLParser(data: Data(ssml.utf8))
         xml.delegate = parser
         if xml.parse() {
@@ -399,6 +447,7 @@ struct SpeechJob {
 private final class SSMLParser: NSObject, XMLParserDelegate {
     var job = SpeechJob()
     var rules: PronunciationRules?
+    var exactPitch = false
     // prosody currently in effect while walking the tree
     private var current = (rate: 100, pitch: 100, volume: -1)
     private var stack: [(rate: Int, pitch: Int, volume: Int)] = []
@@ -427,7 +476,8 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
                 out += rules?.apply(clean) ?? clean
             case .pause(let ms): out += " \u{1b}\\pause=\(ms)\\ "
             case .sentenceEnd: out += " \u{1b}\\eos=1\\ "
-            case .pitch(let p): out += "\u{1b}\\pitch=\(vxs_engine_pitch(Int32(p)))\\"
+            case .pitch(let p):
+                out += exactPitch ? "\u{1b}\\pitchpct=\(p)\\" : "\u{1b}\\pitch=\(vxs_engine_pitch(Int32(min(p, 1000))))\\"
             }
         }
         job.text = out.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -459,7 +509,7 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
             stack.append(current)
             if let r = attributes["rate"] { current.rate = Self.scale(r, base: current.rate, keywords: [
                 "x-slow": 50, "slow": 75, "medium": 100, "default": 100, "fast": 150, "x-fast": 200]) }
-            if let p = attributes["pitch"] { current.pitch = Self.pitchScale(p, base: current.pitch) }
+            if let p = attributes["pitch"] { current.pitch = Self.pitchScale(p, base: current.pitch, linear: exactPitch) }
             if let v = attributes["volume"], !v.hasSuffix("dB") {
                 current.volume = Self.scale(v, base: current.volume < 0 ? 80 : current.volume, keywords: [
                     "silent": 0, "x-soft": 20, "soft": 40, "medium": 60, "default": 80, "loud": 90, "x-loud": 100])
@@ -503,20 +553,29 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
     /// sound with Apple's own voices: VoiceOver on macOS sends -40% / -100% /
     /// +50% (iOS sends -15%), and a linear factor made -40% sound far too low.
     /// "+12%" / "-40%" -> base * 2^(n/100), clamped to the engine's range.
-    static func pitchScale(_ raw: String, base: Int) -> Int {
+    /// `linear`: "+N%" as a plain multiple (MacinTalk); otherwise as a power
+    /// of two, as Vocalizer voices have always taken VoiceOver's changes.
+    static func pitchScale(_ raw: String, base: Int, linear: Bool = false) -> Int {
         let s = raw.trimmingCharacters(in: .whitespaces).lowercased()
         let keywords = ["x-low": 60, "low": 80, "medium": 100, "default": 100, "high": 120, "x-high": 140]
         if let k = keywords[s] { return k }
         var factor = 1.0
+        // macOS sends [[pbas P]] (say) as a plain multiple,
+        // +(2^((P - 51.18) / 12) - 1) * 100%, so pbas 127 is +7883%. Read as a
+        // power of two it overflowed past +102400% (pbas 171) and fell back to
+        // the normal pitch; the power of two is capped now.
         if s.hasSuffix("%"), let n = Double(s.dropLast()) {
-            factor = (s.hasPrefix("+") || s.hasPrefix("-")) ? pow(2, n / 100) : n / 100
+            if s.hasPrefix("+") || s.hasPrefix("-") { factor = linear ? 1 + n / 100 : pow(2, min(n, 1000) / 100) }
+            else { factor = n / 100 }
         } else if s.hasSuffix("st"), let n = Double(s.dropLast(2)) {
-            factor = pow(2, n / 12)  // semitones
+            factor = pow(2, min(max(n, -48), 96) / 12)  // semitones
         } else if let n = Double(s) {
             factor = n
         }
         guard factor.isFinite else { return base }
-        return Int((Double(base) * min(max(factor, 0.56), 1.58)).rounded())
+        // Vocalizer's own range (0.56-1.58) is applied where its escape is
+        // written; MacinTalk takes far more (clamped at pbas 127 in the engine).
+        return Int((Double(base) * min(max(factor, 0.25), 10000)).rounded())
     }
 
     /// "150%", "+20%", "-10%", "1.5", or a keyword -> percent.
@@ -548,8 +607,12 @@ final class VoiceEngine {
 
     /// `fallbackKey`: the compact voice that speaks the parts whose pitch
     /// isn't normal (VoiceCatalog.compactCounterpart), or nil.
-    func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil) {
+    func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil, resetCommands: Bool = true,
+               twentyFourHour: Bool = true, modernRate: Bool = true) {
         guard let stream else { return }
+        vxs_set_mt_reset(stream, resetCommands ? 1 : 0)
+        vxs_set_mt_24_hour(stream, twentyFourHour ? 1 : 0)
+        vxs_set_mt_modern_rate(stream, modernRate ? 1 : 0)
         vxs_start_with_fallback(stream, voiceKey, fallbackKey, job.text, Int32(job.rate), Int32(job.pitch),
                                 Int32(job.volume), Int32(job.trailingPauseMs))
     }

@@ -16,6 +16,10 @@ MtEngine *mte_open(const char *root, char *err, size_t errlen) {
     return NULL;
 }
 void mte_set_extra_voices(MtEngine *e, const char *dir) { (void)e; (void)dir; }
+void mte_set_reset_commands(MtEngine *e, int on) { (void)e; (void)on; }
+void mte_set_24_hour(MtEngine *e, int on) { (void)e; (void)on; }
+void mte_set_modern_rate(MtEngine *e, int on) { (void)e; (void)on; }
+int mte_prepare(MtEngine *e, const char *voice) { (void)e; (void)voice; return -1; }
 void mte_close(MtEngine *e) { (void)e; }
 int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pitch, int volume,
               MtPcmCallback cb, void *ctx) {

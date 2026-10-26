@@ -33,6 +33,21 @@ struct ClassicVoicesApp: App {
             if !imported.isEmpty { print("IMPORTED \(imported)"); fflush(stdout) }
         }
         if CommandLine.arguments.contains("-benchmark") { Benchmark.run() }
+        if let i = CommandLine.arguments.firstIndex(of: "-latbench"), i + 1 < CommandLine.arguments.count {
+            // `-latbench mt105/Alex,ios6/en-US`: first-sound times through the stream (vxs_latency_bench)
+            let keys = CommandLine.arguments[i + 1].split(separator: ",").map(String.init)
+            Thread.detachNewThread {
+                guard let root = VoiceCatalog.root else { print("LAT no resources"); exit(1) }
+                var cs = keys.map { strdup($0) }
+                cs.withUnsafeMutableBufferPointer { b in
+                    b.baseAddress!.withMemoryRebound(to: UnsafePointer<CChar>?.self, capacity: b.count) {
+                        vxs_latency_bench(root.path, VoiceCatalog.enhancedRoot?.path, $0, Int32(keys.count))
+                    }
+                }
+                cs.forEach { free($0) }
+                print("LAT done"); fflush(stdout); exit(0)
+            }
+        }
         if CommandLine.arguments.contains("-diagnose") { Diagnose.run() }
         if CommandLine.arguments.contains("-latency") { LatencyTest.run() }
         if let i = CommandLine.arguments.firstIndex(of: "-rules"), i + 2 < CommandLine.arguments.count {
@@ -348,6 +363,8 @@ enum Benchmark {
                 ("mt105/Fred", long, 100),
                 ("mt105/Vicki", long, 100),
                 ("mt105/Alex", long, 100),
+                ("mt105/Alex", "Settings. Button.", 100),
+                ("mt105/Alex", "Back.", 100),
                 ("mt105/Bells", "Hello there.", 100),
                 ("mt106/Fred", long, 100),
                 ("mt104/Fred", long, 100),
@@ -356,6 +373,8 @@ enum Benchmark {
                 ("mt107/Fred", long, 100),
                 ("mt107/Victoria", long, 100),
                 ("mt107/Alex", long, 100),
+                ("mt107/Alex", "Settings. Button.", 100),
+                ("ios6/en-US", "Back.", 100),
             ].filter { c in
                 // `-bench-only mt107` limits the run to keys with that prefix
                 guard let i = CommandLine.arguments.firstIndex(of: "-bench-only"), i + 1 < CommandLine.arguments.count else { return true }
@@ -413,7 +432,7 @@ final class DirectPlayer: ObservableObject {
         engine.connect(node, to: engine.mainMixerNode, format: format)
     }
 
-    func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil) {
+    func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil, settings: SpeechSettings = SpeechSettings()) {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -422,7 +441,8 @@ final class DirectPlayer: ObservableObject {
         var job = SpeechJob()
         job.text = rules?.apply(text) ?? text
         job.rate = rate
-        VoiceEngine.shared.speak(job, voiceKey: voiceKey)
+        VoiceEngine.shared.speak(job, voiceKey: voiceKey, resetCommands: settings.resetCommands,
+                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate)
         stats = "Speaking…"
         DispatchQueue.global().async { [weak self] in
             guard let stream = VoiceEngine.shared.stream else { return }

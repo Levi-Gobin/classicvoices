@@ -33,6 +33,20 @@ targetTemplates:
       - path: ../build/gen5
       - path: ../build/gen7
       - path: ../build/gen10
+      # recompiled MacinTalk (tools/build_mt_native.sh); only the generations
+      # whose engines the build had
+      - path: ../build/mtgen104
+        optional: true
+        compilerFlags: ["-O2", "-w"]
+      - path: ../build/mtgen105
+        optional: true
+        compilerFlags: ["-O2", "-w"]
+      - path: ../build/mtgen106
+        optional: true
+        compilerFlags: ["-O2", "-w"]
+      - path: ../build/mtgen107
+        optional: true
+        compilerFlags: ["-O2", "-w"]
       - path: ../core/x86
         includes: ["x86.c"]
       - path: ../core/mt
@@ -41,6 +55,9 @@ targetTemplates:
         includes: ["aac_decoder.cpp"]
     settings:
       base:
+        # No C debug info: for this much generated code it takes gigabytes of
+        # memory per file
+        GCC_GENERATE_DEBUGGING_SYMBOLS: NO
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "2"
   App:

@@ -24,6 +24,15 @@ void vx_close(Vx *vx);
 int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb, void *ctx);
 int vx_speak_utf8(Vx *vx, const char *text, VxPcmCallback cb, void *ctx);
 
+// Sentence and word positions as the engine reports them, before the audio
+// they belong to: the place in the text (UTF-16 units of what vx_speak_* was
+// given) and the sample, counted from the start of that call, where it begins.
+// iOS 3 and 4 report no word at the start of a sentence, only the sentence.
+// Stays set until changed; NULL turns it off.
+enum { VX_MARK_SENTENCE = 1, VX_MARK_WORD = 2 };
+typedef void (*VxWordCallback)(void *ctx, uint32_t kind, uint32_t text_pos, uint32_t text_len, uint32_t sample);
+void vx_set_word_callback(Vx *vx, VxWordCallback cb, void *ctx);
+
 // Set a numeric VE_PARAM (e.g. rate/volume/pitch) on the open instance.
 int vx_set_param(Vx *vx, uint32_t id, uint32_t value);
 

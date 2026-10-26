@@ -1,6 +1,8 @@
 EXPORTS
     cv_abi_version
     cv_read_s16
+    cv_rules_text
+    cv_free
     cv_set_native_dir
     cv_native_status
     vxs_create

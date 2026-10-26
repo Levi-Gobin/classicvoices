@@ -114,6 +114,7 @@ typedef struct { uint32_t proc, udata, slice, frames, utt, epoch; } Pending;
 static Pending g_q[PQ];
 static int g_qh, g_qt, g_qn, g_busy;
 static int g_pacer_started;
+static int g_flushing;  // AudioUnitReset is waiting: hand out queued slices without playing them
 static MtThread *g_pacer_thread;
 static pthread_t g_pacer_tid;
 
@@ -133,19 +134,26 @@ static void *pacer_main(void *arg) {
         g_qh = (g_qh + 1) % PQ;
         g_qn--;
         g_busy = 1;
-        pthread_mutex_unlock(&g_mu);
-
-        double s = job.frames / g_rate / mt_speed();
-        if (s >= 1e-6) usleep((useconds_t)(s * 1e6));
-        else sched_yield();
-
-        pthread_mutex_lock(&g_mu);
+        // A slice of an earlier utterance (one that was stopped) is only
+        // completed, not played: the new utterance mustn't wait behind it.
+        int skip = g_flushing || job.utt != g_utt;
+        // The slice's samples go to the host as it starts playing, not once
+        // it has played: the engine sees the same timing, and the first
+        // sound is out a slice sooner.
         if (job.utt == g_utt) {
             uint32_t before = g_pcm_n;
             collect(m, job.slice, job.epoch);
             if (!g_first_t)  // first audible sample
                 for (uint32_t i = before; i < g_pcm_n; i++) if (fabsf(g_pcm[i]) > 1e-3f) { g_first_t = now_s() - g_begin_t; break; }
         }
+        pthread_mutex_unlock(&g_mu);
+
+        double s = job.frames / g_rate / mt_speed();
+        if (skip) {}
+        else if (s >= 1e-6) usleep((useconds_t)(s * 1e6));
+        else sched_yield();
+
+        pthread_mutex_lock(&g_mu);
         g_slices++;
         pthread_mutex_unlock(&g_mu);
 
@@ -175,10 +183,8 @@ static void schedule_slice(Mt *m, X86 *c, uint32_t slice) {
         g_pacer_started = 1;
         g_pacer_thread = mt_thread_new(m);
         if (!g_pacer_thread) { g_pacer_started = 0; x86_fault(c, "too many engine threads"); }
-        pthread_t th;
         __sync_fetch_and_add(&m->live, 1);
-        pthread_create(&th, NULL, pacer_main, m);
-        pthread_detach(th);
+        mt_thread_start(pacer_main, m);
     }
     Pending p = {rd32(c, slice + SL_PROC), rd32(c, slice + SL_UDATA), slice, rd32(c, slice + SL_FRAMES), 0, 0};
     pthread_mutex_lock(&g_mu);
@@ -357,10 +363,14 @@ static void h_AudioUnitGetPropertyInfo(Mt *m, X86 *c) {
 // counts as queued. The pacer must not complete those too, or the count goes
 // negative and the retire loop runs off the end of memory: deliver them all
 // first, so the engine finds none left.
+// A reset discards what is queued, as on a Mac: the queued slices complete
+// at once instead of being played out at the pacer's speed first (MacinTalk
+// resets when it is stopped, so this is what a stop waits for).
 static void h_AudioUnitReset(Mt *m, X86 *c) {
     if (g_pacer_started && !pthread_equal(pthread_self(), g_pacer_tid)) {
         double until = now_s() + 3.0;
         pthread_mutex_lock(&g_mu);
+        g_flushing++;
         while ((g_qn || g_busy) && !m->dying && now_s() < until) {
             struct timespec ts;
             clock_gettime(CLOCK_REALTIME, &ts);
@@ -368,6 +378,7 @@ static void h_AudioUnitReset(Mt *m, X86 *c) {
             if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
             pthread_cond_timedwait(&g_cv, &g_mu, &ts);
         }
+        g_flushing--;
         pthread_mutex_unlock(&g_mu);
     }
     R(c, 0);
@@ -382,7 +393,7 @@ void mt_audio_wake(void) { pthread_mutex_lock(&g_mu); pthread_cond_broadcast(&g_
 void mt_audio_reset(void) {
     g_pacer_started = 0;
     g_pacer_thread = NULL;
-    g_qh = g_qt = g_qn = g_busy = 0;
+    g_qh = g_qt = g_qn = g_busy = g_flushing = 0;
     g_graph = 0;
     memset(g_units, 0, sizeof g_units);
     g_nnodes = 0;

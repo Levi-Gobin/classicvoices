@@ -12,6 +12,7 @@ from . import lib
 
 OUT_RATE = 22050
 CHUNK_FRAMES = 2205  # 100 ms
+HOLD_BYTES = 2 * 220  # the last 10 ms, kept back to carry the index callback
 
 
 class Utterance:
@@ -76,9 +77,10 @@ class Speaker:
             return gen == self._gen
 
     def _speak_segment(self, gen, utt, text):
-        """Synthesize one segment, feeding PCM as it arrives. The last chunk is
-        held back so the caller can attach an index callback to it. Returns the
-        pending final chunk (possibly b"")."""
+        """Synthesize one segment, feeding PCM as it arrives. The last 10 ms
+        are held back so the caller can attach an index callback to them
+        (holding back a whole chunk delayed the first sound until the next
+        one came). Returns the pending tail (possibly b"")."""
         buf = (ctypes.c_int16 * CHUNK_FRAMES)()
         done = ctypes.c_int(0)
         self._lib.vxs_start(self._s, utt.voice_key.encode("utf-8"), text.encode("utf-8"),
@@ -87,13 +89,14 @@ class Speaker:
         while self._current(gen):
             n = self._lib.cv_read_s16(self._s, buf, CHUNK_FRAMES, ctypes.byref(done))
             if n:
-                if pending:
-                    self._feed(pending)
-                pending = ctypes.string_at(buf, n * 2)
+                pending += ctypes.string_at(buf, n * 2)
+                if len(pending) > HOLD_BYTES:
+                    self._feed(pending[:-HOLD_BYTES])
+                    pending = pending[-HOLD_BYTES:]
             if done.value:
                 return pending
             if not n:
-                time.sleep(0.004)
+                time.sleep(0.001)
         return b""
 
     def _run(self):

@@ -4,7 +4,7 @@ from firmware YOU supply. The output is derived from Apple's code and must
 never be published; it belongs on your machine (or in your own private CI).
 
   python nvda/build_native.py [--source DIR] [--out DIR] [--builds ios6 ...]
-                              [--bits 64 32] [--dis-dir DIR]
+                              [--bits 64 32]
 
 source  where the engines are (default: the NVDA data folder,
         %%APPDATA%%/nvda/classicvoices/Voices, i.e. whatever you imported with
@@ -20,9 +20,8 @@ translation cannot drift from the interpreter. MSVC (found via vswhere) is
 preferred: it optimizes these huge generated functions in seconds where GCC
 takes hours. clang-cl / clang / gcc are fallbacks.
 
-iOS 3/4/5 engines are stripped, so recomp.py needs an llvm-objdump
-disassembly for function boundaries: it is generated automatically when
-llvm-objdump is on PATH, or supply prebuilt <build>.dis files via --dis-dir.
+iOS 3/4/5 engines are stripped: recomp.py takes their function boundaries
+from the engine's own BL targets (--scan-bl).
 """
 import argparse
 import os
@@ -56,25 +55,6 @@ def find_voiced(source, build):
         if os.path.isfile(p):
             return p
     return None
-
-
-def make_dis(voiced, build, dis_dir):
-    """A disassembly for a stripped engine: prebuilt from --dis-dir, else
-    llvm-objdump."""
-    out = os.path.join(WORK, build + ".dis")
-    if dis_dir:
-        pre = os.path.join(dis_dir, build + ".dis")
-        if os.path.isfile(pre):
-            return pre
-    if os.path.isfile(out) and os.path.getmtime(out) > os.path.getmtime(voiced):
-        return out
-    objdump = shutil.which("llvm-objdump")
-    if not objdump:
-        return None
-    with open(out, "w") as fh:
-        subprocess.check_call([objdump, "-d", "--triple=thumbv7-apple-ios",
-                               "--no-show-raw-insn", voiced], stdout=fh)
-    return out
 
 
 # ---------------------------------------------------------------- compilers
@@ -207,7 +187,6 @@ def main():
     ap.add_argument("--out", default=os.path.join(default_data_dir(), "Native"))
     ap.add_argument("--builds", nargs="+", default=list(BUILDS))
     ap.add_argument("--bits", nargs="+", type=int, default=[64, 32], choices=[32, 64])
-    ap.add_argument("--dis-dir", help="prebuilt <build>.dis disassemblies for ios3/4/5")
     a = ap.parse_args()
     os.makedirs(WORK, exist_ok=True)
     os.makedirs(a.out, exist_ok=True)
@@ -217,12 +196,6 @@ def main():
         if not voiced:
             skipped.append((build, "no engine under %s" % a.source))
             continue
-        dis = None
-        if build in STRIPPED:
-            dis = make_dis(voiced, build, a.dis_dir)
-            if not dis:
-                skipped.append((build, "stripped engine needs llvm-objdump or --dis-dir"))
-                continue
         gen_dir = os.path.join(WORK, "gen_" + build)
         stamp = os.path.join(gen_dir, ".src")
         if not (os.path.isdir(gen_dir)
@@ -232,8 +205,8 @@ def main():
             cmd = [sys.executable, "-I", os.path.join(ROOT, "tools", "recomp.py"),
                    voiced, os.path.join(ROOT, "tools", "profiles", build + ".txt"),
                    gen_dir, "--prefix", build]
-            if dis:
-                cmd += ["--dis", dis]
+            if build in STRIPPED:  # function boundaries from its BL targets
+                cmd.append("--scan-bl")
             print("recompiling", build)
             subprocess.check_call(cmd)
             with open(stamp, "w") as fh:

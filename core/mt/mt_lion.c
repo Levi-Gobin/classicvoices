@@ -9,6 +9,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
@@ -91,11 +92,32 @@ static const uint16_t kMacRoman[128] = {
     0x2021, 0x00B7, 0x201A, 0x201E, 0x2030, 0x00C2, 0x00CA, 0x00C1, 0x00CB, 0x00C8, 0x00CD, 0x00CE, 0x00CF, 0x00CC, 0x00D3, 0x00D4,
     0xF8FF, 0x00D2, 0x00DA, 0x00DB, 0x00D9, 0x0131, 0x02C6, 0x02DC, 0x00AF, 0x02D8, 0x02D9, 0x02DA, 0x00B8, 0x02DD, 0x02DB, 0x02C7,
 };
-static uint16_t uni(uint8_t b) { return b < 0x80 ? b : kMacRoman[b - 0x80]; }
+// Characters MacRoman lacks get a spare control byte each (mtengine turns
+// control characters in the text into spaces, so these are ours), which reads
+// back as the same character. Lion names every sung ([[inpt TUNE]]) word U+266B
+// (beamed eighth notes); made "?" instead, Alex looked "?" up among his
+// recorded words and sang the word "question".
+static const uint8_t kSpare[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x0B, 0x0C, 0x0E, 0x0F, 0x10, 0x11,
+                                 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1C, 0x1D, 0x1E, 0x1F};
+#define NSPARE (sizeof kSpare / sizeof *kSpare)
+static uint16_t g_spare_cp[NSPARE];
+static int g_nspare;
+static pthread_mutex_t g_spare_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint16_t uni(uint8_t b) {
+    if (b >= 0x80) return kMacRoman[b - 0x80];
+    for (int i = 0; i < g_nspare; i++) if (kSpare[i] == b) return g_spare_cp[i];
+    return b;
+}
 static uint8_t from_uni(uint32_t u) {
     if (u < 0x80) return (uint8_t)u;
     for (int i = 0; i < 128; i++) if (kMacRoman[i] == u) return (uint8_t)(0x80 + i);
-    return '?';
+    uint8_t r = '?';
+    pthread_mutex_lock(&g_spare_mu);
+    for (int i = 0; i < g_nspare; i++) if (g_spare_cp[i] == u) { r = kSpare[i]; goto out; }
+    if (u <= 0xFFFF && g_nspare < (int)NSPARE) { g_spare_cp[g_nspare] = (uint16_t)u; r = kSpare[g_nspare++]; }
+out:
+    pthread_mutex_unlock(&g_spare_mu);
+    return r;
 }
 static uint32_t s_ptr(Mt *m, uint32_t s) { uint32_t v; memcpy(&v, G(m, s + 8), 4); return v; }
 static uint32_t s_len(Mt *m, uint32_t s) { uint32_t v; memcpy(&v, G(m, s + 12), 4); return v; }

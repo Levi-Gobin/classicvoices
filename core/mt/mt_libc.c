@@ -445,8 +445,59 @@ static void h_fstat(Mt *m, X86 *c) {
     R(c, 0);
 }
 
-// mmap: files are mapped read-only into the guest's mapping region
+// mmap: files are mapped read-only into the guest's mapping region. Address
+// space given back by munmap is reused: every voice change maps the voice's
+// files, and Alex alone takes hundreds of megabytes.
 static pthread_mutex_t g_map_mu = PTHREAD_MUTEX_INITIALIZER;
+#define MAX_FREE_MAPS 256
+static struct { uint32_t a, len; } g_free_maps[MAX_FREE_MAPS];  // sorted by address, never adjacent
+static int g_nfree_maps;
+
+// with g_map_mu held: the start of `span` free bytes, or 0
+static uint32_t map_take_free(uint32_t span) {
+    for (int i = 0; i < g_nfree_maps; i++) {
+        if (g_free_maps[i].len < span) continue;
+        uint32_t a = g_free_maps[i].a;
+        g_free_maps[i].a += span;
+        g_free_maps[i].len -= span;
+        if (!g_free_maps[i].len) {
+            memmove(&g_free_maps[i], &g_free_maps[i + 1], (size_t)(g_nfree_maps - i - 1) * sizeof g_free_maps[0]);
+            g_nfree_maps--;
+        }
+        return a;
+    }
+    return 0;
+}
+
+// with g_map_mu held
+static void map_give_back(Mt *m, uint32_t a, uint32_t len) {
+    if (a + len == m->map_next) {  // the end of what was handed out: just move back
+        m->map_next = a;
+        while (g_nfree_maps && g_free_maps[g_nfree_maps - 1].a + g_free_maps[g_nfree_maps - 1].len == m->map_next)
+            m->map_next = g_free_maps[--g_nfree_maps].a;
+        return;
+    }
+    int i = 0;
+    while (i < g_nfree_maps && g_free_maps[i].a < a) i++;
+    if (i > 0 && g_free_maps[i - 1].a + g_free_maps[i - 1].len >= a) {  // joins (or overlaps) the one before
+        uint32_t end = a + len > g_free_maps[i - 1].a + g_free_maps[i - 1].len ? a + len : g_free_maps[i - 1].a + g_free_maps[i - 1].len;
+        g_free_maps[i - 1].len = end - g_free_maps[i - 1].a;
+        i--;
+    } else {
+        if (g_nfree_maps == MAX_FREE_MAPS) return;  // too fragmented to remember: leak it
+        memmove(&g_free_maps[i + 1], &g_free_maps[i], (size_t)(g_nfree_maps - i) * sizeof g_free_maps[0]);
+        g_free_maps[i].a = a;
+        g_free_maps[i].len = len;
+        g_nfree_maps++;
+    }
+    while (i + 1 < g_nfree_maps && g_free_maps[i].a + g_free_maps[i].len >= g_free_maps[i + 1].a) {  // joins the one after
+        uint32_t end = g_free_maps[i + 1].a + g_free_maps[i + 1].len;
+        if (end > g_free_maps[i].a + g_free_maps[i].len) g_free_maps[i].len = end - g_free_maps[i].a;
+        memmove(&g_free_maps[i + 1], &g_free_maps[i + 2], (size_t)(g_nfree_maps - i - 2) * sizeof g_free_maps[0]);
+        g_nfree_maps--;
+    }
+}
+
 static void h_mmap(Mt *m, X86 *c) {
     uint32_t len = A(c, 1), flags = A(c, 3);
     int fd = (int)A(c, 4);
@@ -454,9 +505,12 @@ static void h_mmap(Mt *m, X86 *c) {
     size_t page = (size_t)getpagesize();
     size_t span = ((size_t)len + page - 1) & ~(page - 1);
     pthread_mutex_lock(&g_map_mu);
-    uint32_t a = (m->map_next + (uint32_t)page - 1) & ~((uint32_t)page - 1);
-    if ((uint64_t)a + span > m->map_hi) { pthread_mutex_unlock(&g_map_mu); set_errno(m, c, ENOMEM); R(c, ~0u); return; }
-    m->map_next = a + (uint32_t)span;
+    uint32_t a = span <= 0xFFFFFFFFu ? map_take_free((uint32_t)span) : 0;
+    if (!a) {
+        a = (m->map_next + (uint32_t)page - 1) & ~((uint32_t)page - 1);
+        if ((uint64_t)a + span > m->map_hi) { pthread_mutex_unlock(&g_map_mu); set_errno(m, c, ENOMEM); R(c, ~0u); return; }
+        m->map_next = a + (uint32_t)span;
+    }
     pthread_mutex_unlock(&g_map_mu);
     if (!(flags & 0x1000) && fd >= 0) {  // not MAP_ANON
         void *p = mmap(G(m, a), span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, (off_t)off);
@@ -474,8 +528,12 @@ static void h_munmap(Mt *m, X86 *c) {
     uint32_t a = A(c, 0), len = A(c, 1);
     size_t page = (size_t)getpagesize();
     size_t span = ((size_t)len + page - 1) & ~(page - 1);
-    if (a >= m->map_lo && a + span <= m->map_hi)
+    if (a >= m->map_lo && a + span <= m->map_next && !(a & (page - 1))) {
         mmap(G(m, a), span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0);  // drop the file pages
+        pthread_mutex_lock(&g_map_mu);
+        map_give_back(m, a, (uint32_t)span);
+        pthread_mutex_unlock(&g_map_mu);
+    }
     R(c, 0);
 }
 static void h_zero(Mt *m, X86 *c) { (void)m; R(c, 0); }
@@ -557,6 +615,9 @@ static void h_random(Mt *m, X86 *c) { (void)m; R(c, rand_next()); }
 // ---------------------------------------------------------------- process / misc
 
 static void h_abort(Mt *m, X86 *c) { (void)m; x86_fault(c, "guest called abort()"); }
+// The engine's own stack check caught it overrunning a buffer (some unusual
+// input does this to Snow Leopard's Alex); on a Mac the process would end.
+static void h_stack_chk_fail(Mt *m, X86 *c) { (void)m; x86_fault(c, "MacinTalk overran a buffer (its stack check fired)"); }
 static void h_exit(Mt *m, X86 *c) { (void)m; x86_fault(c, "guest called exit(%d)", (int)A(c, 0)); }
 static void h_assert_rtn(Mt *m, X86 *c) {
     x86_fault(c, "guest assertion failed: %s:%d %s (%s)", mt_str(m, A(c, 1)) ? mt_str(m, A(c, 1)) : "?", (int)A(c, 2),
@@ -672,11 +733,13 @@ static void h_once(Mt *m, X86 *c) {
     R(c, 0);
 }
 static void h_pthread_self(Mt *m, X86 *c) { R(c, mt_tls(m, c)->self); }
+// Keys are per engine: counting across engines ran Snow Leopard (a key per
+// open) out after 63 restarts in one process.
+static uint32_t g_next_key = 1;
 static void h_key_create(Mt *m, X86 *c) {
-    static uint32_t next = 1;
     static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&mu);
-    uint32_t k = next++;
+    uint32_t k = g_next_key++;
     pthread_mutex_unlock(&mu);
     if (k >= MT_TLS_KEYS) x86_fault(c, "too many pthread keys");
     wr32(c, A(c, 0), k);
@@ -704,6 +767,8 @@ void mt_libc_reset(void) {
     memset(g_mtab.owner, 0, sizeof g_mtab.owner);
     memset(g_ctab.owner, 0, sizeof g_ctab.owner);
     g_locale_name = 0;
+    g_nfree_maps = 0;
+    g_next_key = 1;
     for (int i = 3; i < MAX_FILES; i++) if (g_files[i]) { fclose(g_files[i]); g_files[i] = NULL; }
 }
 
@@ -734,7 +799,7 @@ const MtHleEntry mt_hle_libc[] = {
     {"_powf", h_powf}, {"_lrintf", h_lrintf},
     {"___divdi3", h_divdi3}, {"___udivdi3", h_udivdi3}, {"___umoddi3", h_umoddi3},
     {"_srandom", h_srandom}, {"_random", h_random},
-    {"_abort", h_abort}, {"_exit", h_exit}, {"___assert_rtn", h_assert_rtn}, {"_getenv", h_getenv},
+    {"_abort", h_abort}, {"___stack_chk_fail", h_stack_chk_fail}, {"_exit", h_exit}, {"___assert_rtn", h_assert_rtn}, {"_getenv", h_getenv},
     {"_usleep", h_usleep}, {"___error", h_error}, {"___cxa_atexit", h_cxa_atexit}, {"_setlocale", h_setlocale},
     {"_pthread_mutex_init", h_mutex_init}, {"_pthread_mutex_lock", h_mutex_lock}, {"_pthread_mutex_unlock", h_mutex_unlock},
     {"_pthread_mutex_destroy", h_mutex_destroy}, {"_pthread_mutexattr_init", h_zero}, {"_pthread_mutexattr_destroy", h_zero},

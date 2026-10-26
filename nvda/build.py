@@ -31,10 +31,15 @@ OUT = os.path.join(ROOT, "build", "nvda")
 
 CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c")]
 SHIM = [os.path.join(SRC, f) for f in ("vx_win.c", "mt_stub.c", "cvnvda.c", "vx_native_load.c")]
+# Apple's pronunciation rules, with PCRE2 built in (tools/pcre2_build.py fetches it)
+HOST = [os.path.join(ROOT, "ports", "host", f) for f in ("cv_catalog.c", "cv_rules.c")]
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import pcre2_build  # noqa: E402
 
 CFLAGS = [
     "-O2", "-std=gnu11", "-ffp-contract=off", "-fvisibility=hidden",
     "-I" + os.path.join(ROOT, "core"), "-I" + SRC, "-I" + os.path.join(SRC, "compat"),
+    "-I" + os.path.join(ROOT, "ports", "host"),
     "-D_WIN32_WINNT=0x0601", "-DVX_DYNAMIC_NATIVE",
 ]
 # Force the POSIX->Windows redirections into the unmodified core sources only.
@@ -61,9 +66,12 @@ def build_dll(cc, bits, defines):
     os.makedirs(OUT, exist_ok=True)
     dll = os.path.join(OUT, "cvengine%d.dll" % bits)
     # core objects (with the force-include), then shims (without it)
-    objs = []
-    for src in CORE + SHIM:
+    objs = pcre2_build.objects(cc, os.path.join(OUT, "pcre2"), str(bits))
+    pcre = ["-DCV_PCRE2_STATIC", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-I" + pcre2_build.include_dir()]
+    for src in CORE + SHIM + HOST:
         extra = [] if src.endswith("vx_win.c") else CORE_EXTRA
+        if src.endswith(("cv_rules.c", "cvnvda.c")):
+            extra = extra + pcre
         obj = os.path.join(OUT, "%d_%s.o" % (bits, os.path.splitext(os.path.basename(src))[0]))
         run([cc] + CFLAGS + defines + extra + ["-c", src, "-o", obj])
         objs.append(obj)
@@ -106,7 +114,7 @@ def package():
             for f in files:
                 # DLLs are added from the build output below, even if a test
                 # left copies in the addon tree
-                if f.endswith((".pyc", ".pyo", ".dll")):
+                if f.endswith((".pyc", ".pyo", ".dll")) or f.startswith("."):  # .DS_Store
                     continue
                 p = os.path.join(base, f)
                 rel = os.path.relpath(p, addon_dir)

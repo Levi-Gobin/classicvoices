@@ -12,18 +12,27 @@ MacinTalk (Fred, Victoria, Alex …) comes from
 
 ## Getting voices
 
-Nothing of Apple's ships in the app. In the app:
+Nothing of Apple's ships in the app. The app is laid out like the iPhone,
+Mac, Windows and Linux apps: an **iOS** tab, a **macOS** tab and
+**Settings**. A tab goes from a version and a language down to each voice,
+one page at a time under a Back button (Android's back works too). Every row
+says what pressing it does first ("Download Samantha (enhanced), 123.2 MB");
+a download shows a progress bar under its Stop button that moves by 1%, and
+TalkBack reads it its own way.
 
-1. **Voices from iPhone firmware**: tap a firmware to import it. Only its
-   root filesystem is downloaded from Apple, inflated into a temporary file,
-   and the engine and voices copied out (a few dozen MB stay on the phone).
-   Use Wi-Fi: the sizes shown are what is downloaded. iOS 6 first.
-   You can also pick an IPSW already on the phone.
+1. **Get the firmware** (on a tab's first page): tap a firmware to stream
+   just its root filesystem from Apple; the engine and voices are copied out
+   (a few dozen MB stay on the phone). Use Wi-Fi. You can also import an
+   IPSW already on the phone. Each version says which firmware it needs:
+   Lion's voices need iOS 5 and 6, for example.
 2. **Download voices**: the enhanced iOS 5 and 6 voices and the Mac OS X
-   voices, from Apple's servers, once their engine is imported.
-3. **Voices and defaults**: pick each language's voice and hear it.
+   voices appear in their languages once their engine is imported; tap one
+   to download it, tap again to stop.
+3. **A voice's page**: hear it with your own text and speed, choose whether
+   TalkBack and other apps see it ("Use as a system voice"), make it the
+   voice for its language, or remove it.
 4. Set Classic Voices as the preferred engine in Android's text-to-speech
-   settings (the app's first button opens them).
+   settings (Settings tab, **Open text-to-speech settings**).
 
 Imports run in the background with a notification. Everything is kept in
 device-protected storage, so the voices also speak on the lock screen after
@@ -44,7 +53,7 @@ classicvoices-data android-pack --ndk ~/android-ndk-r30
 
 (`classicvoices-data` is the Linux tool, see [../linux/README.md](../linux/README.md);
 it runs on a Mac too), copy `ClassicVoices-android-fast-code.zip` to the
-phone, and import it with **Import a data pack (.zip)**. It is derived from
+phone, and import it with **Speed up the voices**, **Import a data pack (.zip)**. It is derived from
 Apple's code, so it never ships with the app: keep it for your own phone.
 
 ## Building
@@ -67,6 +76,7 @@ adb shell am start -S -n com.levigobin.classicvoices/.MainActivity --es import i
 adb shell am start -S -n com.levigobin.classicvoices/.MainActivity --es download "mac:mac107:Serena"
 adb shell am start -S -n com.levigobin.classicvoices/.MainActivity --es selftest "ios6/en-US,ios6e/en-GB"
 adb logcat -s CVSELFTEST ClassicVoices
+adb logcat -s CVSPEAK          # debuggable builds: every text the engine is asked to speak (TalkBack's wording)
 ```
 
 ## How it works

@@ -159,10 +159,13 @@ static void on_trap(X86 *c, uint32_t addr, void *ctx) {
 }
 
 static uint32_t trap_for(Mt *m, const char *name) {
-    for (int i = 0; i < m->ntraps; i++)
-        if (strcmp(m->trap_name[i], name) == 0) return MT_TRAP_BASE + 16u * (uint32_t)i;
+    const uint32_t mask = 2 * MT_TRAP_SLOTS - 1;
+    uint32_t h = mt_str_hash(name) & mask;
+    for (; m->trap_index[h]; h = (h + 1) & mask)
+        if (strcmp(m->trap_name[m->trap_index[h] - 1], name) == 0) return MT_TRAP_BASE + 16u * (uint32_t)(m->trap_index[h] - 1);
     if (m->ntraps >= (int)MT_TRAP_SLOTS) die(m, "too many imports");
     int i = m->ntraps++;
+    m->trap_index[h] = (uint16_t)(i + 1);
     m->trap_name[i] = strdup(name);
     m->trap_fn[i] = mt_lookup_hle(name);
     if (!m->trap_fn[i]) {
@@ -233,9 +236,28 @@ MtThread *mt_thread_new(Mt *m) {
     t->cpu.r[ESP] = t->stack_top - 16;
     t->cpu.abort = &m->dying;
     t->cpu.div0_as_one = 1;
+    t->cpu.native = m->native;
+    t->cpu.nnative = m->nnative;
+    t->cpu.profile = m->profile;
+    t->cpu.profile_lo = m->profile_lo;
+    t->cpu.profile_hi = m->profile_hi;
     if (!t->errno_addr) t->errno_addr = mt_static(m, 4);
     if (!t->self) t->self = mt_static(m, 64);  // an opaque guest object standing for pthread_t
     return t;
+}
+
+int mt_thread_start(void *(*fn)(void *), void *arg) {
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    pthread_attr_setstacksize(&at, 16 << 20);
+#ifdef __APPLE__
+    pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+    int rc = pthread_create(&th, &at, fn, arg);
+    pthread_attr_destroy(&at);
+    return rc;
 }
 
 // Lock a host mutex for guest code; a thread stuck waiting here faults out
@@ -322,7 +344,7 @@ void mt_destroy(Mt *m) {
     if (m->live > 0) return;
     mt_reset_globals();
     munmap(m->mem, m->mem_size);
-    for (int i = 0; i < m->nimages; i++) free(m->images[i].file);
+    for (int i = 0; i < m->nimages; i++) { free(m->images[i].file); free(m->images[i].exports); }
     for (int i = 0; i < m->ntraps; i++) free((void *)m->trap_name[i]);
     free(m);
 }
@@ -459,15 +481,44 @@ int mt_load(Mt *m, const char *path) {
 
 // ---------------------------------------------------------------- symbols
 
-static uint32_t lookup_in_depth(MtImage *im, const char *name, int depth) {
+static int exportable(const uint8_t *sy) {
+    uint8_t type = sy[4];
+    if (type & N_STAB) return 0;
+    if ((type & N_TYPE) == N_UNDF || (type & N_TYPE) == 0xc) return 0;  // undefined / prebound undefined (N_PBUD)
+    return (type & N_EXT) != 0;
+}
+
+// Hash index of an image's exports by name; the first symbol of a name wins,
+// as in a scan of the table.
+static void index_exports(MtImage *im) {
+    uint32_t cap = 64;
+    while (cap < 2 * im->nsyms) cap *= 2;
+    im->exports = calloc(cap, sizeof *im->exports);
+    im->exports_mask = cap - 1;
     for (uint32_t k = 0; k < im->nsyms; k++) {
         const uint8_t *sy = im->syms + 12 * k;
-        uint8_t type = sy[4];
-        if (type & N_STAB) continue;
-        if ((type & N_TYPE) == N_UNDF || (type & N_TYPE) == 0xc) continue;  // undefined / prebound undefined (N_PBUD)
-        if (!(type & N_EXT)) continue;
-        if (strcmp(im->strs + u32(sy), name)) continue;
-        if ((type & N_TYPE) == N_INDR) {  // an alias: n_value names the target
+        if (!exportable(sy)) continue;
+        const char *nm = im->strs + u32(sy);
+        uint32_t i = mt_str_hash(nm) & im->exports_mask;
+        while (im->exports[i] && strcmp(im->strs + u32(im->syms + 12 * (im->exports[i] - 1)), nm)) i = (i + 1) & im->exports_mask;
+        if (!im->exports[i]) im->exports[i] = k + 1;
+    }
+}
+
+static uint32_t lookup_in_depth(MtImage *im, const char *name, int depth) {
+    if (!im->nsyms) return 0;
+    if (!im->exports) index_exports(im);
+    uint32_t k = 0;
+    for (uint32_t i = mt_str_hash(name) & im->exports_mask;; i = (i + 1) & im->exports_mask) {
+        if (!im->exports[i]) return 0;  // no exported symbol has this name
+        k = im->exports[i] - 1;
+        if (!strcmp(im->strs + u32(im->syms + 12 * k), name)) break;
+    }
+    // From the first symbol of that name on, as a scan of the table would
+    for (; k < im->nsyms; k++) {
+        const uint8_t *sy = im->syms + 12 * k;
+        if (!exportable(sy) || strcmp(im->strs + u32(sy), name)) continue;
+        if ((sy[4] & N_TYPE) == N_INDR) {  // an alias: n_value names the target
             const char *alias = im->strs + u32(sy + 8);
             if (depth > 0 && strcmp(alias, name)) return lookup_in_depth(im, alias, depth - 1);
             continue;

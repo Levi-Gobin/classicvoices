@@ -1,0 +1,10 @@
+#!/bin/sh
+# Classic Voices: get and manage the voices (the app; needs wxPython).
+HERE=$(dirname "$(readlink -f "$0")")
+LIB=$HERE/../lib/classicvoices
+[ -d "$LIB/classicvoices" ] || LIB=$HERE/../desktop  # running from the repository
+if ! python3 -c "import wx" 2>/dev/null; then
+    echo "Classic Voices needs wxPython: sudo apt install python3-wxgtk4.0 (or your distribution's package)" >&2
+    exit 1
+fi
+PYTHONPATH="$LIB${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m classicvoices "$@"

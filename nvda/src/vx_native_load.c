@@ -53,7 +53,11 @@ int vx_try_native_dll(Vx *vx, const char *build) {
         slot->tried = 1;
         snprintf(slot->build, sizeof slot->build, "%s", build);
         wchar_t path[1200];
+#if defined(__aarch64__) || defined(_M_ARM64)
+        _snwprintf(path, 1200, L"%s\\cvnative_%hs_arm64.dll", g_dir, build);  // x64's are _64
+#else
         _snwprintf(path, 1200, L"%s\\cvnative_%hs_%d.dll", g_dir, build, (int)(sizeof(void *) * 8));
+#endif
         HMODULE m = LoadLibraryW(path);  // kept loaded for the process lifetime
         if (m) {
             CvAbi abi = (CvAbi)GetProcAddress(m, "cv_native_abi");

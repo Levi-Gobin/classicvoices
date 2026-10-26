@@ -64,12 +64,10 @@ static pthread_t g_worker;
 //   PronunciationRules 0                  don't apply Apple's text rules ("iOS" -> "I O S" ...)
 //   PitchFallback 0                       let enhanced/premium voices ignore pitch changes
 //   Debug 1                               log to Speech Dispatcher's module log
-int module_config(const char *configfile) {
-    cv_default_paths(&g_paths);
-    const char *e = getenv("CV_DEBUG");
-    g_debug = e && *e && *e != '0';
-    FILE *f = configfile ? fopen(configfile, "r") : NULL;
-    if (!f) return 0;
+// The Classic Voices app writes the last two to <data>/settings.conf, which wins.
+static void read_config(const char *path) {
+    FILE *f = path ? fopen(path, "r") : NULL;
+    if (!f) return;
     char line[1200];
     while (fgets(line, sizeof line, f)) {
         char key[64], val[1100];
@@ -82,6 +80,22 @@ int module_config(const char *configfile) {
         }
     }
     fclose(f);
+}
+
+// The app's settings (<data>/settings.conf) are read at every message, so a
+// change there applies straight away.
+static void read_app_settings(void) {
+    char p[1300];
+    snprintf(p, sizeof p, "%s/settings.conf", g_paths.root);
+    read_config(p);
+}
+
+int module_config(const char *configfile) {
+    cv_default_paths(&g_paths);
+    const char *e = getenv("CV_DEBUG");
+    g_debug = e && *e && *e != '0';
+    read_config(configfile);
+    read_app_settings();
     return 0;
 }
 
@@ -228,6 +242,7 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
         free(plain);
     }
     CvUtterance u;
+    read_app_settings();
     const CvRules *rules = g_rules ? cv_rules_for(g_paths.voices, cv_voice_build(v), v->language) : NULL;
     cv_parse_ssml_rules(ssml ? ssml : text, rate, pitch, volume, rules, &u);
     free(ssml);

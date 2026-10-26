@@ -1,15 +1,38 @@
 // Registry of host implementations (HLE) of the Mac OS APIs MacinTalk imports.
 #include "mt_internal.h"
+#include <pthread.h>
+#include <stdlib.h>
 #include <string.h>
 
 extern const MtHleEntry mt_hle_libc[], mt_hle_mp[], mt_hle_cf[], mt_hle_aac[], mt_hle_audio[], mt_hle_misc[], mt_hle_gcd[], mt_hle_lion[];
 // mt_hle_aac comes before mt_hle_audio, which only has placeholders for the converter
 static const MtHleEntry *const kTables[] = {mt_hle_libc, mt_hle_mp, mt_hle_cf, mt_hle_aac, mt_hle_audio, mt_hle_misc, mt_hle_gcd, mt_hle_lion};
 
-MtHle mt_lookup_hle(const char *name) {
+// All the tables in one hash index; where two define a name, the earlier table wins.
+static const MtHleEntry **g_index;
+static uint32_t g_index_mask;
+static pthread_once_t g_index_once = PTHREAD_ONCE_INIT;
+
+static void build_index(void) {
+    size_t n = 0;
     for (size_t t = 0; t < sizeof kTables / sizeof kTables[0]; t++)
-        for (const MtHleEntry *e = kTables[t]; e->name; e++)
-            if (!strcmp(e->name, name)) return e->fn;
+        for (const MtHleEntry *e = kTables[t]; e->name; e++) n++;
+    uint32_t cap = 64;
+    while (cap < 2 * n) cap *= 2;
+    g_index = calloc(cap, sizeof *g_index);
+    g_index_mask = cap - 1;
+    for (size_t t = 0; t < sizeof kTables / sizeof kTables[0]; t++)
+        for (const MtHleEntry *e = kTables[t]; e->name; e++) {
+            uint32_t i = mt_str_hash(e->name) & g_index_mask;
+            while (g_index[i] && strcmp(g_index[i]->name, e->name)) i = (i + 1) & g_index_mask;
+            if (!g_index[i]) g_index[i] = e;
+        }
+}
+
+MtHle mt_lookup_hle(const char *name) {
+    pthread_once(&g_index_once, build_index);
+    for (uint32_t i = mt_str_hash(name) & g_index_mask; g_index[i]; i = (i + 1) & g_index_mask)
+        if (!strcmp(g_index[i]->name, name)) return g_index[i]->fn;
     return NULL;
 }
 

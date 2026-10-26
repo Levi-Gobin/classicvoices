@@ -1,0 +1,63 @@
+name: Build Windows app, SAPI voices and NVDA add-on
+on:
+  workflow_dispatch:
+  push:
+    paths: ["windows/**", "desktop/**", "nvda/**", "core/**", "ports/host/**", "tools/pcre2_build.py",
+            "tools/recomp.py", ".github/workflows/windows.yml"]
+
+jobs:
+  dlls:
+    # The engine (NVDA add-on) and SAPI DLLs, cross-compiled with MinGW-w64.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MinGW-w64 cross compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+      - name: Engine DLLs and the NVDA add-on
+        run: |
+          python3 nvda/build.py all --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix
+      - name: SAPI 5 engine
+        run: |
+          python3 windows/sapi/build.py --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: classicvoices-nvda-addon
+          path: build/*.nvda-addon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dlls
+          path: |
+            build/nvda/cvengine64.dll
+            build/nvda/cvengine32.dll
+            build/sapi/cvsapi64.dll
+            build/sapi/cvsapi32.dll
+
+  app:
+    # The app (wxPython, frozen with PyInstaller) and its installer (Inno Setup).
+    needs: dlls
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dlls
+          path: build
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - name: Python packages
+        run: python -m pip install wxPython pyinstaller
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") -and
+              -not (Test-Path "C:\Program Files\Inno Setup 7\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build the app and installer
+        run: python desktop/build_windows.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ClassicVoicesSetup
+          path: build/windows/ClassicVoicesSetup.exe

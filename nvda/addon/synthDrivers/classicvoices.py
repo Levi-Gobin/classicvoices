@@ -7,6 +7,7 @@ import addonHandler
 import config
 import nvwave
 from speech.commands import BreakCommand, IndexCommand, PitchCommand
+from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from synthDriverHandler import SynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
 from ._classicvoices import engine as cv_engine
@@ -46,6 +47,8 @@ class SynthDriver(SynthDriver):
         SynthDriver.RateSetting(),
         SynthDriver.PitchSetting(),
         SynthDriver.VolumeSetting(),
+        # Translators: a setting: the regular expressions iOS ran over text before the engine saw it.
+        BooleanDriverSetting("pronunciationRules", _("Apple's pronunciation &rules"), defaultVal=True),
     )
     supportedCommands = {IndexCommand, BreakCommand, PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -70,6 +73,7 @@ class SynthDriver(SynthDriver):
         self._rate = 50
         self._pitch = 50
         self._volume = 80
+        self._rules = True
         self._voice = next(iter(self._voices))
         self._speaker = cv_engine.Speaker(
             cv_paths.voices_root(), cv_paths.downloads_root(),
@@ -117,8 +121,11 @@ class SynthDriver(SynthDriver):
     def speak(self, speechSequence):
         segments = []  # [(text, index)]
         text = []
+        voice = self._voices.get(self._voice)
         for item in speechSequence:
             if isinstance(item, str):
+                if self._rules and voice:
+                    item = cv_lib.rules_text(cv_paths.voices_root(), voice.key, voice.language, item)
                 text.append(item)
             elif isinstance(item, IndexCommand):
                 segments.append((" ".join(text).strip(), item.index))
@@ -165,6 +172,12 @@ class SynthDriver(SynthDriver):
 
     def _set_volume(self, value):
         self._volume = max(0, min(100, value))
+
+    def _get_pronunciationRules(self):
+        return self._rules
+
+    def _set_pronunciationRules(self, value):
+        self._rules = bool(value)
 
     def _get_voice(self):
         return self._voice

@@ -20,6 +20,14 @@ static inline MtThread *mt_tls(Mt *m, X86 *c) { (void)m; return (MtThread *)c; }
 
 typedef struct { const char *name; MtHle fn; } MtHleEntry;
 
+// Name hashing for the import tables (binding looks up thousands of names
+// each time an engine opens).
+static inline uint32_t mt_str_hash(const char *s) {
+    uint32_t h = 2166136261u;
+    while (*s) h = (h ^ (uint8_t)*s++) * 16777619u;
+    return h;
+}
+
 const char *mt_symbolize(Mt *m, uint32_t a, char *out, size_t cap);
 void mt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 // call a guest function on a given CPU (any thread); returns eax
@@ -30,6 +38,10 @@ void mt_check(Mt *m, X86 *c, uint32_t a, uint32_t n);
 MtThread *mt_thread_new(Mt *m);
 void mt_thread_free(MtThread *t);
 void mt_lock(Mt *m, X86 *c, pthread_mutex_t *mu);
+// Start a detached host thread for the engine (a guest thread, the pacer):
+// a 16 MB stack, since recompiled code recurses on the C stack, and the
+// caller's interactive priority, so speech isn't left on efficiency cores.
+int mt_thread_start(void *(*fn)(void *), void *arg);
 
 extern const MtHleEntry mt_hle_libc[];
 

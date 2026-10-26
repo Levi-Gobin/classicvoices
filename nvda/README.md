@@ -67,8 +67,7 @@ python nvda/build_native.py        # needs clang (scoop install llvm) —
 reads `<NVDA config>/classicvoices/Voices` and drops
 `cvnative_<build>_<bits>.dll` into `<NVDA config>/classicvoices/Native`,
 where the engine picks them up on the next synthesizer load (the data-manager
-status shows which builds have them). The stripped engines (iOS 3/4/5) also
-need `llvm-objdump` on PATH, or prebuilt disassemblies via `--dis-dir`.
+status shows which builds have them).
 
 These DLLs derive from Apple's code: keep them on your machine. The
 `nvda-native.yml` workflow builds them in your own fork instead (set a

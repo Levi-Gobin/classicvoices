@@ -32,6 +32,13 @@ add `AddModule "classicvoices" "sd_classicvoices" "classicvoices.conf"` to it.)
 
 ## Get the voices
 
+The easy way is the Classic Voices app (in your applications menu, or
+`classicvoices`): the same voice browser as the iPhone and Mac apps, which
+streams the firmware, downloads voices, builds the fast code and switches
+voices in and out of Speech Dispatcher. It needs wxPython
+(`sudo apt install python3-wxgtk4.0`); see
+[desktop/README.md](../desktop/README.md). From a terminal:
+
 ```
 classicvoices-data firmware        # what each firmware is for, and Apple's links
 classicvoices-data import ios6     # stream iOS 6's speech files from Apple (~750 MB)
@@ -71,8 +78,7 @@ voice by name.
 On its own the engine emulates the iPhone's processor; on a slow machine
 that can be slower than real time. `classicvoices-data native` recompiles each
 imported engine's hot code into native code with your compiler (clang
-recommended: `sudo apt install clang`; the stripped iOS 3–5 engines also
-need `llvm-objdump` from the `llvm` package). The result is bit-identical and
+recommended: `sudo apt install clang`). The result is bit-identical and
 typically six to ten times real time; it goes to
 `~/.local/share/classicvoices/Native/<arch>/` and is picked up on the next
 message. Each build takes a few minutes. It is derived from Apple's code:

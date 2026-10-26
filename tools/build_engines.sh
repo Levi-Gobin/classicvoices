@@ -4,8 +4,8 @@
 # from your own copy of each engine, guided by tools/profiles/*.txt (lists of
 # addresses the engine ran while speaking tools/corpus.txt).
 #
-# Stripped engines (iOS 3, 4, 5) take their function boundaries from an
-# llvm-objdump disassembly; the others have symbols.
+# Stripped engines (iOS 3, 4, 5) take their function boundaries from their BL
+# targets (recomp.py --scan-bl); the others have symbols.
 set -e
 cd "$(dirname "$0")/.."
 PY=${PYTHON:-python3}
@@ -15,10 +15,7 @@ recomp() {  # <prefix> <engine binary> <outdir> [stripped]
     prefix=$1 bin=$2 out=$3 kind=$4
     if [ ! -f "$bin" ]; then echo "skip $prefix: $bin not found"; return; fi
     set --
-    if [ "$kind" = stripped ]; then
-        xcrun llvm-objdump -d --triple=thumbv7-apple-ios --no-show-raw-insn "$bin" > "build/$prefix.dis" 2>/dev/null
-        set -- --dis "build/$prefix.dis"
-    fi
+    if [ "$kind" = stripped ]; then set -- --scan-bl; fi
     rm -rf "$out"
     "$PY" -I tools/recomp.py "$bin" "tools/profiles/$prefix.txt" "$out" --prefix "$prefix" "$@"
 }

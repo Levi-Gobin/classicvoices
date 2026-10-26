@@ -26,6 +26,8 @@ typedef struct {
 } CvVoice;
 
 // Fills a malloc'd array (free with cv_free_voices); returns the count.
+// Leaves out the voices listed in <data>/hidden.txt (the app's "Use as a
+// system voice" switch).
 size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoice **out);
 void cv_free_voices(CvVoice *v);
 

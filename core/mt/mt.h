@@ -40,6 +40,8 @@ typedef struct {
     int nsegs;
     const uint8_t *info;  // dyld_info_command, 10.6+
     uint32_t flags;
+    uint32_t *exports;    // hash index of exported symbols (symbol number + 1), built on first lookup
+    uint32_t exports_mask;
 } MtImage;
 
 struct MtThread;
@@ -58,6 +60,7 @@ struct Mt {
     const char *trap_name[MT_TRAP_SLOTS];
     MtHle trap_fn[MT_TRAP_SLOTS];
     int ntraps;
+    uint16_t trap_index[2 * MT_TRAP_SLOTS];  // hash of trap_name: trap number + 1
     uint32_t data_next;
 
     // heap
@@ -70,6 +73,12 @@ struct Mt {
     volatile int dying;      // shutting down: guest threads fault out
     volatile int live;       // guest threads other than the caller's
     volatile int broken;     // one of them faulted: its locks and state are lost
+
+    // recompiled code and profiling (mt_native.c), given to every thread
+    const X86Native *native;
+    size_t nnative;
+    uint32_t *profile;
+    uint32_t profile_lo, profile_hi;
 };
 
 Mt *mt_create(char *err, size_t errlen);

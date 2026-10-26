@@ -8,6 +8,7 @@ import threading
 
 import globalPluginHandler
 import gui
+import ui
 import wx
 from gui import nvdaControls
 from logHandler import log
@@ -67,6 +68,11 @@ class DataDialog(wx.Dialog):
         main.Add(self.dl, flag=wx.EXPAND | wx.ALL, border=5)
         self.progress = wx.StaticText(self, label="")
         main.Add(self.progress, flag=wx.EXPAND | wx.ALL, border=5)
+        # A native progress bar, moved by 1%: NVDA reports it its own way
+        # (beeps or speech, as set in its progress bar output).
+        # Translators: name of the progress bar of an import or download.
+        self.gauge = wx.Gauge(self, range=100, name=_("Progress"))
+        main.Add(self.gauge, flag=wx.EXPAND | wx.ALL, border=5)
         btns = wx.BoxSizer(wx.HORIZONTAL)
         # Translators: button that imports an IPSW firmware file.
         self.importBtn = wx.Button(self, label=_("&Import firmware (IPSW)..."))
@@ -117,14 +123,17 @@ class DataDialog(wx.Dialog):
         def update():
             if not DataDialog._instance:
                 return
-            text = message or self.progress.GetLabel().split(" (")[0]
+            if message:
+                self.progress.SetLabel(message)
             if fraction is not None:
-                text = "%s (%d%%)" % (text, int(fraction * 100))
-            self.progress.SetLabel(text)
+                percent = int(min(max(fraction, 0.0), 1.0) * 100)
+                if self.gauge.GetValue() != percent:
+                    self.gauge.SetValue(percent)
         wx.CallAfter(update)
 
     def _start(self, fn):
         self._busy = True
+        self.gauge.SetValue(0)
         self.importBtn.Disable()
         self.importDirBtn.Disable()
         self.dlBtn.Disable()
@@ -149,7 +158,9 @@ class DataDialog(wx.Dialog):
                     gui.messageBox(error, _("Classic Voices"), wx.OK | wx.ICON_ERROR, self)
                 else:
                     # Translators: announced when an import/download finishes.
-                    self.progress.SetLabel(_("Done. New voices appear after reselecting the synthesizer."))
+                    done = _("Done. New voices appear after reselecting the synthesizer.")
+                    self.progress.SetLabel(done)
+                    ui.message(done)
             wx.CallAfter(finish)
         threading.Thread(target=run, daemon=True).start()
 

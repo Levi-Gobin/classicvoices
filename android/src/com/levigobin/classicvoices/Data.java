@@ -7,7 +7,9 @@ import android.os.Build;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 
 /**
@@ -21,7 +23,7 @@ import java.util.Locale;
  */
 final class Data {
     private static final Object LOCK = new Object();
-    private static List<VoiceInfo> voices;
+    private static List<VoiceInfo> voices, all;
     private static boolean engineReady;
 
     private Data() {}
@@ -62,7 +64,7 @@ final class Data {
         return storageContext(c).getSharedPreferences("settings", Context.MODE_PRIVATE);
     }
 
-    /** Starts the engine (once) and rescans the voices. */
+    /** Starts the engine (once) and rescans the voices; returns the system's (see voices). */
     static List<VoiceInfo> refresh(Context c) {
         synchronized (LOCK) {
             File v = voicesDir(c), d = downloadsDir(c);
@@ -73,13 +75,20 @@ final class Data {
             if (!engineReady) {
                 engineReady = Native.init(v.getAbsolutePath(), d.getAbsolutePath(), nativeDir(c).getAbsolutePath());
             }
-            List<VoiceInfo> out = new ArrayList<>();
-            for (String line : Native.voices()) out.add(new VoiceInfo(line));
-            voices = Collections.unmodifiableList(out);
+            List<VoiceInfo> out = new ArrayList<>(), shown = new ArrayList<>();
+            Set<String> hidden = hidden(c);
+            for (String line : Native.voices()) {
+                VoiceInfo vi = new VoiceInfo(line);
+                out.add(vi);
+                if (!hidden.contains(vi.key)) shown.add(vi);
+            }
+            all = Collections.unmodifiableList(out);
+            voices = Collections.unmodifiableList(shown);
             return voices;
         }
     }
 
+    /** The voices Android sees: all but those taken out with "Use as a system voice". */
     static List<VoiceInfo> voices(Context c) {
         synchronized (LOCK) {
             if (voices != null) return voices;
@@ -87,9 +96,34 @@ final class Data {
         return refresh(c);
     }
 
+    /** Every voice here, for the app's own pages. */
+    static List<VoiceInfo> allVoices(Context c) {
+        synchronized (LOCK) {
+            if (all != null) return all;
+        }
+        refresh(c);
+        synchronized (LOCK) {
+            return all;
+        }
+    }
+
+    /** Voices the user took out of the system's list (the app's "Use as a system voice" off). */
+    static Set<String> hidden(Context c) {
+        return new HashSet<>(prefs(c).getStringSet("hidden", Collections.<String>emptySet()));
+    }
+
+    static void setHidden(Context c, String key, boolean hide) {
+        Set<String> h = hidden(c);
+        if (hide) h.add(key);
+        else h.remove(key);
+        prefs(c).edit().putStringSet("hidden", h).commit();
+        refresh(c);
+    }
+
+    /** Any voice here, hidden ones too: the app plays a hidden voice by its name. */
     static VoiceInfo byAndroidName(Context c, String name) {
         if (name == null) return null;
-        for (VoiceInfo v : voices(c)) if (v.androidName().equals(name) || v.key.equals(name)) return v;
+        for (VoiceInfo v : allVoices(c)) if (v.androidName().equals(name) || v.key.equals(name)) return v;
         return null;
     }
 

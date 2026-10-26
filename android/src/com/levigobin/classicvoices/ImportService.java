@@ -49,13 +49,18 @@ public class ImportService extends Service {
             this.arg = arg;
             this.label = label;
         }
+
+        boolean is(String k, String a) {
+            return kind.equals(k) && arg.equals(a);
+        }
     }
 
     private static final String CHANNEL = "imports";
     private static final Object LOCK = new Object();
     private static final LinkedList<Job> QUEUE = new LinkedList<>();
     private static final List<Listener> LISTENERS = new ArrayList<>();
-    private static volatile boolean running, cancelAll;
+    private static volatile boolean running, cancelAll, cancelCurrent;
+    private static final List<String> ERRORS = new ArrayList<>();  // "label: message" of failed jobs, until dismissed
     private static volatile String lastMessage = "";
     private static volatile double lastFraction = -1;
     private static volatile Job currentJob;
@@ -79,6 +84,43 @@ public class ImportService extends Service {
             QUEUE.clear();
         }
         cancelAll = true;
+    }
+
+    /** Stops one job: takes it out of the queue, or stops it if it's running. */
+    static void cancel(String kind, String arg) {
+        synchronized (LOCK) {
+            for (java.util.Iterator<Job> i = QUEUE.iterator(); i.hasNext(); ) if (i.next().is(kind, arg)) i.remove();
+            Job c = currentJob;
+            if (c != null && c.is(kind, arg)) cancelCurrent = true;
+        }
+    }
+
+    /** The job running now, or null. */
+    static Job current() { return currentJob; }
+
+    /** Running or waiting. */
+    static boolean pending(String kind, String arg) {
+        synchronized (LOCK) {
+            Job c = currentJob;
+            if (c != null && c.is(kind, arg)) return true;
+            for (Job q : QUEUE) if (q.is(kind, arg)) return true;
+            return false;
+        }
+    }
+
+    /** The running job's progress, 0..1, or negative when unknown. */
+    static double fraction() { return lastFraction; }
+
+    static List<String> errors() {
+        synchronized (ERRORS) {
+            return new ArrayList<>(ERRORS);
+        }
+    }
+
+    static void dismissErrors() {
+        synchronized (ERRORS) {
+            ERRORS.clear();
+        }
     }
 
     static boolean busy() { return running; }
@@ -154,6 +196,8 @@ public class ImportService extends Service {
             synchronized (LOCK) {
                 j = QUEUE.poll();
                 currentJob = j;
+                cancelCurrent = false;
+                lastFraction = -1;
                 if (j == null) {
                     running = false;
                     break;
@@ -163,9 +207,15 @@ public class ImportService extends Service {
             try {
                 run(j);
             } catch (Progress.Cancelled e) {
-                error = getString(R.string.import_cancelled);
+                error = j.label + ": " + getString(R.string.import_cancelled);
             } catch (Exception e) {
                 error = j.label + ": " + (e.getMessage() != null ? e.getMessage() : e.toString());
+                synchronized (ERRORS) {
+                    ERRORS.add(error);
+                }
+            }
+            synchronized (LOCK) {
+                currentJob = null;  // done: the screen shows it as such when it hears
             }
             Data.refresh(this);
             tell(true, error != null ? error : j.label + " " + getString(R.string.import_done_suffix), -1,
@@ -193,21 +243,27 @@ public class ImportService extends Service {
     private void run(Job j) throws IOException {
         Progress p = new Progress() {
             String step = "";
+            int percent = -1;
 
             @Override
             public void step(String message) {
                 step = message;
+                percent = -1;
                 tell(true, message, -1, null, null);
             }
 
+            /** Passed on at each whole percent: the screen's progress bar moves by 1%. */
             @Override
             public void fraction(double f) {
-                tell(true, step, f, null, null);
+                int now = (int) (Math.max(0, Math.min(1, f)) * 100);
+                if (now == percent) return;
+                percent = now;
+                tell(true, step, now / 100.0, null, null);
             }
 
             @Override
             public boolean cancelled() {
-                return cancelAll;
+                return cancelAll || cancelCurrent;
             }
         };
         switch (j.kind) {

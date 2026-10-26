@@ -254,6 +254,8 @@ struct RootView: View {
                 .tabItem { Label("iOS", systemImage: "iphone") }
             PlatformTab(platform: .macOS)
                 .tabItem { Label("macOS", systemImage: "desktopcomputer") }
+            SettingsTab()
+                .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .environment(library)
     }
@@ -264,7 +266,6 @@ enum BrowserRoute: Hashable {
     case voice(String)  // VoiceItem.id
     case diagnostics
     case addFiles
-    case settings
 }
 
 /// One tab, as a drill-down: version menu and languages (or the voices, when
@@ -321,7 +322,7 @@ struct PlatformTab: View {
             let detail: String
             switch new.last {
             case .voice?: detail = "voice"
-            case .diagnostics?, .addFiles?, .settings?: detail = ""
+            case .diagnostics?, .addFiles?: detail = ""
             case .language(let lang)?: detail = "\(items(language: lang).count) voices"
             case nil: detail = ""
             }
@@ -349,7 +350,6 @@ struct PlatformTab: View {
         case .voice(let id): library.item(id)?.name ?? "Voice"
         case .diagnostics: "Diagnostics"
         case .addFiles: "Add from Files"
-        case .settings: "Speech Settings"
         }
     }
 
@@ -361,7 +361,6 @@ struct PlatformTab: View {
         case .voice(let id)?: VoiceDetail(id: id)
         case .diagnostics?: DiagnosticsView()
         case .addFiles?: AddFilesView()
-        case .settings?: SpeechSettingsView()
         }
     }
 
@@ -410,7 +409,6 @@ struct PlatformTab: View {
                 if platform == .macOS {
                     OpenButton(title: "Add from Files", detail: "MacinTalk from your own Mac OS X") { open(.addFiles) }
                 }
-                OpenButton(title: "Speech Settings", detail: "pronunciation rules, pitch changes") { open(.settings) }
                 OpenButton(title: "Diagnostics", detail: "a report to send if voices don\u{2019}t work") { open(.diagnostics) }
             }
             }
@@ -473,6 +471,7 @@ struct OpenButton: View {
     let title: String
     var detail: String? = nil
     var label: String? = nil  // what VoiceOver reads; title and detail by default
+    var value: String? = nil  // progress: VoiceOver watches it and reads it at its own pace
     var opens = true          // shows the disclosure chevron
     let action: () -> Void
 
@@ -503,7 +502,8 @@ struct OpenButton: View {
         #endif
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label ?? [title, detail].compactMap { $0 }.joined(separator: ", "))
-        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(value ?? "")
+        .accessibilityAddTraits(value == nil ? .isButton : [.isButton, .updatesFrequently])
     }
 }
 
@@ -558,13 +558,14 @@ private struct VoiceRow: View {
         let name = "\(item.name) (\(item.kindName))"
         OpenButton(title: name, detail: VoiceFormatting.detailText(state),
                    label: VoiceFormatting.accessibilityLabel(name: name, state: state),
+                   value: VoiceFormatting.accessibilityValue(state),
                    opens: state.isAvailable) {
             if state.isAvailable { open(.voice(item.id)) } else { library.toggleDownload(item) }
         }
         .accessibilityActions {
             if state.isAvailable, let entry = item.entry {
                 Button("Play sample") {
-                    DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item))
+                    DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item), settings: library.settings)
                 }
             }
         }
@@ -612,8 +613,15 @@ enum VoiceFormatting {
         case .builtIn: name
         case .installed(let n): "\(name), using \(size(n))"
         case .notInstalled(let n): "Download \(name), \(size(n))"
-        case .downloading(let w, let t): "Stop downloading \(name), \(size(w)) of \(size(t))"
+        case .downloading: "Stop downloading \(name)"
         }
+    }
+
+    /// While downloading, how much has come, as the row's value: the label
+    /// stays put, and VoiceOver reads the value as it changes (every 1%).
+    static func accessibilityValue(_ state: VoiceInstallState) -> String? {
+        if case .downloading(let w, let t) = state { return "\(size(w)) of \(size(t))" }
+        return nil
     }
 
     static func detailText(_ state: VoiceInstallState) -> String? {
@@ -653,7 +661,7 @@ struct VoiceDetail: View {
                         Slider(value: $rate, in: 50...400, step: 10) { Text("Rate") }
                     }
                     HStack {
-                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item)) } label: {
+                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item), settings: library.settings) } label: {
                             Label("Speak", systemImage: "speaker.wave.2.fill")
                         }
                         Button { VoiceEngine.shared.cancel() } label: {
@@ -688,10 +696,16 @@ struct VoiceDetail: View {
                         Text("Pitch changes speak with \(compact.name) (\(compact.kindName)).")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
+                    if item.kind == .macinTalk {
+                        OverridePicker("Speech commands last one utterance", general: library.settings.resetCommands,
+                                       value: library.settings.resetCommandsOverride[item.id]) { v in
+                            library.updateSettings { $0.resetCommandsOverride[item.id] = v }
+                        }
+                    }
                 } header: {
                     Text("For This Voice")
                 } footer: {
-                    Text("\u{201c}Default\u{201d} follows Speech Settings.")
+                    Text("\u{201c}Default\u{201d} follows the Settings tab.")
                 }
                 if case .installed(let n) = library.state(item) {
                     Section {
@@ -784,7 +798,18 @@ struct OverridePicker: View {
     }
 }
 
-/// The two speech switches, for every voice unless a voice says otherwise.
+/// The Settings tab.
+struct SettingsTab: View {
+    var body: some View {
+        #if os(macOS)
+        SpeechSettingsView()
+        #else
+        NavigationStack { SpeechSettingsView() }
+        #endif
+    }
+}
+
+/// The speech settings, for every voice unless a voice says otherwise.
 struct SpeechSettingsView: View {
     @Environment(VoiceLibrary.self) private var library
 
@@ -804,8 +829,34 @@ struct SpeechSettingsView: View {
             } footer: {
                 Text("Enhanced and premium voices can\u{2019}t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch (capital letters, the pitch rotor) uses the voice\u{2019}s compact version, which stays loaded. Voices without a compact version here are unaffected.")
             }
+            Section {
+                Picker("Speaking rate", selection: Binding(
+                    get: { library.settings.modernRate },
+                    set: { v in library.updateSettings { $0.modernRate = v } })) {
+                    Text("Same as today\u{2019}s Alex").tag(true)
+                    Text("Classic").tag(false)
+                }
+            } header: {
+                Text("MacinTalk")
+            } footer: {
+                Text("Same as today\u{2019}s Alex: each speech rate setting speaks at the words per minute the current Alex uses for it, from about 70 to about 1000. Classic: a percent of each voice\u{2019}s own rate, from half to four times (Alex: 88 to 700 words per minute), as Classic Voices did before.")
+            }
+            Section {
+                Toggle("Speech commands last one utterance", isOn: Binding(
+                    get: { library.settings.resetCommands },
+                    set: { v in library.updateSettings { $0.resetCommands = v } }))
+            } footer: {
+                Text("Embedded commands such as [[inpt PHON]], [[rate 300]] or [[char LTRL]] change a MacinTalk voice until something changes them back, so a command VoiceOver reads out once could leave the voice in that mode. With this on, each utterance starts from the voice\u{2019}s normal settings. Turn it off to keep a command in effect across utterances. Values past what the engine takes (rate above 32767, pbas above 127, pmod above 200, volm above 2) are set to the highest it takes.")
+            }
+            Section {
+                Toggle("24-hour times in Leopard voices", isOn: Binding(
+                    get: { library.settings.twentyFourHour },
+                    set: { v in library.updateSettings { $0.twentyFourHour = v } }))
+            } footer: {
+                Text("Leopard reads a time such as 13:45 as \u{201c}one forty-five PM\u{201d}. With this on, its voices read 24-hour times the way Tiger, Snow Leopard and Lion do: \u{201c}thirteen forty-five\u{201d}, \u{201c}eighteen oh five\u{201d}.")
+            }
         }
         .formStyle(.grouped)
-        .navigationTitle("Speech Settings")
+        .navigationTitle("Settings")
     }
 }

@@ -217,13 +217,8 @@ static void h_MPCreateTask(Mt *m, X86 *c) {
     k->t = mt_thread_new(m);
     if (!k->t) { free(k); R(c, (uint32_t)-108); return; }  // memFullErr
     if (m->verbose) fprintf(stderr, "[mp] CreateTask entry=%#x param=%#x\n", k->entry, k->param);
-    pthread_t th;
-    pthread_attr_t at;
-    pthread_attr_init(&at);
-    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    pthread_attr_setstacksize(&at, 1 << 20);
     __sync_fetch_and_add(&m->live, 1);
-    if (pthread_create(&th, &at, task_main, k)) { __sync_fetch_and_sub(&m->live, 1); R(c, (uint32_t)-108); return; }
+    if (mt_thread_start(task_main, k)) { __sync_fetch_and_sub(&m->live, 1); R(c, (uint32_t)-108); return; }
     if (A(c, 7)) wr32(c, A(c, 7), k->t->self);
     R(c, 0);
 }

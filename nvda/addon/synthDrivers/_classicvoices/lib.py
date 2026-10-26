@@ -43,7 +43,30 @@ def load():
     lib.cv_set_native_dir.argtypes = [c.c_char_p]
     lib.cv_native_status.restype = c.c_longlong
     lib.cv_native_status.argtypes = [c.c_char_p]
+    # Apple's pronunciation rules; absent from add-on 0.1.1's DLLs
+    try:
+        lib.cv_rules_text.restype = c.c_void_p
+        lib.cv_rules_text.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.c_char_p]
+        lib.cv_free.restype = None
+        lib.cv_free.argtypes = [c.c_void_p]
+    except AttributeError:
+        pass
     if lib.cv_abi_version() != 1:
         raise OSError("cvengine ABI mismatch")
     _lib = lib
     return lib
+
+
+def rules_text(voices_root, voice_key, language, text):
+    """text with Apple's pronunciation rules for the voice applied."""
+    lib = load()
+    if not hasattr(lib, "cv_free") or not text:
+        return text
+    p = lib.cv_rules_text(voices_root.encode("utf-8"), voice_key.encode("utf-8"),
+                          (language or "").encode("utf-8"), text.encode("utf-8"))
+    if not p:
+        return text
+    try:
+        return ctypes.string_at(p).decode("utf-8", "replace")
+    finally:
+        lib.cv_free(p)

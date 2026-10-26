@@ -59,6 +59,8 @@ static const Build kBuilds[] = {
 #define VE_MSG_OUTBUFREQ  0x8u
 #define VE_MSG_OUTBUFDONE 0x10u
 #define VE_USER_STOP      0x80000200u
+#define MARK_SLOTS 0x500u  // markers the engine may write per output buffer
+#define MARK_SIZE 40u      // sizeof(VE_MARKINFO) in these engines (it was allotted 32: too small)
 
 typedef void (*Hle)(Vx *vx);
 
@@ -107,6 +109,8 @@ struct Vx {
     char language[64];
     VxPcmCallback cb;
     void *cb_ctx;
+    VxWordCallback word_cb;
+    void *word_ctx;
     int cancelled;
 };
 
@@ -1225,13 +1229,29 @@ static void outnotify(Vx *vx) {
         // VE_OUTDATA {format, cntPcmBufLen, pOutPcmBuf, cntMrkListLen, pMrkList}
         s32(&vx->cpu.k, param + 4, vx->cancelled ? 0 : vx->pcm_buf_size);
         s32(&vx->cpu.k, param + 8, vx->cancelled ? 0 : vx->pcm_buf);
-        s32(&vx->cpu.k, param + 12, 0x500);
+        s32(&vx->cpu.k, param + 12, MARK_SLOTS);
         s32(&vx->cpu.k, param + 16, vx->mark_buf);
         ret(vx, vx->cancelled ? VE_USER_STOP : 0);
         return;
     }
     if (kind == VE_MSG_OUTBUFDONE && param) {
         uint32_t n = g32(&vx->cpu.k, param + 4), p = g32(&vx->cpu.k, param + 8);
+        // Markers before this buffer's audio. VE_MARKINFO is 40 bytes here:
+        // {?, type, src pos, src len (bytes of the UTF-16 input), dest pos
+        // (samples into the utterance), dest len, phoneme, ...}; type 1 = sentence,
+        // 2 = word.
+        uint32_t mc = g32(&vx->cpu.k, param + 12), mp = g32(&vx->cpu.k, param + 16);
+        if (vx->word_cb && mp && !vx->cancelled) {
+            if (mc > MARK_SLOTS) mc = MARK_SLOTS;
+            check_range(vx, mp, mc * MARK_SIZE);
+            for (uint32_t i = 0; i < mc; i++) {
+                uint32_t q = mp + i * MARK_SIZE;
+                uint32_t type = g32(&vx->cpu.k, q + 4);
+                if (type == VX_MARK_SENTENCE || type == VX_MARK_WORD)
+                    vx->word_cb(vx->word_ctx, type, g32(&vx->cpu.k, q + 8) / 2, g32(&vx->cpu.k, q + 12) / 2,
+                                g32(&vx->cpu.k, q + 16));
+            }
+        }
         if (n && p && vx->cb && !vx->cancelled) {
             check_range(vx, p, n);
             if (vx->cb(vx->cb_ctx, (const int16_t *)(vx->mem + p), n / 2)) vx->cancelled = 1;
@@ -1412,7 +1432,7 @@ static int vx_start(Vx *vx, const char *voiced_path, const char *lang_dir, const
     // ~23 ms buffers keep time-to-first-audio low
     vx->pcm_buf_size = 1024;
     vx->pcm_buf = heap_alloc(vx, vx->pcm_buf_size);
-    vx->mark_buf = new_zeroed(vx, 0x500 * 0x20);
+    vx->mark_buf = new_zeroed(vx, MARK_SLOTS * MARK_SIZE);
     UNGUARD(vx);
     return 0;
 }
@@ -1502,6 +1522,11 @@ int vx_speak_utf8(Vx *vx, const char *text, VxPcmCallback cb, void *ctx) {
     int rc = vx_speak_utf16(vx, u, k, cb, ctx);
     free(u);
     return rc;
+}
+
+void vx_set_word_callback(Vx *vx, VxWordCallback cb, void *ctx) {
+    vx->word_cb = cb;
+    vx->word_ctx = ctx;
 }
 
 int vx_set_param(Vx *vx, uint32_t id, uint32_t value) {

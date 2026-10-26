@@ -255,10 +255,62 @@ static int key_eq(Mt *m, X86 *c, uint32_t a, uint32_t b) {
     if (ka == K_NUMBER && kb == K_NUMBER) return num_of(m, c, a) == num_of(m, c, b);
     return 0;
 }
+// Dictionaries of 8 or more pairs keep a hash index (guest memory, at O_NUM:
+// pointer, O_NUM + 4: slots, a power of two; slot = pair index + 1), so
+// building Homophones (2086 keys, read when a channel opens) and looking words
+// up in it is not a scan of every key. Hashes follow key_eq: strings by
+// content, numbers by value, anything else by address.
+static uint32_t key_hash(Mt *m, X86 *c, uint32_t k) {
+    if (!k) return 0;
+    int kind = kind_of(m, c, k);
+    if (kind == K_STRING) {
+        const uint8_t *s = G(m, f32(m, k, O_CSTR));
+        uint32_t h = 2166136261u, n = cf_len(m, k);
+        for (uint32_t i = 0; i < n; i++) h = (h ^ s[i]) * 16777619u;
+        return h;
+    }
+    if (kind == K_NUMBER) {
+        double v = num_of(m, c, k);
+        if (v == 0) v = 0;  // -0 == 0
+        uint64_t bits;
+        memcpy(&bits, &v, 8);
+        return (uint32_t)(bits ^ bits >> 32) * 0x9E3779B1u;
+    }
+    return k * 0x9E3779B1u;
+}
+static void dict_index_put(Mt *m, uint32_t idx, uint32_t slots, uint32_t h, uint32_t i) {
+    for (uint32_t j = h & (slots - 1);; j = (j + 1) & (slots - 1))
+        if (!f32(m, idx, (int)(4 * j))) { s32_(m, idx, (int)(4 * j), i + 1); return; }
+}
+static void dict_index_build(Mt *m, X86 *c, uint32_t d, uint32_t n) {
+    uint32_t old = f32(m, d, O_NUM), slots = 16, p = f32(m, d, O_PTR);
+    while (slots < 2 * (n + 1)) slots *= 2;
+    uint32_t idx = mt_calloc(m, slots * 4);
+    for (uint32_t i = 0; i < n; i++) dict_index_put(m, idx, slots, key_hash(m, c, rd32(c, p + 8 * i)), i);
+    s32_(m, d, O_NUM, idx);
+    s32_(m, d, O_NUM + 4, slots);
+    if (old) mt_free(m, old);
+}
+// -> pair index of `k`, or -1; *h is its hash when the dictionary is indexed
+static int dict_find(Mt *m, X86 *c, uint32_t d, uint32_t k, uint32_t *h) {
+    uint32_t n = f32(m, d, O_N), p = f32(m, d, O_PTR), idx = f32(m, d, O_NUM);
+    if (!idx && n >= 8) { dict_index_build(m, c, d, n); idx = f32(m, d, O_NUM); }
+    if (!idx) {
+        for (uint32_t i = 0; i < n; i++) if (key_eq(m, c, rd32(c, p + 8 * i), k)) return (int)i;
+        return -1;
+    }
+    uint32_t slots = f32(m, d, O_NUM + 4);
+    *h = key_hash(m, c, k);
+    for (uint32_t j = *h & (slots - 1);; j = (j + 1) & (slots - 1)) {
+        uint32_t e = f32(m, idx, (int)(4 * j));
+        if (!e) return -1;
+        if (key_eq(m, c, rd32(c, p + 8 * (e - 1)), k)) return (int)(e - 1);
+    }
+}
 static void dict_set(Mt *m, X86 *c, uint32_t d, uint32_t k, uint32_t v) {
-    uint32_t n = f32(m, d, O_N), p = f32(m, d, O_PTR);
-    for (uint32_t i = 0; i < n; i++)
-        if (key_eq(m, c, rd32(c, p + 8 * i), k)) { wr32(c, p + 8 * i + 4, v); return; }
+    uint32_t n = f32(m, d, O_N), p = f32(m, d, O_PTR), h = 0;
+    int at = dict_find(m, c, d, k, &h);
+    if (at >= 0) { wr32(c, p + 8 * (uint32_t)at + 4, v); return; }
     uint32_t cap = f32(m, d, O_CAP);
     if (n == cap) {
         uint32_t ncap = cap ? cap * 2 : 8, np = mt_malloc(m, ncap * 8);
@@ -270,14 +322,18 @@ static void dict_set(Mt *m, X86 *c, uint32_t d, uint32_t k, uint32_t v) {
     wr32(c, p + 8 * n, k);
     wr32(c, p + 8 * n + 4, v);
     s32_(m, d, O_N, n + 1);
+    uint32_t idx = f32(m, d, O_NUM);
+    if (idx) {
+        if (2 * (n + 2) > f32(m, d, O_NUM + 4)) dict_index_build(m, c, d, n + 1);
+        else dict_index_put(m, idx, f32(m, d, O_NUM + 4), h, n);
+    }
 }
 static uint32_t dict_get(Mt *m, X86 *c, uint32_t d, uint32_t k, int *found) {
     if (kind_of(m, c, d) != K_DICT) x86_fault(c, "not CFDictionary: %#x", d);
-    uint32_t n = f32(m, d, O_N), p = f32(m, d, O_PTR);
-    for (uint32_t i = 0; i < n; i++)
-        if (key_eq(m, c, rd32(c, p + 8 * i), k)) { if (found) *found = 1; return rd32(c, p + 8 * i + 4); }
-    if (found) *found = 0;
-    return 0;
+    uint32_t h = 0;
+    int at = dict_find(m, c, d, k, &h);
+    if (found) *found = at >= 0;
+    return at >= 0 ? rd32(c, f32(m, d, O_PTR) + 8 * (uint32_t)at + 4) : 0;
 }
 static void h_CFDictionaryCreate(Mt *m, X86 *c) {
     uint32_t keys = A(c, 1), vals = A(c, 2), n = A(c, 3), d = cf_new(m, K_DICT);
@@ -361,7 +417,10 @@ static void h_FSPathMakeRef(Mt *m, X86 *c) {
 }
 static void h_FSDeleteObject(Mt *m, X86 *c) { (void)m; R(c, (uint32_t)-54); }  // permErr: never delete anything
 static void h_DisposeHandle(Mt *m, X86 *c) { (void)m; (void)c; }
-static void h_CFPreferencesCopyAppValue(Mt *m, X86 *c) { (void)m; R(c, 0); }
+static void h_CFPreferencesCopyAppValue(Mt *m, X86 *c) {
+    if (m->verbose) fprintf(stderr, "[cf] preference %s: not set\n", A(c, 0) ? mt_cf_text(m, A(c, 0)) : "(null)");
+    R(c, 0);
+}
 
 // ---------------------------------------------------------------- XML property lists
 

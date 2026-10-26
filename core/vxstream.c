@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #define RING_FRAMES (1u << 20)  // ~47 s at 22.05 kHz
+#define WORD_RING 1024u          // word positions kept for the reader
 #ifndef MAX_ENGINES
 #define MAX_ENGINES 3
 #endif
@@ -84,7 +85,14 @@ struct VxStream {
     _Atomic uint64_t write_pos, read_pos;
     _Atomic int producing;   // worker is still generating the current utterance
     _Atomic int cancel;      // ask the worker to stop the current utterance
+    _Atomic int mt_keep_commands;  // vxs_set_mt_reset(0)
+    _Atomic int mt_12_hour;        // vxs_set_mt_24_hour(0)
+    _Atomic int mt_modern_rate;    // vxs_set_mt_modern_rate(1)
     _Atomic uint64_t generation;
+
+    // where each word of the current utterance starts (vxs_read_words)
+    VxsWord words[WORD_RING];
+    _Atomic uint32_t word_w, word_r;
 
     double first_ms, synth_ms, audio_ms;
     char err[256];
@@ -249,7 +257,95 @@ typedef struct {
     // diagnostics: silent runs (>= 40 ms) inside the output, as heard
     uint64_t out_pos, quiet_out, heard;
     char gaplog[256];
+    // Word positions. The engine says which sample of its call a word starts
+    // at; that sample may be trimmed, held in a silent run that is shortened
+    // later, or resampled, so a word waits here until its sample is placed.
+    uint64_t pushed_in;     // engine-rate frames pushed since the utterance began
+    uint32_t call_in;       // samples of the current engine call seen so far
+    const int32_t *map;     // UTF-16 unit of the call's text -> byte in the request (map_n + 1 entries)
+    size_t map_n;
+    const char *text;       // the request
+    int32_t last_pos;       // the last word placed, so a word reported twice counts once
+    struct { uint32_t sample; int32_t pos, len; int held; size_t q; } pend[64];
+    size_t npend;
 } Sink;
+
+// ---- word positions
+
+static void word_out(Sink *k, int32_t pos, int32_t len, uint64_t frame_in) {
+    VxStream *s = k->s;
+    uint32_t w = atomic_load_explicit(&s->word_w, memory_order_relaxed);
+    if (w - atomic_load_explicit(&s->word_r, memory_order_acquire) >= WORD_RING) return;  // reader isn't reading
+    VxsWord *o = &s->words[w % WORD_RING];
+    o->frame = (uint32_t)((frame_in * OUT_RATE + (uint64_t)k->rate / 2) / (uint64_t)k->rate);
+    o->text_pos = pos;
+    o->text_len = len;
+    atomic_store_explicit(&s->word_w, w + 1, memory_order_release);
+}
+
+static void word_add(Sink *k, uint32_t sample, int32_t pos, int32_t len) {
+    if (k->npend == sizeof k->pend / sizeof k->pend[0]) return;
+    k->pend[k->npend].sample = sample;
+    k->pend[k->npend].pos = pos;
+    k->pend[k->npend].len = len;
+    k->pend[k->npend].held = 0;
+    k->npend++;
+}
+
+// The first word in text[from, to): its start, and its length in *len (-1: none).
+static int32_t first_word(const char *text, int32_t from, int32_t to, int32_t *len) {
+    while (from < to && (text[from] == ' ' || text[from] == '\x1b')) {
+        if (text[from] == '\x1b') {  // an ESC\...\ command isn't a word
+            const char *e = strchr(text + from + 2, '\\');
+            from = e ? (int32_t)(e - text) + 1 : to;
+        } else from++;
+    }
+    int32_t e = from;
+    while (e < to && text[e] != ' ' && text[e] != '\x1b') e++;
+    *len = e > from ? e - from : -1;
+    return from;
+}
+
+static void on_word(void *ctx, uint32_t kind, uint32_t pos, uint32_t len, uint32_t sample) {
+    Sink *k = ctx;
+    if (!k->map || pos >= k->map_n) return;
+    size_t end = pos + len < k->map_n ? pos + len : k->map_n;
+    int32_t p = k->map[pos], e = k->map[end], n = e > p ? e - p : 0;
+    if (kind == VX_MARK_SENTENCE) p = first_word(k->text, p, e, &n);  // its first word
+    if (n <= 0 || p <= k->last_pos) return;  // already there
+    k->last_pos = p;
+    word_add(k, sample, p, n);
+}
+
+// Words whose sample (counted in this call) is at or before `at` and lands
+// in the silent run being held, at index q of it.
+static void words_hold(Sink *k, uint32_t at, size_t q) {
+    for (size_t i = 0; i < k->npend; i++)
+        if (!k->pend[i].held && k->pend[i].sample <= at) { k->pend[i].held = 1; k->pend[i].q = q; }
+}
+
+static void words_drop_front(Sink *k, size_t n) {  // the held run lost its first n samples
+    for (size_t i = 0; i < k->npend; i++)
+        if (k->pend[i].held) k->pend[i].q = k->pend[i].q > n ? k->pend[i].q - n : 0;
+}
+
+static void words_resolve(Sink *k, int held_only, uint32_t upto, uint32_t run_start, size_t dropped, size_t kept) {
+    size_t j = 0;
+    for (size_t i = 0; i < k->npend; i++) {
+        uint64_t at;
+        if (k->pend[i].held) {  // the held run is pushed now, without its first `dropped`
+            size_t q = k->pend[i].q > dropped ? k->pend[i].q - dropped : 0;
+            at = k->pushed_in + (q < kept ? q : kept);
+        } else if (!held_only && k->pend[i].sample <= upto) {  // inside the loud run pushed now
+            at = k->pushed_in + (k->pend[i].sample > run_start ? k->pend[i].sample - run_start : 0);
+        } else {
+            k->pend[j++] = k->pend[i];
+            continue;
+        }
+        word_out(k, k->pend[i].pos, k->pend[i].len, at);
+    }
+    k->npend = j;
+}
 
 // Write output-rate samples to the ring buffer. Returns 1 if cancelled.
 static int ring_write(Sink *k, const float *out, size_t n) {
@@ -324,6 +420,7 @@ static int resample_run(Sink *k, int flush) {
 
 // Push engine-rate samples (NULL = silence). Returns 1 if cancelled.
 static int push(Sink *k, const int16_t *pcm, size_t n) {
+    k->pushed_in += n;
     if (k->rate == OUT_RATE) {
         float buf[1024];
         for (size_t i = 0; i < n;) {
@@ -360,13 +457,18 @@ static void hold_quiet(Sink *k, int16_t v) {
 static int on_pcm(void *ctx, const int16_t *pcm, size_t n) {
     Sink *k = ctx;
     VxStream *s = k->s;
+    uint32_t base = k->call_in;
+    k->call_in += (uint32_t)n;
     for (size_t i = 0; i < n; i++) {
         int loud = pcm[i] > QUIET_LEVEL || pcm[i] < -QUIET_LEVEL;
+        uint32_t at = base + (uint32_t)i;
         if (!k->got_first) {
             if (!loud) {
+                if (k->npend) words_hold(k, at, k->nquiet);
                 hold_quiet(k, pcm[i]);
                 if (k->nquiet > PREROLL_FRAMES * 4) {  // keep only the last preroll window
                     memmove(k->quiet, k->quiet + k->nquiet - PREROLL_FRAMES, PREROLL_FRAMES * sizeof(int16_t));
+                    if (k->npend) words_drop_front(k, k->nquiet - PREROLL_FRAMES);
                     k->nquiet = PREROLL_FRAMES;
                 }
                 continue;
@@ -374,12 +476,15 @@ static int on_pcm(void *ctx, const int16_t *pcm, size_t n) {
             k->got_first = 1;
             s->first_ms = now_ms() - k->t0;
             size_t pre = k->nquiet < PREROLL_FRAMES ? k->nquiet : PREROLL_FRAMES;
+            if (k->npend) words_resolve(k, 1, 0, 0, k->nquiet - pre, pre);
             if (push(k, k->quiet + k->nquiet - pre, pre)) return 1;
             k->nquiet = 0;
         }
         if (!loud) {
+            if (k->npend) words_hold(k, at, k->nquiet);
             hold_quiet(k, pcm[i]);
             if (k->nquiet >= QUIET_FLUSH_FRAMES) {
+                if (k->npend) words_resolve(k, 1, 0, 0, 0, k->nquiet);
                 if (push(k, k->quiet, k->nquiet)) return 1;
                 k->nquiet = 0;
             }
@@ -389,20 +494,32 @@ static int on_pcm(void *ctx, const int16_t *pcm, size_t n) {
             size_t keep = k->nquiet;
             if (k->cap_quiet && keep > k->cap_quiet) keep = k->cap_quiet;
             k->cap_quiet = 0;
+            if (k->npend) words_resolve(k, 1, 0, 0, k->nquiet - keep, keep);
             if (push(k, k->quiet + k->nquiet - keep, keep)) return 1;
             k->nquiet = 0;
         }
         size_t j = i;  // push the run of loud-or-short-quiet samples in one go
         while (j < n && (pcm[j] > QUIET_LEVEL || pcm[j] < -QUIET_LEVEL)) j++;
+        if (k->npend) words_resolve(k, 0, base + (uint32_t)j - 1, at, 0, 0);
         if (push(k, pcm + i, j - i)) return 1;
         i = j - 1;
     }
     return atomic_load_explicit(&s->cancel, memory_order_relaxed) ? 1 : 0;
 }
 
+// After an engine call: words it placed past its last sample belong at the
+// end of what is held.
+static void words_end_call(Sink *k) {
+    words_hold(k, UINT32_MAX, k->nquiet);
+    k->call_in = 0;
+    k->map = NULL;
+}
+
 // End of utterance: keep a short tail, then any requested trailing pause.
 static void finish(Sink *k, int pause_ms) {
-    if (k->got_first) push(k, k->quiet, k->nquiet < TAIL_KEEP_FRAMES ? k->nquiet : TAIL_KEEP_FRAMES);
+    size_t tail = k->nquiet < TAIL_KEEP_FRAMES ? k->nquiet : TAIL_KEEP_FRAMES;
+    if (k->npend) words_resolve(k, 1, 0, 0, 0, k->got_first ? tail : 0);
+    if (k->got_first) push(k, k->quiet, tail);
     if (pause_ms > 0) push(k, NULL, (size_t)pause_ms * (size_t)k->rate / 1000);
     if (k->rin) resample_run(k, 1);
     free(k->quiet);
@@ -432,6 +549,23 @@ static int pitch_value_to_percent(int v) {
     return 158;
 }
 
+// For one engine call: the request byte each UTF-16 unit of seg came from,
+// counting units the way vx_speak_utf8 does, plus one entry for the end.
+static int32_t *word_map(const char *seg, const int32_t *src, size_t m, int32_t end, int ios7, size_t *units) {
+    int32_t *map = malloc((m * 2 + 1) * sizeof *map);
+    size_t u = 0;
+    for (size_t i = 0; i < m;) {
+        unsigned c = (unsigned char)seg[i];
+        int len = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
+        map[u++] = src[i];
+        if (len == 4 && !ios7) map[u++] = src[i];  // a surrogate pair
+        i += (size_t)len;
+    }
+    map[u] = end;
+    *units = u;
+    return map;
+}
+
 // With a fallback key, every segment whose pitch isn't normal (engine value
 // 50) is spoken by that voice instead: VoiceOver on iOS 5 and 6 did this,
 // since an enhanced voice can't change pitch (the compact one can). The
@@ -444,6 +578,7 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
     // be longer than the ones in the text.
     size_t cap = strlen(text) + 1;
     char *seg = malloc(cap);
+    int32_t *src = malloc(cap * sizeof *src);  // where each byte of seg came from in text
     size_t m = 0;
     int rc = 0;
     const char *p = text;
@@ -472,7 +607,17 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
                 }
                 int prc = vx_set_param(use, 4, (uint32_t)(percent_pitch ? pitch_value_to_percent(pitch) : pitch));
                 if (getenv("VX_SEGDEBUG")) fprintf(stderr, "segment pitch=%d rc=%x %s [%s]\n", pitch, prc, use == fb ? "(fallback)" : "", seg);
-                if ((rc = vx_speak_utf8(use, seg, on_pcm, k))) break;
+                int32_t *map = word_map(seg, src, m, (int32_t)(p - text), strncmp(vx_build_name(use), "iOS 7", 5) == 0,
+                                        &k->map_n);
+                k->map = map;
+                k->text = text;
+                on_word(k, VX_MARK_SENTENCE, 0, (uint32_t)k->map_n, 0);  // the first word, reported or not
+                vx_set_word_callback(use, on_word, k);
+                rc = vx_speak_utf8(use, seg, on_pcm, k);
+                vx_set_word_callback(use, NULL, NULL);
+                words_end_call(k);
+                free(map);
+                if (rc) break;
                 // between utterances keep the engine's natural silence; inside a
                 // sentence (pitch change only) join tightly
                 k->cap_quiet = is_pitch ? (size_t)k->rate / 10 : 0;
@@ -487,21 +632,33 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
             continue;
         }
         if (percent_pitch && strncmp(p, kPitch, sizeof kPitch - 1) == 0) {  // inline, rescaled
+            const char *cmd_at = p;
             p += sizeof kPitch - 1;
             int v = atoi(p);
             while (*p && *p != '\\') p++;
             if (*p) p++;
             char cmd[32];
             int len = snprintf(cmd, sizeof cmd, "%s%d\\", kPitch, pitch_value_to_percent(v));
-            if (m + (size_t)len + 1 > cap) { cap = (m + (size_t)len + 1) * 2; seg = realloc(seg, cap); }
+            if (m + (size_t)len + 1 > cap) {
+                cap = (m + (size_t)len + 1) * 2;
+                seg = realloc(seg, cap);
+                src = realloc(src, cap * sizeof *src);
+            }
             memcpy(seg + m, cmd, (size_t)len);
+            for (int i = 0; i < len; i++) src[m + (size_t)i] = (int32_t)(cmd_at - text);
             m += (size_t)len;
             continue;
         }
-        if (m + 2 > cap) { cap *= 2; seg = realloc(seg, cap); }
+        if (m + 2 > cap) {
+            cap *= 2;
+            seg = realloc(seg, cap);
+            src = realloc(src, cap * sizeof *src);
+        }
+        src[m] = (int32_t)(p - text);
         seg[m++] = *p++;
     }
     free(seg);
+    free(src);
     return rc;
 }
 
@@ -566,7 +723,10 @@ static void *worker(void *arg) {
             snprintf(lang, sizeof lang, "%s", s->preload_lang);
             s->preload_lang[0] = 0;
             pthread_mutex_unlock(&s->mu);
-            if (is_mt_key(lang)) mt_for(s, lang); else engine_for(s, lang);
+            if (is_mt_key(lang)) {
+                MtEngine *mt = mt_for(s, lang);
+                if (mt) mte_prepare(mt, strchr(lang, '/') + 1);
+            } else engine_for(s, lang);
             pthread_mutex_lock(&s->mu);
             continue;
         }
@@ -579,12 +739,15 @@ static void *worker(void *arg) {
         s->has_job = 0;
         pthread_mutex_unlock(&s->mu);
 
-        Sink k = {s, now_ms(), 0, 0, NULL, 0, 0, OUT_RATE, NULL, 0, 0, 0, 0, 0, 0, 0, {0}};
+        Sink k = {.s = s, .t0 = now_ms(), .rate = OUT_RATE, .last_pos = -1};
         if (is_mt_key(lang)) {
             MtEngine *mt = mt_for(s, lang);
             if (mt && !atomic_load(&s->cancel)) {
                 const char *voice = strchr(lang, '/') + 1;
-                if (mte_speak(mt, voice, text, rate, pitch, volume, mt_pcm, &k) < 0) {
+                mte_set_reset_commands(mt, !atomic_load(&s->mt_keep_commands));
+                mte_set_24_hour(mt, !atomic_load(&s->mt_12_hour));
+                mte_set_modern_rate(mt, atomic_load(&s->mt_modern_rate));
+                if (mte_speak(mt, voice, text, rate, pitch, volume, mt_pcm, &k) < 0 && !atomic_load(&s->cancel)) {
                     snprintf(s->err, sizeof s->err, "%s", mte_error(mt));
                     os_log_error(OS_LOG_DEFAULT, "CLASSICVOICES MacinTalk speak failed: %{public}s", s->err);
                 }
@@ -595,6 +758,11 @@ static void *worker(void *arg) {
                     mte_close(mt);
                     s->mt = NULL;
                     s->mt_gen[0] = 0;
+                    // Open it again now, voice and all, unless the next
+                    // utterance is already waiting (it opens it itself).
+                    pthread_mutex_lock(&s->mu);
+                    if (!s->has_job && !s->preload_lang[0]) snprintf(s->preload_lang, sizeof s->preload_lang, "%s", lang);
+                    pthread_mutex_unlock(&s->mu);
                 }
             }
             if (!atomic_load(&s->cancel)) finish(&k, pause);
@@ -610,6 +778,7 @@ static void *worker(void *arg) {
             pthread_cond_broadcast(&s->cv);
             continue;
         }
+        if (rate < 50) rate = 50;
         Vx *vx = engine_for(s, lang);
         if (vx) k.rate = vx_sample_rate(vx);
         if (vx && !atomic_load(&s->cancel)) {
@@ -695,6 +864,10 @@ void vxs_destroy(VxStream *s) {
     free(s);
 }
 
+void vxs_set_mt_reset(VxStream *s, int on) { atomic_store(&s->mt_keep_commands, !on); }
+void vxs_set_mt_24_hour(VxStream *s, int on) { atomic_store(&s->mt_12_hour, !on); }
+void vxs_set_mt_modern_rate(VxStream *s, int on) { atomic_store(&s->mt_modern_rate, on); }
+
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);
     atomic_store(&s->cancel, 1);
@@ -722,12 +895,14 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     snprintf(s->job_lang, sizeof s->job_lang, "%s", lang);
     snprintf(s->job_fallback, sizeof s->job_fallback, "%s", fallback_key && !is_mt_key(lang) ? fallback_key : "");
     s->job_text = strdup(utf8_text);
-    s->job_rate = rate < 50 ? 50 : rate > 400 ? 400 : rate;
+    s->job_rate = rate < 10 ? 10 : rate > 400 ? 400 : rate;  // Vocalizer's floor is 50; MacinTalk's modern curve goes lower
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;
     s->job_volume = volume < 0 ? 80 : volume > 100 ? 100 : volume;  // 80 = engine default
     s->job_pause = trailing_pause_ms < 0 ? 0 : trailing_pause_ms > 5000 ? 5000 : trailing_pause_ms;
     s->has_job = 1;
     s->first_ms = -1;
+    atomic_store(&s->word_w, 0);
+    atomic_store(&s->word_r, 0);
     atomic_store(&s->producing, 1);
     atomic_fetch_add(&s->generation, 1);
     pthread_cond_broadcast(&s->cv);
@@ -750,6 +925,15 @@ size_t vxs_read(VxStream *s, float *out, size_t frames, int *done) {
     for (size_t i = 0; i < n; i++) out[i] = s->ring[(r + i) & (RING_FRAMES - 1)];
     atomic_store_explicit(&s->read_pos, r + n, memory_order_release);
     if (done) *done = !producing && n == avail;
+    return n;
+}
+
+size_t vxs_read_words(VxStream *s, VxsWord *out, size_t max) {
+    uint32_t r = atomic_load_explicit(&s->word_r, memory_order_relaxed);
+    uint32_t w = atomic_load_explicit(&s->word_w, memory_order_acquire);
+    size_t n = 0;
+    while (r != w && n < max) out[n++] = s->words[r++ % WORD_RING];
+    atomic_store_explicit(&s->word_r, r, memory_order_release);
     return n;
 }
 
@@ -813,4 +997,78 @@ int vxs_benchmark(const char *root, const char *asset_root, const char *key, con
     *audio_ms = b.frames * 1000.0 / vx_sample_rate(vx);
     vx_close(vx);
     return rc;
+}
+
+// ---------------------------------------------------------------- latency benchmark
+
+static double first_sound_ms(VxStream *s, double t0, double limit_ms) {
+    float buf[512];
+    for (;;) {
+        int done = 0;
+        size_t n = vxs_read(s, buf, 512, &done);
+        for (size_t i = 0; i < n; i++)
+            if (buf[i] > 0.005f || buf[i] < -0.005f) return now_ms() - t0;
+        if ((done && !n) || now_ms() - t0 > limit_ms) return -1;
+        if (!n) usleep(100);
+    }
+}
+
+static void drain(VxStream *s) {
+    float buf[4096];
+    double t0 = now_ms();
+    for (;;) {
+        int done = 0;
+        size_t n = vxs_read(s, buf, 4096, &done);
+        if ((done && !n) || now_ms() - t0 > 30000) return;
+        if (!n) usleep(500);
+    }
+}
+
+static int cmp_double(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
+
+void vxs_latency_bench(const char *root, const char *asset_root, const char *const *keys, int nkeys) {
+    int detail = getenv("LATBENCH_DETAIL") != NULL;  // each interruption, not just the median
+    static const char *phrases[] = {"Back.", "Settings. Button.", "Messages, 3 new items.", "Wi-Fi, three of three bars.",
+                                    "Email from john.appleseed@icloud.com: Re: Lunch on Tuesday?"};
+    static const char *long_text = "It is 4:15 PM on Saturday, October 10th, 2026. Battery 85 percent. Wi-Fi, three of three bars. "
+                                   "Messages, 3 new items. Double tap to open. Email from john.appleseed@icloud.com about lunch on Tuesday.";
+    for (int k = 0; k < nkeys; k++) {
+        VxStream *s = vxs_create(root);
+        if (asset_root) vxs_set_asset_root(s, asset_root);
+        vxs_start(s, keys[k], "Hello.", 100, 100, 80, 0);  // load the engine and voice
+        first_sound_ms(s, now_ms(), 10000);
+        drain(s);
+        for (size_t p = 0; p < sizeof phrases / sizeof *phrases; p++) {
+            double v[5];
+            for (int r = 0; r < 5; r++) {
+                double t0 = now_ms();
+                vxs_start(s, keys[k], phrases[p], 100, 100, 80, 0);
+                v[r] = first_sound_ms(s, t0, 5000);
+                drain(s);
+            }
+            if (detail) printf("LAT   %s: %.1f %.1f %.1f %.1f %.1f ms\n", phrases[p], v[0], v[1], v[2], v[3], v[4]);
+            qsort(v, 5, sizeof *v, cmp_double);
+            printf("LAT %s first sound %6.1f ms (min %5.1f)  %s\n", keys[k], v[2], v[0], phrases[p]);
+            fflush(stdout);
+        }
+        // VoiceOver moving on: interrupt a long utterance 0.3 s into its audio
+        double v[5];
+        for (int r = 0; r < 5; r++) {
+            vxs_start(s, keys[k], long_text, 100, 100, 80, 0);
+            double ts = now_ms();
+            first_sound_ms(s, ts, 10000);
+            float buf[512];
+            size_t got = 0;
+            while (got < 6615 && now_ms() - ts < 5000) { int d = 0; size_t n = vxs_read(s, buf, 512, &d); got += n; if (!n) usleep(200); }
+            double t0 = now_ms();
+            vxs_start(s, keys[k], "Settings. Button.", 100, 100, 80, 0);  // cancels the long one
+            v[r] = first_sound_ms(s, t0, 5000);
+            if (detail) printf("LAT   interrupt %d: next first sound %.1f ms\n", r, v[r]);
+            drain(s);
+        }
+        qsort(v, 5, sizeof *v, cmp_double);
+        printf("LAT %s after interrupting a long utterance: next first sound %6.1f ms (min %5.1f, max %5.1f)\n", keys[k], v[2], v[0], v[4]);
+        fflush(stdout);
+        vxs_destroy(s);
+    }
 }

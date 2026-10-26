@@ -61,7 +61,7 @@ static void h_sleep(Mt *m, X86 *c) {
 // per utterance; a thread for each source would leave interrupted work
 // queued up on threads until the engine ran out of them.
 #define MAX_Q 64
-#define MAX_SRC 128
+#define MAX_SRC 4096  // recompiled code can run far ahead of playback, with a source per pending task
 typedef struct {
     int used, started;
     pthread_cond_t cv;
@@ -122,7 +122,13 @@ static void h_dispatch_source_create(Mt *m, X86 *c) {
     }
     int i;
     for (i = 0; i < MAX_SRC && g_src[i].used; i++) {}
-    if (i == MAX_SRC || qi < 0) { pthread_mutex_unlock(&g_mu); mt_log("mt: all dispatch sources in use"); R(c, 0); return; }
+    if (i == MAX_SRC || qi < 0) {
+        pthread_mutex_unlock(&g_mu);
+        // the engine can't go on without its timers: have it restarted rather than stay quiet
+        mt_log("mt: all dispatch sources in use; restarting the engine");
+        m->broken = 1;
+        x86_fault(c, "out of dispatch sources");
+    }
     DSource *s = &g_src[i];
     uint32_t guest = s->guest;
     memset(s, 0, sizeof *s);
@@ -135,15 +141,18 @@ static void h_dispatch_source_create(Mt *m, X86 *c) {
 }
 static void h_dispatch_set_context(Mt *m, X86 *c) { DSource *s = src_of(m, c, A(c, 0)); if (s) s->ctx = A(c, 1); }
 static void h_dispatch_get_context(Mt *m, X86 *c) { DSource *s = src_of(m, c, A(c, 0)); R(c, s ? s->ctx : 0); }
+// Looked up once per engine and cleared in mt_gcd_reset: keyed on the Mt
+// pointer, a new engine allocated where the last one was (Snow Leopard, then
+// Lion) kept the last one's address, so Lion's deferred graph stop went
+// unrecognised and every stop waited 40 ms for synthesis to wind down.
+static int g_ds_looked;
+static uint32_t g_ds_fn;
 static uint32_t deferred_stop_fn(Mt *m) {
-    static Mt *owner;
-    static uint32_t fn;
-    if (owner != m) {
-        owner = m;
-        fn = 0;
-        for (int i = 0; i < m->nimages && !fn; i++) fn = mt_export(m, i, "_MTBEAudioUnitDeferredStopAudioGraph");
+    if (!g_ds_looked) {
+        g_ds_looked = 1;
+        for (int i = 0; i < m->nimages && !g_ds_fn; i++) g_ds_fn = mt_export(m, i, "_MTBEAudioUnitDeferredStopAudioGraph");
     }
-    return fn;
+    return g_ds_fn;
 }
 static void h_set_event_handler_f(Mt *m, X86 *c) {
     DSource *s = src_of(m, c, A(c, 0));
@@ -308,12 +317,7 @@ static void h_dispatch_resume(Mt *m, X86 *c) {
         x86_fault(c, "too many engine threads");
     }
     __sync_fetch_and_add(&m->live, 1);
-    pthread_t th;
-    pthread_attr_t at;
-    pthread_attr_init(&at);
-    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    pthread_create(&th, &at, queue_main, k);
-    pthread_attr_destroy(&at);
+    mt_thread_start(queue_main, k);
 }
 static void h_dispatch_source_cancel(Mt *m, X86 *c) {
     DSource *s = src_of(m, c, A(c, 0));
@@ -340,6 +344,8 @@ void mt_gcd_reset(void) {
     memset(g_q, 0, sizeof g_q);
     memset(g_qguest, 0, sizeof g_qguest);
     g_default_q = -1;
+    g_ds_looked = 0;
+    g_ds_fn = 0;
 }
 
 const MtHleEntry mt_hle_gcd[] = {

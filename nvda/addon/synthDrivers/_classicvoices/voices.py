@@ -52,8 +52,22 @@ class Voice:
         self.language = language
 
 
-def scan(voices_root, downloads_root):
-    """-> [Voice], sorted for a sensible picker order."""
+def hidden_path(voices_root):
+    """<data>/hidden.txt: voices taken out of the system's list (a key per line)."""
+    return os.path.join(os.path.dirname(os.path.normpath(voices_root)), "hidden.txt")
+
+
+def hidden_keys(voices_root):
+    try:
+        with open(hidden_path(voices_root), encoding="utf-8") as f:
+            return {line.strip() for line in f if line.strip()}
+    except OSError:
+        return set()
+
+
+def scan(voices_root, downloads_root, include_hidden=False):
+    """-> [Voice], sorted for a sensible picker order; without the hidden ones
+    unless include_hidden."""
     out = []
     for build, label in IOS_BUILDS:
         if not has_engine(voices_root, build):
@@ -91,4 +105,7 @@ def scan(voices_root, downloads_root):
             kind = "compact" if compact else "premium"
             out.append(Voice("%s/%s" % (era, folder),
                              "%s (Mac OS X %s, %s)" % (name, label, kind), lang))
+    if not include_hidden:
+        hidden = hidden_keys(voices_root)
+        out = [v for v in out if v.key not in hidden]
     return out

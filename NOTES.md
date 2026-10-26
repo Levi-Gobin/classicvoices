@@ -272,6 +272,153 @@ team-prefixed group. So, since 2026-10-18:
   import_rootfs(). Verified with import_ipsw on the real IPSWs: iOS 3, 7 and
   10 engines and voice folders byte-identical to the Mac's hdiutil
   extraction; DLLs and the add-on still build (zig cc for MinGW).
+## NVDA on Windows on Arm (tested 2026-10-25)
+
+- World Designer's Windows 11 ARM64 VM (~/VMs/windows; ask that session
+  first; work only in C:\classic-voices). NVDA 2026.2 portable there runs as
+  ARM64EC and loads cvengine64.dll (x64, emulated) without complaint.
+- The VM has no sound card, so NVDA can't open a WavePlayer (our driver,
+  like NVDA's own, fails to load and NVDA falls back to OneCore). Tested
+  with a test-only global plugin that swaps nvwave.WavePlayer for a
+  real-time fake and calls setSynth again: 69 voices, speech, cancel, and
+  IndexCommands each reached exactly when their segment's audio had played.
+  extensionPoints hold handlers weakly: register module-level functions,
+  not lambdas.
+- Interpreter under x64 emulation: first sound 105-370 ms, about 1x real
+  time. With fast code (cvnative_<build>_64.dll in <data>/Native): 17-55 ms,
+  19-24 ms after an interrupt; cvtest output is byte-identical either way.
+- The DLLs build on the Mac with zig cc (-target x86_64-windows-gnu /
+  x86-windows-gnu) through a wrapper that drops -static, adds
+  -Wl,--out-implib for the DLL, and links cvtest against that .lib. The fast
+  code cross-compiles the same way from build/gen* (about 90 s per build and
+  bitness, 32-bit with -DGUEST_MEM_SIZE=0x20000000u).
+
+## SAPI 5 engine (windows/sapi, 2026-10-25)
+
+- cvsapi64.dll / cvsapi32.dll: in-process COM engines (ISpTTSEngine +
+  ISpObjectWithToken) in C over vxstream; README there has the mapping.
+  Registering each DLL with its own regsvr32 puts its CLSID and tokens in its
+  own registry view, so 64-bit and 32-bit programs each see all voices. On
+  Windows on Arm, System32's (ARM64) regsvr32 registers the x64 DLL fine.
+- Tested on the VM through SAPI itself (cvsapitest, WAV output), through
+  System.Speech in 32-bit PowerShell (bookmarks at 880/1501/2020 ms), and
+  through NVDA's sapi5 driver (the WavePlayer stand-in; it calls
+  feed(pointer, size)). Output is byte-identical to the interpreter (cvtest)
+  with fast code. Fast code, first audio: 64-bit 14-20 ms short, 40-45 ms
+  long; 32-bit 21-27 / 44-60 ms; interrupt to next first audio 21-34 ms,
+  engine stop 1-5 ms; SAPI itself adds about 0.2 ms.
+- SAPI creates the engine object at the first Speak, not at SetVoice, so the
+  first utterance also loads the voice (100-330 ms).
+- Waiting for samples uses a high-resolution waitable timer: Sleep(1) can be
+  a 15.6 ms tick.
+- My C client got no events back from GetEvents even for Microsoft's voices
+  (a client bug, not the engine); System.Speech receives them, so the bookmark
+  test is PowerShell.
+- The catalogue scan uses ANSI opendir/fopen, so registration scans through
+  the data folder's 8.3 name when it has non-ASCII characters (tested with a
+  junction named Données).
+
+## Word positions, rules, Arm, OneCore (2026-10-26)
+
+- **Word markers.** The engine already writes markers into the buffer
+  vxengine hands it (VE_OUTDATA's pMrkList): VE_MARKINFO is **40 bytes**
+  {?, type, src pos, src len (bytes of the UTF-16 input), dest pos (samples
+  into the call), dest len, phoneme, ...}; type 1 sentence, 2 word, 4
+  phoneme. The buffer was allotted 0x500 x 32 bytes while the engine was told
+  0x500 markers: now 0x500 x 40. Output is byte-identical to before on every
+  engine (iOS 3-6, 5/6 enhanced, Lion, Mavericks on iOS 7 and 10).
+  iOS 3 and 4 report no word at a sentence's start, only the sentence: the
+  stream adds its first word. vxstream maps each marker to an output frame
+  through its trimming, held silent runs, resampling and segment joins, and
+  to a byte of the request through the pitch/eos segment split
+  (vxs_read_words). SAPI places an event where the audio written so far
+  ends, so cvsapi writes up to each word, then adds its event.
+- **recomp.py --scan-bl** finds a stripped engine's function boundaries (BL
+  targets) itself, matching llvm-objdump's set exactly for iOS 3, 4 and 5:
+  objdump prints an IT block's conditional BLs as "blne" etc., which the old
+  regex skipped, so the scan skips them too. Generated code is identical to
+  the --dis output and to build/gen3. llvm-objdump is no longer needed
+  anywhere.
+- **Apple's rules on Windows.** tools/pcre2_build.py fetches PCRE2 10.45
+  (SHA-256 pinned) into build/ and compiles it into cvengine and cvsapi
+  (CV_PCRE2_STATIC). cv_rules_apply_mapped keeps a byte map through the
+  rewrites (PCRE2_SUBSTITUTE_REPLACEMENT_ONLY|MATCHED, 10.40+). The NVDA
+  add-on gained a "pronunciation rules" setting and applies them per string
+  before adding ESC commands; SAPI reads HKCU\Software\Classic Voices
+  PronunciationRules / PitchFallback.
+- **Hidden voices**: <data>/hidden.txt (a key per line), honoured by
+  cv_scan_voices (SAPI registration, speechd, Android, cvsay) and the add-on's
+  voices.scan; the app's "Use as a system voice".
+- **Narrator/OneCore**: Windows.Media.SpeechSynthesis lists only its own
+  voices. A token copied into Speech_OneCore\Voices\Tokens (64- or 32-bit
+  view), even with Version/DataVersion/Vendor=Microsoft and Microsoft's own
+  engine CLSID, never appeared (no reboot tried).
+- **ARM64X forwarder (not working)**: x64 and ARM64 programs share COM's
+  registration on Windows on Arm. lld 22 (zig lld-link) links /machine:arm64x
+  /defarm64native pure forwarders. Without load configs the native view
+  works (ARM64 System.Speech spoke) but x64 programs get the native exports
+  (error 193 resolving cvsapi_arm64). With load configs (LLVM's
+  loadconfig-arm64ec.s / loadconfig-arm64.s test inputs) LoadLibrary fails
+  with 193 in both. MSVC 14.44's link on the VM rejects every forwarded .def
+  export in /machine:arm64x ("unresolved external symbol Foo (EC Symbol)").
+  The pieces are in the scratchpad's arm64x/; the x64 DLL stays registered on
+  Arm. cvsapi_arm64.dll and cvnative_*_arm64.dll (loader suffix "arm64") build.
+
+## The desktop app (desktop/, 2026-10-26)
+
+- wxPython, native controls only; desktop/classicvoices/{system,library,ui}.py
+  over the shared _classicvoices modules (now with remote.py, the Apple
+  streaming moved out of linux/classicvoices-data). Windows: PyInstaller +
+  Inno Setup (desktop/build_windows.py, desktop/windows/ClassicVoices.iss,
+  .github/workflows/windows.yml); Linux: linux/install.sh installs it as
+  `classicvoices` with a .desktop file.
+- Tested with real screen readers: on the Windows VM a test add-on logs what
+  NVDA speaks (patching speech.speech.speak) and keys go in through QMP
+  sendkey (SendKeys from a scheduled task reaches the task's own hidden
+  console instead); on the Linux VM Orca's --debug-file "SPEECH OUTPUT" lines
+  and AT-SPI generateKeyboardEvent. UIA from PowerShell on the Arm VM shows
+  every Win32 control as "Pane" (no client-side proxies there): use NVDA.
+- Found that way: re-activating the window left focus on the wx.Frame, where
+  Tab does nothing (now a panel holds the notebook and the frame passes focus
+  on); a page rebuilt while its tab was hidden let Tab wander into it (only
+  the page on screen is rebuilt); rebuilding the page every second for
+  progress would re-announce focus (labels now update in place, in 5%
+  steps); GTK screen readers missed focus set during a rebuild (CallAfter);
+  Ctrl+Tab doesn't change GTK notebook tabs (handled); a slider read as
+  "14" (a percentage of its range), now a list of rates.
+- NVDA on the Arm VM froze the (emulated) app for ~9 s on focusing a text
+  field holding Arabic; English is fine. Not seen elsewhere.
+- linux/install.sh never restarted Speech Dispatcher: pkill -x
+  speech-dispatcher can't match (process names keep 15 characters); now
+  -x speech-dispatch. It also copies over a running module by renaming.
+
+## One layout, and progress the screen reader reports (2026-10-26)
+
+- Every app has the same tabs and pages: iOS, macOS, Settings; a version
+  menu and languages, a language's voices grouped by version, a voice's page
+  (try it, system voice, remove), and on the non-Apple platforms "Get the
+  firmware" and "Speed up the voices". Android's MainActivity is now that
+  browser (Library.java is the model; the old Voices/Downloads screens are
+  gone): tabs are buttons with TalkBack's role extra
+  ("AccessibilityNodeInfo.roleDescription") and selected state, pages keep a
+  stack per tab with Back and the system back key, and TalkBack's focus goes
+  to the location line on a new page and back to the row that opened it.
+- Progress (the user's rule): pass it on every 1% and let the screen reader
+  decide how to report it. iOS/Mac: a downloading row's label stays "Stop
+  downloading X" and the amount is its accessibilityValue with the
+  updatesFrequently trait, so VoiceOver polls it at its own pace. wx (Windows,
+  Linux, the NVDA add-on's dialog) and Android: a native progress bar under
+  the Stop button (wx.Gauge, ProgressBar), set at each whole percent; the
+  labels don't change with progress (a focused button's name change would be
+  spoken every time).
+- Android: a stopped enhanced download left its `<lang>.downloading` folder,
+  which the catalogue then listed as a voice; partial folders are now removed
+  whenever a download stops or fails. Debuggable builds log every text the
+  engine is asked to speak (`adb logcat -s CVSPEAK`): that's how TalkBack's
+  wording was checked on the emulator. (TalkBack 14 there ignores injected
+  keyboard shortcuts and swipes; restart TalkBack after reinstalling the
+  engine, or it stops speaking.)
+
 ## Android and Linux (2026-10-22)
 
 - One shared C layer: `ports/posix/` (os_log shim, Darwin rune table,
@@ -613,6 +760,60 @@ re-implementation over a 2 GB guest space at `m->mem`.
   go to os_log via mt_log (extension stderr is discarded).
 - Embedded commands ([[rate 300]], [[pbas]], [[slnc]] ...) pass through to the
   engine, as with the original voices (the user wants them).
+- **Out-of-range command values wrap inside the engine** (measured by PCM hash
+  on Fred, Vicki and Alex, 10.4-10.7, all alike). rate is 16.16 fixed: 32768+
+  speaks at the floor (Lion: already 32767.99). pbas becomes a 16-bit
+  frequency: plateau from about 80 to 155, then it wraps to the bottom (200 =
+  0). pmod levels at 200 and volm at 2, but both wrap past 2^32 as parsed.
+  Floors don't wrap (rate 0-20, pbas 0-20, -N relative). mtengine's
+  clamp_commands sets a value past the top to the top (32767, 127, 200, 2)
+  and cuts a relative +N that would pass it; rate and pbas are tracked
+  through the text (and across utterances) for that. Relative pbas is not
+  quite additive ([[pbas 30; pbas +10]] differs from [[pbas 40]]), so
+  relatives are left alone unless they'd overflow. No hex ($28 is 0); names
+  are case-insensitive; `pbas+10` (no space) is ignored by the engine.
+- **Leopard reads 24-hour times as 12-hour** (SpeechDictionary 3.5, every
+  voice): 13:45 "one forty-five PM", 00:30 "twelve thirty AM", 18:05:45
+  "eighteen hours five minutes ...". Tiger, Snow Leopard and Lion read them
+  as written. mtengine respells times that can only be 24-hour (hour 13-24 or
+  a leading zero) to "13 45", "18 oh 5", "0 0 30", "oh 7 30", which give
+  Leopard Snow Leopard's exact phonemes. Detected from version.plist (3.4-3.9).
+  `mte_phonemes` (SETextToPhonemes / 10.7 SECopyPhonemesFromText) shows what
+  an engine makes of text; it is the way to check readings.
+- **Rate curve.** The system sends rate as a percent: AVSpeechUtterance rate 0
+  -> 12.5%, 0.5 -> 100%, 1.0 -> 400% (linear on each side). Today's Alex speaks
+  48.7 + 1.737p wpm up to 100% (222 wpm) and 2.708p - 48.3 above (1035 at
+  400%); exactly 0.5 is his default 173. Classic Voices used to speak base
+  rate x p (Alex 175 x 0.5-4). "Same as today's Alex" (default) uses Alex's
+  curve for every MacinTalk voice (mte_set_modern_rate); measured with
+  AVSpeechSynthesizer.write on the Mac.
+- **`say` turns embedded commands into SSML** before an Audio Unit voice sees
+  them: [[pbas P]] arrives as prosody pitch +(2^((P - 51.18)/12) - 1)*100%
+  (pbas 127 = +7883%), [[rate 200]] as rate 112%. "+N%" is a plain multiple;
+  read as a power of two it overflowed past pbas 171 and fell back to the
+  normal pitch, and Vocalizer's 0.56-1.58 cap held MacinTalk to ~166 Hz.
+  MacinTalk keys now get the exact percent (ESC\pitchpct=N\, linear reading)
+  and Tiger Fred tracks today's Fred (760 Hz at pbas 127). Vocalizer keeps the
+  power-of-two reading of VoiceOver's changes, capped. VoiceOver itself spaces
+  out "[[" so it never sends commands.
+- A command `say` doesn't know (inpt, cmnt ...) at the very start of the text
+  loses its first bracket (" [inpt TUNE]]ppp", read aloud as "inpt tune");
+  anywhere else it arrives whole (hence the user's leading-quote trick).
+  mtengine's restore_command puts the bracket back.
+- **Lion names every sung ([[inpt TUNE]]) word U+266B** (beamed eighth notes).
+  Our 10.7 CFStrings are MacRoman bytes and made it "?"; Alex's
+  MTMBSelectUnits::FindWordCandidates then found "?" among his recorded words
+  and sang "question" for any run of TUNE consonants. Characters MacRoman
+  lacks now get spare control bytes that read back as themselves
+  (mt_lion.c), and mtengine turns control characters in input into spaces.
+- **A voice's rate is not always words per minute** (tools/mt_rate_table.py
+  measures it, core/mt/mt_rates.h): Tiger's formant voices run away above
+  ~250 (asked 500, Fred speaks 1281; top 2200), Leopard-Lion's compress
+  (asked 1000: 553-703), Tiger Vicki/Victoria/Agnes/Bruce level off at
+  370-600, Tiger Cellos/Organ/Good/Bad News drop to 32 wpm above 180. The
+  modern curve asks each voice for the rate that gives the target speed
+  (within ~1% where the voice can reach it, else its own ceiling). Classic
+  and embedded [[rate]] are left as the engine takes them.
 - Testing the extension path: app launch arg `-voicetest mt105/Alex,...`
   speaks via AVSpeechSynthesizer (= the extension); watch with
   `.venv/bin/pymobiledevice3 syslog live -pn Synth`.
@@ -657,3 +858,75 @@ re-implementation over a 2 GB guest space at `m->mem`.
   (MT_EXTRA=<group>/EnhancedVoices for the app-group Alex layout). The
   benchmark takes `-bench-only mt107` to run a subset.
 - The user does not want iOS 10's ARM MacinTalk used (different sound).
+- **Recompiled MacinTalk (2026-10-25).** Same idea as the Vocalizer fast code:
+  `tools/build_mt_native.sh` loads each extracted/mtNNN with the host harness
+  (tests/mt_golden.c) under `MT_DUMP=<dir>` (the images exactly as the loader
+  left them: relocated, imports bound), and `tools/recomp_x86.py` turns the
+  hottest functions (`--coverage 0.995` of tools/profiles/mtNNN.txt, recorded
+  with `--profile`) into build/mtgenNNN/*.c. Instruction semantics are shared:
+  core/x86/x86_ops.h works on an `X86Core` (registers, flags, SSE, x87) and
+  takes the instruction's bytes as arguments; each guest instruction becomes
+  a small static function calling `x86_exec_<group>` with constant bytes
+  (group = m0..mf by opcode>>4, 0f0..0ff, sse, x87, so each compiles only its
+  part of the interpreter), which clang simplifies alone and then inlines.
+  The guest stack and return addresses are kept as on x86. At run time a set
+  registers itself (constructor) and mt_native_attach uses it only if the
+  `__text` ranges it was made from hash identically in the loaded engine.
+  `MT_NATIVE=0` turns it off. Mac speed-up 3-6x per utterance (Leopard Alex
+  long sentence 1112 -> 182 ms), mostly limited by the 128x playback pacing.
+- Recompiled-code pitfalls found: (1) guest recursion now uses the C stack,
+  so engine threads have 16 MB stacks and functions hand over to the
+  interpreter below `X86.stack_limit`; (2) `ret n` (callee pops, e.g. functions
+  returning a struct) must count as returning, or every such call leaves a
+  nested interpreter frame and the stack runs out (Agnes hung); (3) the
+  dispatcher must interpret an instruction when native code hands back without
+  moving, or (1) livelocks; (4) loops get a compiler barrier so a wait on
+  another thread's store re-reads memory; (5) the prefix loop had to be
+  unrolled and the interpreter split by opcode group, or one file took >10 min
+  and 5 GB to compile; Xcode's C debug info is off for the engine for the same
+  reason.
+- Verification: tests/mt_golden.c prints a hash per utterance (every voice,
+  rates 60-250, pitch 40-160, MT_GOLDEN_CORPUS=tools/corpus.txt adds the corpus);
+  tests/x86_native_diff.py runs every generated instruction against the
+  interpreter from random states (13091 for Leopard, all identical). Tiger:
+  all 1104 utterances identical. Elsewhere Alex, Vicki and (in long runs)
+  Bells/Boing/Lion voices differ, by pause lengths (e.g. 89 vs 72 ms after a
+  semicolon) and +-2 frames at the end: MacinTalk sizes some pauses against
+  its audio clock, so the output depends on how far it runs ahead of playback.
+  The interpreter does the same when playback is slowed (MT_SPEED test: Alex
+  287390 -> 287698 frames at 4x); with random delays the native build matches
+  the interpreter exactly. A virtual audio clock would make it deterministic.
+- Debugging recompiled code: `--debug-calls` (every call through the
+  dispatcher) + `MT_NATIVE_RANGE=lo-hi,lo-hi` (hex) to bisect; `-DX86_TRACE`
+  builds print each guest thread's last import and position when the engine
+  gives up waiting.
+- **Interrupting (2026-10-25).** `vxs_latency_bench` (app `-latbench key,...`,
+  `LATBENCH_DETAIL=1` for each run) measures first sound after cancelling a
+  long utterance. What it found:
+  - Leopard and Snow Leopard Alex/Vicki don't honour a stop until they have
+    synthesized the rest (a stop left to finish took 600-800 ms), so a cancel
+    restarts the engine after MT_STOP_LIMIT (12 ms, now covering the stop and
+    the drain after it). A voice whose last stop was cut off restarts
+    straight away next time (every eighth tries a stop again): 30 -> 13 ms
+    for Leopard Alex on the Mac.
+  - Opening a channel parsed SpeechDictionary's Homophones plist (2086 keys)
+    into an O(n^2) CFDictionary: 5-9 ms of every engine open. CF dictionaries
+    now keep a hash index (mt_cf.c); open 9.4 -> 0.9 ms.
+  - Lion after Snow Leopard in one process: mt_gcd cached the address of
+    MTBEAudioUnitDeferredStopAudioGraph keyed on the Mt pointer, and the new
+    Mt can reuse the old one's address, so Lion's graph-stop timer went
+    unrecognised and every stop waited ~40 ms of synthesis (the phone's
+    44 ms). Reset per engine now.
+  - pthread keys were numbered across engines: Snow Leopard (a key per open)
+    could not open again after 63 restarts in one process. Reset per engine.
+  - After a restart with nothing queued, the stream reopens the engine and
+    loads the voice at once (mte_prepare), not on the next utterance.
+  - All of the above is MacinTalk, which the Windows, Linux and Android ports
+    stub out. Their Vocalizer path, measured on an LG V60 (Android 13,
+    Snapdragon 865, fast code): first sound 15-47 ms, and an interrupt adds
+    about 3 ms over a fresh start (ios6 24.7 vs 21.0 ms for "Settings.
+    Button."), so no stop wait there. Glue: Android and speechd poll every
+    1 ms and stop at once. The NVDA driver held back each whole chunk until
+    the next one came (for the index callback) and polled every 4 ms: 4-8 ms
+    of every first sound. It now keeps back only the last 10 ms and polls
+    every 1 ms.
