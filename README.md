@@ -40,8 +40,8 @@ It asks what to build: on Windows, the iPhone app and the NVDA add-on; on a
 Mac, the iPhone app and the Mac app; on either, also the Apple Vision Pro
 app. Then it signs you in to GitHub in your
 browser (the one-time code is copied for you), makes your own copy of this
-repository, builds there, and reads out each step as it finishes. About half
-an hour later:
+repository, builds there, and reads out each step as it finishes. About an
+hour and a quarter later (another hour with Apple Vision Pro):
 
 - **NVDA**: the voices go into NVDA's settings folder and NVDA offers to
   install the add-on. Choose Yes, restart NVDA, and pick Classic Voices as the
@@ -71,7 +71,8 @@ Run the same line again any time to update.
 3. Open the "Actions" tab. GitHub turns workflows off in new forks, so first
    press "I understand my workflows, go ahead and enable them". Then choose
    "Build Classic Voices" and press "Run workflow". Leave "targets" as it is
-   to build everything. The build takes about half an hour.
+   to build everything. The build takes about an hour and a quarter, another
+   hour with Apple Vision Pro.
 4. When it finishes, download from the run's page and unzip with your
    password: "ClassicVoices" holds the iPhone app (sideload
    `ClassicVoices.ipa`), "ClassicVoicesMac" the Mac app, "ClassicVoicesNVDA" is the add-on, and

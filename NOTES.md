@@ -995,6 +995,10 @@ re-implementation over a 2 GB guest space at `m->mem`.
   instructions is now split into parts that pass control to one another by
   `musttail` calls (one router per function picks the part by address), each
   free to go in its own file; no file has more than ~900 instructions.
+  The C engines and generated code are a static library per platform
+  (EngineCodeiOS/Vision/Mac) that the app and extension force-load, so they
+  compile once: GitHub build 2:25 -> 1:11 for the Mac, iPhone app 2:16 ->
+  1:09 (Vision Pro another hour, in the same job).
 - Verification: tests/mt_golden.c prints a hash per utterance (every voice,
   rates 60-250, pitch 40-160, MT_GOLDEN_CORPUS=tools/corpus.txt adds the corpus);
   tests/x86_native_diff.py runs every generated instruction against the
