@@ -23,7 +23,7 @@ jobs:
   iphone:  # also Vision Pro: the same firmware and engines
     if: contains(inputs.targets, 'iphone') || contains(inputs.targets, 'visionpro')
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 300  # iPhone and Vision Pro each compile the fast code twice (app and extension)
     steps:
       - uses: actions/checkout@v4
 
@@ -98,7 +98,7 @@ jobs:
   mac:
     if: contains(inputs.targets, 'mac')
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 200
     steps:
       - uses: actions/checkout@v4
 

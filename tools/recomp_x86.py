@@ -275,27 +275,25 @@ def cbytes(raw):
     return f"{lo:#x}ull, {hi:#x}ull"
 
 
-def emit_function(dump, fn, entries_of, out, prefix, debug_calls=False):
+def emit_function(dump, fn, entries_of, prefix, debug_calls=False, part_size=600):
+    """One C function per guest function. A guest function longer than
+    part_size instructions becomes several C functions (parts) of consecutive
+    instructions that hand over to each other by tail calls, each of which can
+    go in a file of its own: clang needs about 1.5 MB per instruction in a
+    file, more for one long function (a 10000-instruction one took 10 GB,
+    more than a GitHub runner has). Returns the name, its entry points and
+    the units to write: (lines, instructions)."""
     name = f"nx_{prefix}_{fn.start:08x}"
     labels = sorted(fn.insns)
     labelset = set(labels)
     resume = sorted((fn.roots | fn.return_sites | fn.branch_targets) & labelset)
-    defs = []
-    body = []
-    w = body.append
-    w(f"// {fn.name}")
-    w(f"int {name}(X86 *c, uint32_t start) {{")
-    w("    if (__builtin_expect((uintptr_t)__builtin_frame_address(0) < c->stack_limit, 0)) return 1;")
-    w("    X86Core K = c->k;")
-    w("    const volatile int *const abortp = c->abort ? c->abort : &x86_rt_never;")
-    w("    const uint32_t entry_sp = K.r[ESP], entry_ret = k_rd32(&K, entry_sp);")
-    w("    int rc;")
-    w("    (void)rc;")
-    w("    switch (start) {")
-    for a in resume:
-        w(f"    case {a:#x}: goto L_{a:x};")
-    w("    default: return 1;")
-    w("    }")
+    parts = [labels[i:i + part_size] for i in range(0, len(labels), part_size)]
+    split = len(parts) > 1
+    part_of = {a: p for p, ls in enumerate(parts) for a in ls}
+    pname = lambda p: f"{name}_{p}" if split else name
+    args = "c, {}, entry_sp, entry_ret" if split else None
+    out_fns = []
+    parts_entered = [set() for _ in parts]  # entered from another part
 
     def leave(t, indent):
         """Control goes to t, outside this function's code."""
@@ -303,63 +301,120 @@ def emit_function(dump, fn, entries_of, out, prefix, debug_calls=False):
             return f"{indent}c->k = K; return {entries_of[t]}(c, {t:#x});"
         return f"{indent}c->k = K; return 1;"
 
-    def goto(t, src, indent):
-        s = ""
-        if t <= src:
-            # A loop. Guest memory is shared with the engine's other threads:
-            # the barrier makes each pass read it again (a wait for another
-            # thread would otherwise spin forever on a value loaded once),
-            # and an engine shutdown gets through.
-            s = (f"{indent}__asm__ volatile(\"\" ::: \"memory\");\n"
-                 f"{indent}if (__builtin_expect(*abortp, 0)) {{ c->k = K; return 1; }}\n")
-        if t in labelset:
-            return s + f"{indent}goto L_{t:x};"
-        return s + leave(t, indent)
+    for p, plabels in enumerate(parts):
+        here = set(plabels)
+        entered = set(a for a in resume if a in here)  # where the part can be started
+        body = []
+        defs = []
+        w = body.append
 
-    for i, a in enumerate(labels):
-        ins = fn.insns[a]
-        nxt = a + ins.size
-        w(f"L_{a:x}:")
-        if ins.kind == "stop":
-            w(f"    K.eip = {a:#x}; c->k = K; return 1;")
-            continue
-        w(f"    K.eip = {a:#x}; {insn_fn(defs, f'i_{a:x}', ins.raw)}")
-        if ins.kind == "jcc":
-            w(f"    if (K.eip != {nxt:#x}) {{")
-            w(goto(ins.target, a, "        "))
+        def goto(t, src, indent):
+            s = ""
+            if t <= src:
+                # A loop. Guest memory is shared with the engine's other threads:
+                # the barrier makes each pass read it again (a wait for another
+                # thread would otherwise spin forever on a value loaded once),
+                # and an engine shutdown gets through.
+                s = (f"{indent}__asm__ volatile(\"\" ::: \"memory\");\n"
+                     f"{indent}if (__builtin_expect(*abortp, 0)) {{ c->k = K; return 1; }}\n")
+            if t in here:
+                return s + f"{indent}goto L_{t:x};"
+            if t in labelset:
+                parts_entered[part_of[t]].add(t)
+                return s + (f"{indent}c->k = K; __attribute__((musttail)) "
+                            f"return {pname(part_of[t])}({args.format(f'{t:#x}')});")
+            return s + leave(t, indent)
+
+        for i, a in enumerate(plabels):
+            ins = fn.insns[a]
+            nxt = a + ins.size
+            w(f"L_{a:x}:")
+            if ins.kind == "stop":
+                w(f"    K.eip = {a:#x}; c->k = K; return 1;")
+                continue
+            w(f"    K.eip = {a:#x}; {insn_fn(defs, f'i_{a:x}', ins.raw)}")
+            if ins.kind == "jcc":
+                w(f"    if (K.eip != {nxt:#x}) {{")
+                w(goto(ins.target, a, "        "))
+                w("    }")
+            elif ins.kind == "jmp":
+                w(goto(ins.target, a, "    "))
+            elif ins.kind == "call" and ins.target == nxt:
+                pass  # call next / pop: the PIC base
+            elif ins.kind == "call" and pc_thunk(dump, ins.target):
+                t0, t1 = pc_thunk(dump, ins.target)
+                w(f"    {insn_fn(defs, f't_{a:x}_0', t0)} K.eip = {ins.target + 3:#x}; {insn_fn(defs, f't_{a:x}_1', t1)}")
+            elif ins.kind in ("call", "icall"):
+                t = ins.target
+                w("    c->k = K;")
+                if ins.kind == "call" and t in entries_of and not debug_calls:
+                    w(f"    rc = {entries_of[t]}(c, {t:#x});")
+                else:
+                    w(f"    rc = x86_rt_call(c, {nxt:#x});")
+                w("    K = c->k; if (rc) return 1;")
+                w(f"    if (K.eip != {nxt:#x}) goto dyn;")
+            elif ins.kind in ("ret", "ijmp"):
+                w("    goto dyn;")
+            if ins.kind not in ("jmp", "ret", "ijmp"):
+                following = plabels[i + 1] if i + 1 < len(plabels) else None
+                if following != nxt:
+                    w(goto(nxt, a, "    ") if nxt in labelset else leave(nxt, "    "))
+        w("dyn:")
+        w("    if (K.eip == entry_ret && K.r[ESP] - (entry_sp + 4) <= X86_CALLEE_POP) { c->k = K; return 0; }")
+        w("    switch (K.eip) {")
+        for a in sorted(entered):
+            w(f"    case {a:#x}: goto L_{a:x};")
+        if split:
+            w("    default: break;")
             w("    }")
-        elif ins.kind == "jmp":
-            w(goto(ins.target, a, "    "))
-        elif ins.kind == "call" and ins.target == nxt:
-            pass  # call next / pop: the PIC base
-        elif ins.kind == "call" and pc_thunk(dump, ins.target):
-            t0, t1 = pc_thunk(dump, ins.target)
-            w(f"    {insn_fn(defs, f't_{a:x}_0', t0)} K.eip = {ins.target + 3:#x}; {insn_fn(defs, f't_{a:x}_1', t1)}")
-        elif ins.kind in ("call", "icall"):
-            t = ins.target
-            w("    c->k = K;")
-            if ins.kind == "call" and t in entries_of and not debug_calls:
-                w(f"    rc = {entries_of[t]}(c, {t:#x});")
-            else:
-                w(f"    rc = x86_rt_call(c, {nxt:#x});")
-            w("    K = c->k; if (rc) return 1;")
-            w(f"    if (K.eip != {nxt:#x}) goto dyn;")
-        elif ins.kind in ("ret", "ijmp"):
-            w("    goto dyn;")
-        if ins.kind not in ("jmp", "ret", "ijmp"):
-            following = labels[i + 1] if i + 1 < len(labels) else None
-            if following != nxt:
-                w(goto(nxt, a, "    ") if nxt in labelset else leave(nxt, "    "))
-    w("dyn:")
-    w("    if (K.eip == entry_ret && K.r[ESP] - (entry_sp + 4) <= X86_CALLEE_POP) { c->k = K; return 0; }")
-    w("    switch (K.eip) {")
-    for a in resume:
-        w(f"    case {a:#x}: goto L_{a:x};")
-    w("    default: c->k = K; return 1;")
-    w("    }")
-    w("}")
-    out.extend(defs + body)
-    return name, resume
+            w(f"    c->k = K; __attribute__((musttail)) return {name}_go({args.format('K.eip')});")
+        else:
+            w("    default: c->k = K; return 1;")
+            w("    }")
+        w("}")
+        out_fns.append((p, entered, defs, body))
+
+    fns = []
+    for p, entered, defs, body in out_fns:
+        head = []
+        h = head.append
+        if split:
+            h(f"int {pname(p)}(X86 *c, uint32_t start, uint32_t entry_sp, uint32_t entry_ret) {{")
+        else:
+            h(f"// {fn.name}")
+            h(f"int {name}(X86 *c, uint32_t start) {{")
+            h("    if (__builtin_expect((uintptr_t)__builtin_frame_address(0) < c->stack_limit, 0)) return 1;")
+        h("    X86Core K = c->k;")
+        h("    const volatile int *const abortp = c->abort ? c->abort : &x86_rt_never;")
+        if not split:
+            h("    const uint32_t entry_sp = K.r[ESP], entry_ret = k_rd32(&K, entry_sp);")
+        h("    int rc;")
+        h("    (void)rc;")
+        h("    switch (start) {")
+        for a in sorted(entered | parts_entered[p]):
+            h(f"    case {a:#x}: goto L_{a:x};")
+        h("    default: return 1;")
+        h("    }")
+        fns.append(defs + head + body)
+    if not split:
+        return name, resume, [(fns[0], len(labels))]
+    # parts call each other and the router below, from any file
+    sig = "(X86 *c, uint32_t start, uint32_t entry_sp, uint32_t entry_ret)"
+    decl = [f"int {pname(p)}{sig};" for p in range(len(parts))] + [f"int {name}_go{sig};"]
+    go = [f"int {name}_go{sig} {{"]
+    for p in range(len(parts) - 1):
+        go.append(f"    if (start < {parts[p + 1][0]:#x}) {{ __attribute__((musttail)) return {pname(p)}(c, start, entry_sp, entry_ret); }}")
+    go.append(f"    __attribute__((musttail)) return {pname(len(parts) - 1)}(c, start, entry_sp, entry_ret);")
+    go.append("}")
+    entry = [f"// {fn.name}",
+             f"int {name}(X86 *c, uint32_t start) {{",
+             "    if (__builtin_expect((uintptr_t)__builtin_frame_address(0) < c->stack_limit, 0)) return 1;",
+             "    const uint32_t entry_sp = c->k.r[ESP];",
+             f"    return {name}_go(c, start, entry_sp, k_rd32(&c->k, entry_sp));",
+             "}"]
+    units = [(decl + go + entry, 0)]
+    units += [(decl + f, len(ls)) for f, ls in zip(fns, parts)]
+    return name, resume, units
 
 
 def main():
@@ -449,15 +504,18 @@ def main():
     decls = "\n".join(f"int nx_{a.prefix}_{f.start:08x}(X86 *c, uint32_t start);" for f in order)
     files, cur, cur_n, table, total = [], [], 0, [], 0
     for f in order:
-        body = []
-        name, resume = emit_function(dump, f, entries_of, body, a.prefix, a.debug_calls)
+        name, resume, units = emit_function(dump, f, entries_of, a.prefix, a.debug_calls, a.per_file)
         table += [(r, name) for r in resume]
-        cur += body + [""]
-        cur_n += len(f.insns)
         total += len(f.insns)
-        if cur_n >= a.per_file:
-            files.append(cur)
-            cur, cur_n = [], 0
+        for body, n in units:
+            if cur and cur_n + n > a.per_file * 3 // 2:
+                files.append(cur)
+                cur, cur_n = [], 0
+            cur += body + [""]
+            cur_n += n
+            if cur_n >= a.per_file:
+                files.append(cur)
+                cur, cur_n = [], 0
     if cur:
         files.append(cur)
     for i, body in enumerate(files):

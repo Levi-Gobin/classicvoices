@@ -988,6 +988,13 @@ re-implementation over a 2 GB guest space at `m->mem`.
   unrolled and the interpreter split by opcode group, or one file took >10 min
   and 5 GB to compile; Xcode's C debug info is off for the engine for the same
   reason.
+  (6) clang needs about 1.5 MB per guest instruction in a file and more for
+  one long function: Lion's 10000-instruction function took 10 GB, and the
+  first GitHub build with all four generations (2026-10-27) swapped on the
+  7 GB runner until the 150-minute limit. A function over `--per-file` (600)
+  instructions is now split into parts that pass control to one another by
+  `musttail` calls (one router per function picks the part by address), each
+  free to go in its own file; no file has more than ~900 instructions.
 - Verification: tests/mt_golden.c prints a hash per utterance (every voice,
   rates 60-250, pitch 40-160, MT_GOLDEN_CORPUS=tools/corpus.txt adds the corpus);
   tests/x86_native_diff.py runs every generated instruction against the
