@@ -1,0 +1,44 @@
+name: Build the Linux package
+# classicvoices-linux-<arch>.tar.gz for x86_64 and aarch64, built on Ubuntu
+# 22.04 so it runs on that and anything newer (Debian 12, Fedora 36). Nothing
+# of Apple's is in it; the check below installs it the way a user would,
+# streams iOS 6 from Apple, builds its fast code and speaks through the
+# Speech Dispatcher module.
+on:
+  workflow_dispatch:
+  push:
+    paths: ["linux/**", "desktop/**", "core/**", "ports/**", "nvda/addon/**", "nvda/src/**",
+            "tools/recomp.py", "tools/profiles/**", ".github/workflows/linux.yml"]
+
+jobs:
+  linux:
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compiler
+        run: sudo apt-get update && sudo apt-get install -y clang
+      - name: Build
+        run: linux/build.sh
+      - name: Install from the package, get iOS 6 and speak
+        run: |
+          mkdir -p "$RUNNER_TEMP/unpack"
+          tar -xzf build/linux/classicvoices-linux-*.tar.gz -C "$RUNNER_TEMP/unpack"
+          "$RUNNER_TEMP/unpack/classicvoices/install.sh"
+          export PATH="$HOME/.local/bin:$PATH"
+          classicvoices-data import ios6
+          classicvoices-data status
+          M="$HOME/.local/libexec/speech-dispatcher-modules/sd_classicvoices"
+          python3 tests/speechd_module_test.py "$M" "$RUNNER_TEMP/out"
+          classicvoices-data native ios6
+          python3 tests/speechd_module_test.py "$M" "$RUNNER_TEMP/out"
+          classicvoices-say -v Samantha -o "$RUNNER_TEMP/hello.wav" "Hello from Classic Voices"
+          test -s "$RUNNER_TEMP/hello.wav"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: classicvoices-linux-${{ matrix.runner == 'ubuntu-22.04-arm' && 'aarch64' || 'x86_64' }}
+          path: build/linux/classicvoices-linux-*.tar.gz
+          compression-level: 0
