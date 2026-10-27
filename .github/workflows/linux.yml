@@ -13,6 +13,7 @@ on:
 jobs:
   linux:
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-22.04, ubuntu-22.04-arm]
     runs-on: ${{ matrix.runner }}
@@ -25,7 +26,7 @@ jobs:
         run: linux/build.sh
       - name: Install from the package, get iOS 6 and speak
         run: |
-          mkdir -p "$RUNNER_TEMP/unpack"
+          mkdir -p "$RUNNER_TEMP/unpack" "$RUNNER_TEMP/out"
           tar -xzf build/linux/classicvoices-linux-*.tar.gz -C "$RUNNER_TEMP/unpack"
           "$RUNNER_TEMP/unpack/classicvoices/install.sh"
           export PATH="$HOME/.local/bin:$PATH"
