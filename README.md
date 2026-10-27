@@ -133,18 +133,26 @@ voices change pitch on their own and keep doing so. Both are on for every voice 
 Settings or per voice. A search field at the top of each tab finds any voice in
 the catalog.
 
-### Mac OS X voices from your own copy
+### Mac OS X voices
 
-The build also takes Lion's MacinTalk voices (Fred, Victoria, Bells and the
-rest, not Alex) from the Lion installer Apple offers as a free download.
+The build also takes the MacinTalk voices (Fred, Victoria, Bells and the rest,
+not Alex) of four Mac OS X releases: Lion's from the Lion installer Apple
+offers as a free download, and Tiger's, Leopard's and Snow Leopard's from the
+install discs kept on archive.org (tools/fetch_old_macintalk.py reads only the
+parts of each disc it needs, about a tenth). Their fast engine code is made in
+the same run.
 
-Apple doesn't host the older Mac OS X releases, so Tiger's, Leopard's and Snow
-Leopard's MacinTalk voices, and Alex, come from installation media you already
-have. In the app's macOS tab, choose "Add from Files" and pick the install disc's
-image (.dmg or .iso; it's read in place, on iPhone too), the disc itself, a
-speech data folder like panthera-speech's, or single .SpeechVoice voices. The
-page says which files each release still needs. Classic Voices
-was tested with these:
+Alex, several hundred megabytes for each release, isn't in the build: each
+Leopard, Snow Leopard and Lion Alex is a voice you download in the app, which
+takes only his package from the same disc (or from the Lion installer on
+Apple's servers), in the background like any other download.
+
+Anything else from installation media you have can be added in the app's
+macOS tab: choose "Add from Files" and pick the install disc's image
+(.dmg or .iso; it's read in place, on iPhone too), the disc itself, a speech
+data folder like panthera-speech's, or single .SpeechVoice voices. The page
+says which files each release still needs. Classic Voices was tested with
+these:
 
 - Mac OS X 10.4.1 Tiger (8B1025). Later Tiger discs carry MacinTalk 3.4, which
   doesn't run here.

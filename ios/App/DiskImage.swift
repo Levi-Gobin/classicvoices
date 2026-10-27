@@ -11,11 +11,66 @@ protocol ByteReader: AnyObject {
 
 extension FileHandle: ByteReader {}
 
+/// Bytes read by offset: a file, a file on a web server, or a file inside a
+/// disk image. `sources` says which bytes of the file at the bottom of the
+/// stack a range comes from, so they can be downloaded ahead of reading.
+protocol RandomAccess: AnyObject {
+    var size: UInt64 { get }
+    func read(at offset: UInt64, count: Int) throws -> Data
+    func sources(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>]
+    /// A hint that these ranges are about to be read.
+    func prefetch(_ ranges: [Range<UInt64>])
+}
+
+final class FileSource: RandomAccess {
+    private let fh: FileHandle
+    let size: UInt64
+    init(_ url: URL) throws {
+        fh = try FileHandle(forReadingFrom: url)
+        size = try fh.seekToEnd()
+    }
+    deinit { try? fh.close() }
+    func read(at offset: UInt64, count: Int) throws -> Data {
+        try fh.seek(toOffset: offset)
+        return try fh.read(upToCount: count) ?? Data()
+    }
+    func sources(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>] { [offset ..< offset + count] }
+    func prefetch(_ ranges: [Range<UInt64>]) {}
+}
+
+/// Part of another source: a member of a xar archive, say.
+final class SliceSource: RandomAccess {
+    private let base: RandomAccess
+    private let start: UInt64
+    let size: UInt64
+    init(_ base: RandomAccess, at start: UInt64, size: UInt64) { self.base = base; self.start = start; self.size = size }
+    func read(at offset: UInt64, count: Int) throws -> Data {
+        try base.read(at: start + offset, count: Int(min(UInt64(count), size - min(offset, size))))
+    }
+    func sources(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>] { base.sources(start + offset, count) }
+    func prefetch(_ ranges: [Range<UInt64>]) { base.prefetch(ranges.map { start + $0.lowerBound ..< start + $0.upperBound }) }
+}
+
+/// Reads a source in order, for the package readers.
+final class SourceReader: ByteReader {
+    private let src: RandomAccess
+    private var pos: UInt64 = 0
+    init(_ src: RandomAccess) { self.src = src }
+    func read(upToCount count: Int) throws -> Data? {
+        let d = try src.read(at: pos, count: Int(min(UInt64(count), src.size - min(pos, src.size))))
+        pos += UInt64(d.count)
+        return d
+    }
+    func seek(toOffset offset: UInt64) throws { pos = offset }
+    func offset() throws -> UInt64 { pos }
+}
+
 /// A Mac OS X install disc image, read in place: UDIF (.dmg, compressed with
 /// zlib, bzip2, ADC or LZFSE) or raw (.iso, .cdr), with an Apple, GUID or no
 /// partition map, holding an HFS+ volume. Only what's asked for is read, so a
-/// 6 GB disc needs no more space than the files taken from it.
-final class DiskImage {
+/// 6 GB disc needs no more space than the files taken from it, and it can be
+/// on a web server (HTTPSource) or inside another disc.
+final class DiskImage: RandomAccess {
     enum ImageError: LocalizedError {
         case unreadable(String)
         var errorDescription: String? {
@@ -31,25 +86,25 @@ final class DiskImage {
         let fileLength: UInt64
     }
 
-    private let fh: FileHandle
+    private let src: RandomAccess
     private var chunks: [Chunk] = []   // UDIF only, sorted by start
     let size: UInt64
     private var cache: [(Int, Data)] = []  // a few decoded chunks
 
-    init(_ url: URL) throws {
-        fh = try FileHandle(forReadingFrom: url)
-        let end = try fh.seekToEnd()
-        try fh.seek(toOffset: end - 512)
-        let koly = try fh.read(upToCount: 512) ?? Data()
+    convenience init(_ url: URL) throws { try self.init(FileSource(url)) }
+
+    init(_ src: RandomAccess) throws {
+        self.src = src
+        let end = src.size
+        let koly = end >= 512 ? try src.read(at: end - 512, count: 512) : Data()
         guard koly.count == 512, koly.prefix(4) == Data("koly".utf8) else {
             size = end  // raw image
             return
         }
         let dataFork = koly.be64(0x18)
         let xmlOffset = koly.be64(0xD8), xmlLength = koly.be64(0xE0)
-        try fh.seek(toOffset: xmlOffset)
-        guard let xml = try fh.read(upToCount: Int(xmlLength)),
-              let plist = try PropertyListSerialization.propertyList(from: xml, format: nil) as? [String: Any],
+        let xml = try src.read(at: xmlOffset, count: Int(xmlLength))
+        guard let plist = try PropertyListSerialization.propertyList(from: xml, format: nil) as? [String: Any],
               let rf = plist["resource-fork"] as? [String: Any], let blkx = rf["blkx"] as? [[String: Any]]
         else { throw ImageError.unreadable("That disk image has no table of its contents.") }
         var total: UInt64 = 0
@@ -72,14 +127,9 @@ final class DiskImage {
         size = total
     }
 
-    deinit { try? fh.close() }
-
     /// `count` bytes at `offset` of the disk the image holds.
     func read(at offset: UInt64, count: Int) throws -> Data {
-        if chunks.isEmpty {
-            try fh.seek(toOffset: offset)
-            return try fh.read(upToCount: count) ?? Data()
-        }
+        if chunks.isEmpty { return try src.read(at: offset, count: count) }
         var out = Data(capacity: count)
         var pos = offset
         let end = min(offset + UInt64(count), size)
@@ -105,6 +155,39 @@ final class DiskImage {
         return out
     }
 
+    /// The chunks holding `offset..<offset+count`.
+    private func chunkRange(_ offset: UInt64, _ count: UInt64) -> [Int] {
+        var lo = 0, hi = chunks.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if chunks[mid].start <= offset { lo = mid } else { hi = mid - 1 }
+        }
+        var out: [Int] = []
+        var i = lo
+        while i < chunks.count && chunks[i].start < offset + count {
+            if chunks[i].start + chunks[i].length > offset { out.append(i) }
+            i += 1
+        }
+        return out
+    }
+
+    /// The bytes of the image file a range of the disk is made from.
+    private func fileRanges(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>] {
+        if chunks.isEmpty { return [offset ..< offset + count] }
+        return chunkRange(offset, count).compactMap { i in
+            let c = chunks[i]
+            return c.type == 0 || c.type == 2 || c.fileLength == 0 ? nil : c.fileOffset ..< c.fileOffset + c.fileLength
+        }
+    }
+
+    func sources(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>] {
+        fileRanges(offset, count).flatMap { src.sources($0.lowerBound, UInt64($0.count)) }
+    }
+
+    func prefetch(_ ranges: [Range<UInt64>]) {
+        src.prefetch(ranges.flatMap { fileRanges($0.lowerBound, UInt64($0.count)) })
+    }
+
     private func decoded(_ i: Int) throws -> Data {
         if let hit = cache.first(where: { $0.0 == i }) { return hit.1 }
         let c = chunks[i]
@@ -114,11 +197,9 @@ final class DiskImage {
         case 0, 2:  // zero fill
             data = Data(count: n)
         case 1:     // stored
-            try fh.seek(toOffset: c.fileOffset)
-            data = try fh.read(upToCount: Int(c.fileLength)) ?? Data()
+            data = try src.read(at: c.fileOffset, count: Int(c.fileLength))
         default:
-            try fh.seek(toOffset: c.fileOffset)
-            let packed = try fh.read(upToCount: Int(c.fileLength)) ?? Data()
+            let packed = try src.read(at: c.fileOffset, count: Int(c.fileLength))
             data = try Self.decompress(packed, type: c.type, size: n)
         }
         cache.append((i, data))
@@ -264,6 +345,8 @@ final class HFSVolume {
         catalog = Self.fork(vh, at: 272)
         overflow = Self.fork(vh, at: 192)
         catalog.extents += try overflowExtents(fileID: 4, have: catalog)
+        // All of it is read next, a node at a time: ask for it at once.
+        disk.prefetch(diskRanges(catalog, at: 0, count: catalog.size))
     }
 
     private static func fork(_ d: Data, at o: Int) -> Fork {
@@ -283,6 +366,25 @@ final class HFSVolume {
                 let within = pos - extentStart
                 let take = min(end - pos, len - within)
                 out.append(try disk.read(at: base + UInt64(e.start) * blockSize + within, count: Int(take)))
+                pos += take
+            }
+            extentStart += len
+        }
+        return out
+    }
+
+    /// Where bytes of a fork are on the disk.
+    private func diskRanges(_ fork: Fork, at offset: UInt64, count: UInt64) -> [Range<UInt64>] {
+        var out: [Range<UInt64>] = []
+        var pos = offset
+        let end = min(offset + count, fork.size)
+        var extentStart: UInt64 = 0
+        for e in fork.extents where pos < end {
+            let len = UInt64(e.count) * blockSize
+            if pos < extentStart + len {
+                let take = min(end - pos, extentStart + len - pos)
+                let at = base + UInt64(e.start) * blockSize + (pos - extentStart)
+                out.append(at ..< at + take)
                 pos += take
             }
             extentStart += len
@@ -378,6 +480,23 @@ final class HFSVolume {
 
     /// Reads a file in order, for the package readers.
     func reader(_ file: File) -> ByteReader { ForkReader(volume: self, fork: file.fork) }
+
+    /// A file read by offset: a disk image on the disc, say.
+    func source(_ file: File) -> RandomAccess { ForkSource(volume: self, fork: file.fork) }
+
+    private final class ForkSource: RandomAccess {
+        let volume: HFSVolume
+        let fork: Fork
+        var size: UInt64 { fork.size }
+        init(volume: HFSVolume, fork: Fork) { self.volume = volume; self.fork = fork }
+        func read(at offset: UInt64, count: Int) throws -> Data { try volume.read(fork, at: offset, count: count) }
+        func sources(_ offset: UInt64, _ count: UInt64) -> [Range<UInt64>] {
+            volume.diskRanges(fork, at: offset, count: count).flatMap { volume.disk.sources($0.lowerBound, UInt64($0.count)) }
+        }
+        func prefetch(_ ranges: [Range<UInt64>]) {
+            volume.disk.prefetch(ranges.flatMap { volume.diskRanges(fork, at: $0.lowerBound, count: UInt64($0.count)) })
+        }
+    }
 
     private final class ForkReader: ByteReader {
         let volume: HFSVolume

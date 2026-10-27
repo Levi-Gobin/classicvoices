@@ -1,8 +1,9 @@
 # Builds Classic Voices in your own fork, from firmware downloaded from
-# Apple's servers during the run: the iPhone and Apple Vision Pro apps, the
-# Mac app and the NVDA add-on. Nothing Apple made is stored in this repository: the engines and
-# voices are fetched, and the fast engine code is generated from them, inside
-# your run only.
+# Apple's servers during the run (and the Tiger, Leopard and Snow Leopard
+# install discs kept on archive.org): the iPhone and Apple Vision Pro apps,
+# the Mac app and the NVDA add-on. Nothing Apple made is stored in this
+# repository: the engines and voices are fetched, and the fast engine code is
+# generated from them, inside your run only.
 #
 # Before the first run, add a repository secret named IPA_PASSWORD
 # (Settings > Secrets and variables > Actions). Every download made from
@@ -49,12 +50,15 @@ jobs:
       - name: Fetch Lion's MacinTalk from Apple
         run: tools/fetch_macintalk.sh
 
+      - name: Fetch Tiger, Leopard and Snow Leopard's MacinTalk from archive.org
+        run: python3 tools/fetch_old_macintalk.py --keep-going
+
       - name: Generate the fast engines
         env:
           PYTHON: .venv/bin/python
         run: |
           tools/build_engines.sh
-          tools/build_mt_native.sh mt107
+          tools/build_mt_native.sh
 
       - name: Build the app
         if: contains(inputs.targets, 'iphone')
@@ -121,12 +125,15 @@ jobs:
       - name: Fetch Lion's MacinTalk from Apple
         run: tools/fetch_macintalk.sh
 
+      - name: Fetch Tiger, Leopard and Snow Leopard's MacinTalk from archive.org
+        run: python3 tools/fetch_old_macintalk.py --keep-going
+
       - name: Generate the fast engines
         env:
           PYTHON: .venv/bin/python
         run: |
           tools/build_engines.sh
-          tools/build_mt_native.sh mt107
+          tools/build_mt_native.sh
 
       - name: Build the Mac app
         run: tools/package_mac.sh

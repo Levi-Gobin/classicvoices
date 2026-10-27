@@ -37,17 +37,19 @@ enum InstallerPackage {
     }
 
     /// `archive`: the reader is a bundle package's Archive.pax.gz rather than
-    /// a flat package.
-    static func extract(_ r: ByteReader, size: UInt64, archive: Bool, name: String, into tree: URL) throws {
-        let sink = TreeSink(root: tree)
+    /// a flat package. `keep` narrows what's written (paths as in `wants`);
+    /// `progress` is the part of the package read so far.
+    static func extract(_ r: ByteReader, size: UInt64, archive: Bool, name: String, into tree: URL,
+                        keep: ((String) -> Bool)? = nil, progress: ((Double) -> Void)? = nil) throws {
+        let sink = TreeSink(root: tree, keep: keep ?? wants)
         let length = archive ? size : try MacVoicePackage.seekToPayload(r)
         let start = try r.offset()
         let magic = try r.read(upToCount: 3) ?? Data()
         try r.seek(toOffset: start)
         if magic.starts(with: [0x1F, 0x8B]) {
-            try Inflate.stream(from: r, count: length, into: sink.feed)
+            try Inflate.stream(from: r, count: length, into: sink.feed, progress: progress)
         } else if magic == Data("BZh".utf8) {
-            try Bunzip2.stream(from: r, count: length, into: sink.feed)
+            try Bunzip2.stream(from: r, count: length, into: sink.feed, progress: progress)
         } else {
             throw MacVoicePackage.PackageError.corrupt("\(name) uses a compression Classic Voices can\u{2019}t read")
         }
@@ -57,7 +59,8 @@ enum InstallerPackage {
     // on some of the install discs' larger payloads)
 
     enum Inflate {
-        static func stream(from fh: ByteReader, count: UInt64, into sink: (UnsafeRawBufferPointer) throws -> Void) throws {
+        static func stream(from fh: ByteReader, count: UInt64, into sink: (UnsafeRawBufferPointer) throws -> Void,
+                           progress: ((Double) -> Void)? = nil) throws {
             var z = z_stream()
             guard inflateInit2_(&z, 15 + 16, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else {
                 throw MacVoicePackage.PackageError.corrupt("inflate init")
@@ -71,6 +74,7 @@ enum InstallerPackage {
                 let chunk = try fh.read(upToCount: Int(min(UInt64(1 << 20), left))) ?? Data()
                 left -= UInt64(chunk.count)
                 if chunk.isEmpty { throw MacVoicePackage.PackageError.corrupt("payload truncated") }
+                progress?(Double(count - left) / Double(max(count, 1)))
                 var ended = false
                 try chunk.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
                     z.next_in = UnsafeMutablePointer(mutating: src.bindMemory(to: UInt8.self).baseAddress)
@@ -95,7 +99,8 @@ enum InstallerPackage {
     // MARK: - bzip2
 
     enum Bunzip2 {
-        static func stream(from fh: ByteReader, count: UInt64, into sink: (UnsafeRawBufferPointer) throws -> Void) throws {
+        static func stream(from fh: ByteReader, count: UInt64, into sink: (UnsafeRawBufferPointer) throws -> Void,
+                           progress: ((Double) -> Void)? = nil) throws {
             var bz = bz_stream()
             guard BZ2_bzDecompressInit(&bz, 0, 0) == BZ_OK else { throw MacVoicePackage.PackageError.corrupt("bzip2 init") }
             defer { BZ2_bzDecompressEnd(&bz) }
@@ -107,6 +112,7 @@ enum InstallerPackage {
                 let chunk = try fh.read(upToCount: Int(min(UInt64(1 << 20), left))) ?? Data()
                 left -= UInt64(chunk.count)
                 if chunk.isEmpty { throw MacVoicePackage.PackageError.corrupt("payload truncated") }
+                progress?(Double(count - left) / Double(max(count, 1)))
                 var ended = false
                 try chunk.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
                     bz.next_in = UnsafeMutablePointer(mutating: src.bindMemory(to: CChar.self).baseAddress)
@@ -139,7 +145,8 @@ enum InstallerPackage {
         private enum State { case header, name, data }
         private var state = State.header
 
-        init(root: URL) { self.root = root }
+        let keep: (String) -> Bool
+        init(root: URL, keep: @escaping (String) -> Bool) { self.root = root; self.keep = keep }
 
         func feed(_ buf: UnsafeRawBufferPointer) throws {
             var i = 0
@@ -169,7 +176,7 @@ enum InstallerPackage {
                     if nameLeft == 0 {
                         let path = String(decoding: name.prefix { $0 != 0 }, as: UTF8.self)
                         if path == "TRAILER!!!" { finished = true; return }
-                        if isFile, InstallerPackage.wants(path), !path.split(separator: "/").contains("..") {
+                        if isFile, keep(path), !path.split(separator: "/").contains("..") {
                             let url = root.appendingPathComponent(path.hasPrefix("./") ? String(path.dropFirst(2)) : path)
                             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                                     withIntermediateDirectories: true)

@@ -110,6 +110,7 @@ struct ClassicVoicesApp: App {
                 if phase == .active, VoiceStore.shared.hasPending {
                     Task.detached { try? VoiceStore.shared.flush() }
                 }
+                if phase == .active { VoiceLibrary.shared.disc.resume() }
             }
     }
 }
@@ -307,22 +308,27 @@ enum DownloadTest {
     @MainActor static func run(_ ids: [String]) {
         let lib = VoiceLibrary.shared
         let had = lib.enhanced.installed.union(lib.mac.installed)
+        if let i = CommandLine.arguments.firstIndex(of: "-disc-scratch"), i + 1 < CommandLine.arguments.count {
+            let arg = CommandLine.arguments[i + 1]   // absolute, or in the app's temporary folder
+            DiscDownloads.scratch = arg.hasPrefix("/") ? URL(fileURLWithPath: arg) : FileManager.default.temporaryDirectory.appendingPathComponent(arg)
+        }
         for id in ids {
             if let a = EnhancedDownloads.catalog.first(where: { $0.id == id }) { lib.enhanced.download(a) }
             else if let v = MacDownloads.catalog.first(where: { $0.id == id }) { lib.mac.download(v) }
+            else if id.hasPrefix("disc:"), let v = DiscDownloads.catalog.first(where: { $0.id == id.dropFirst(5) }) { lib.disc.download(v) }
             else { print("DOWNLOAD \(id): not in the catalogs") }
         }
         Task { @MainActor in
             let start = Date()
             while true {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                let p = lib.enhanced.progress.merging(lib.mac.progress) { a, _ in a }
+                let p = lib.enhanced.progress.merging(lib.mac.progress) { a, _ in a }.merging(lib.disc.progress) { a, _ in a }
                 let line = p.sorted { $0.key < $1.key }.map { "\($0.key) \(Int($0.value * 100))%" }.joined(separator: ", ")
                 print(String(format: "DOWNLOAD %.0fs: ", Date().timeIntervalSince(start)) + (line.isEmpty ? "all finished" : line))
                 fflush(stdout)
                 if p.isEmpty { break }
             }
-            let errors = lib.enhanced.errors.merging(lib.mac.errors) { a, _ in a }
+            let errors = lib.enhanced.errors.merging(lib.mac.errors) { a, _ in a }.merging(lib.disc.errors) { a, _ in a }
             print("DOWNLOAD errors: \(errors.isEmpty ? "none" : errors.description)")
             print("DOWNLOAD installed: \(ids.filter { lib.enhanced.installed.contains($0) || lib.mac.installed.contains($0) })")
             // `-download-cleanup` deletes what the test added.

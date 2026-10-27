@@ -37,7 +37,15 @@ enum MacVoicePackage {
 
     /// Positions `fh` at the start of a xar package's Payload; returns its length.
     static func seekToPayload(_ fh: ByteReader) throws -> UInt64 {
+        let (offset, length) = try member("Payload", of: fh)
+        try fh.seek(toOffset: offset)
+        return length
+    }
+
+    /// Where a stored (uncompressed) member of a xar archive is in it.
+    static func member(_ name: String, of fh: ByteReader) throws -> (offset: UInt64, length: UInt64) {
         // xar header (big-endian): magic, header size, version, TOC lengths
+        try fh.seek(toOffset: 0)
         let head = try fh.read(upToCount: 28) ?? Data()
         guard head.count == 28, head.prefix(4) == Data("xar!".utf8) else { throw PackageError.notXar }
         let headerSize = UInt64(head.be16(4))
@@ -46,11 +54,10 @@ enum MacVoicePackage {
         guard let tocZ = try fh.read(upToCount: Int(tocCompressed)), tocZ.count > 2,
               let tocData = try? (tocZ.dropFirst(2) as NSData).decompressed(using: .zlib) as Data
         else { throw PackageError.corrupt("table of contents") }
-        let toc = TOCParser(data: tocData)
+        let toc = TOCParser(data: tocData, want: name)
         guard let payload = toc.payload else { throw PackageError.noPayload }
-        guard payload.encoding.hasSuffix("octet-stream") else { throw PackageError.corrupt("payload encoding \(payload.encoding)") }
-        try fh.seek(toOffset: headerSize + tocCompressed + payload.offset)
-        return payload.length
+        guard payload.encoding.hasSuffix("octet-stream") else { throw PackageError.corrupt("\(name) encoding \(payload.encoding)") }
+        return (headerSize + tocCompressed + payload.offset, payload.length)
     }
 
     // MARK: - xar TOC
@@ -58,11 +65,13 @@ enum MacVoicePackage {
     private final class TOCParser: NSObject, XMLParserDelegate {
         struct Entry { var offset: UInt64; var length: UInt64; var encoding: String }
         var payload: Entry?
+        private let want: String
         private var path: [String] = []
         private var text = ""
         private var name = "", offset: UInt64 = 0, length: UInt64 = 0, encoding = ""
 
-        init(data: Data) {
+        init(data: Data, want: String) {
+            self.want = want
             super.init()
             let p = XMLParser(data: data)
             p.delegate = self
@@ -85,7 +94,7 @@ enum MacVoicePackage {
             case ("name", "file"): name = text
             case ("offset", "data"): offset = UInt64(text) ?? 0
             case ("length", "data"): length = UInt64(text) ?? 0
-            case ("file", _): if name == "Payload", payload == nil { payload = Entry(offset: offset, length: length, encoding: encoding) }
+            case ("file", _): if name == want, payload == nil { payload = Entry(offset: offset, length: length, encoding: encoding) }
             default: break
             }
             path.removeLast()

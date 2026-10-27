@@ -457,14 +457,43 @@ experience"), never shipping Apple's code, as frictionless as possible.
   rwlock keeps cancel/preload off a stream being replaced). Zig is deleted
   when the build ends. 32-bit Android: no (memory, and the soft-float
   calling convention untested); data packs still work there.
-- GitHub's iPhone/Mac build now also runs tools/build_mt_native.sh mt107
-  (Lion's MacinTalk, which it already fetches from Apple). Tiger, Leopard
-  and Snow Leopard aren't in that build: candidates on archive.org are
-  deadmoo-tiger-x86 (1.4 GB raw HFS+, the exact mt104 source),
-  MacOSX10.6-Snow-Leopard-Retail-2Z691-6428-A (5.6 GB, the exact mt106
-  source) and Mac_OS_X_Leopard_Install_DVD_Version_10.5_2Z691-6037-A_Apple_Inc._2007
-  (8.1 GB; mt105's exact source is unknown). Fetching them needs partial
-  reads, not whole downloads.
+- GitHub's iPhone/Mac build now makes all four MacinTalk generations and
+  their fast code: Lion from Apple as before, and Tiger, Leopard and Snow
+  Leopard from archive.org with tools/fetch_old_macintalk.py, which reads
+  the discs through Panthera Speech's disc reader
+  (third_party/panthera/pantherahfs.py, MIT, unchanged) over HTTP range
+  requests (4 MB blocks, 8 connections, 64 MB read ahead while a package
+  streams; archive.org gives ~1 MB/s per connection, ~10 MB/s in all here).
+  It stops reading a package's cpio once it has passed
+  ./System/Library/Speech/Voices/ (members are in path order), skips Alex
+  unless --alex, and checks every file against tools/profiles/oldmt.sha256
+  (made from extracted/ with --manifest). Results, all identical to
+  extracted/: Snow Leopard (MacOSX10.6-Snow-Leopard-Retail-2Z691-6428-A,
+  UDIF zlib) 1.1 GB read of 5.6, 7 min at 2.7 MB/s before the bigger blocks;
+  Leopard (Mac_OS_X_Leopard_Install_DVD_Version_10.5_2Z691-6037-A_Apple_Inc._2007,
+  raw APM .iso, so this is mt105's exact source) 1.4 GB of 8.1 in 3 min.
+  Tiger (deadmoo-tiger-x86/tiger-x86.tar.bz2) can't be read in the middle:
+  the whole 1.4 GB is read once (still in parallel ranges) and the 6.4 GB
+  VMware disk inside written as a sparse file, then read (MBR, type 0xAF)
+  and deleted.
+
+- Alex (Leopard, Snow Leopard, Lion) is a download in the app
+  (ios/App/DiscDownloads.swift): plan in front (read the disc's tables over
+  HTTP through DiskImage/HFSVolume, now readers over any RandomAccess with
+  `sources()` mapping a range down to bytes of the file on the server;
+  11-39 MB, kept in blocks/), then download only the runs
+  AdditionalSpeechVoices.pkg's payload is made from (Leopard 674 MB in 2
+  runs, Snow Leopard 398 MB in 2, Lion 418 MB in 1; the Lion stack is
+  dmg > HFS > InstallMacOSX.pkg > stored xar member InstallESD.dmg > HFS >
+  Packages/AdditionalSpeechVoices.pkg) in 64 MB parts, 8 at a time, then
+  read the package from blocks + parts (SparseSource) and keep only
+  Alex.SpeechVoice. All three were byte-identical to the Alex copies on
+  the Mac; Snow Leopard took 45 s, Leopard and Lion 110 s together.
+  **Not the background URLSession:** on macOS nsurlsessiond fetched
+  archive.org at ~8 KB/s (a plain session: ~1 MB/s per connection). Parts
+  that finished are kept, and `resume()` (launch, app back in front) goes
+  on from them. Test: `-download disc:mt106/Alex -disc-scratch <dir>`
+  (voice to <dir> instead of the store).
 
 ## One layout, and progress the screen reader reports (2026-10-26)
 

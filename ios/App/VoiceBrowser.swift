@@ -43,10 +43,12 @@ struct VoiceItem: Identifiable, Hashable {
     var entry: VoiceCatalog.Entry?               // set once it's on the device
     var enhancedAsset: EnhancedDownloads.Asset?  // where it downloads from / what deleting removes
     var macPackage: MacDownloads.Voice?
+    var discVoice: DiscDownloads.Voice?          // Alex, from an install disc
 
     var isInstalled: Bool { entry != nil }
-    var isDownloadable: Bool { enhancedAsset != nil || macPackage != nil }
-    var downloadSize: Int? { enhancedAsset?.size ?? macPackage?.size }
+    var isDownloadable: Bool { enhancedAsset != nil || macPackage != nil || discVoice != nil }
+    var downloadSize: Int? { enhancedAsset?.size ?? macPackage?.size ?? discVoice?.size }
+    var installedSize: Int? { discVoice?.installedSize ?? downloadSize }
 
     var kindName: String {
         switch kind {
@@ -77,6 +79,7 @@ final class VoiceLibrary {
     static let shared = VoiceLibrary()
     let enhanced = EnhancedDownloads()
     let mac = MacDownloads()
+    let disc = DiscDownloads()
     private(set) var items: [VoiceItem] = []
     private(set) var hidden = VoiceCatalog.hiddenVoices
     private(set) var settings = SpeechSettings()
@@ -85,6 +88,7 @@ final class VoiceLibrary {
         rebuild()
         enhanced.onChange = { [weak self] in self?.rebuild() }
         mac.onChange = { [weak self] in self?.rebuild() }
+        disc.onChange = { [weak self] in Task.detached { try? VoiceStore.shared.refresh() }; self?.rebuild() }
         // The store (the speech extension) says what's downloaded; it answers
         // off the main thread, and again after every change.
         VoiceStore.shared.onChange = { [weak self] in
@@ -143,6 +147,18 @@ final class VoiceLibrary {
                 }
             }
         }
+        for v in DiscDownloads.catalog {
+            // Only where the rest of that release's MacinTalk is.
+            guard let version = VoiceVersion.of(build: v.gen), VoiceCatalog.hasMacinTalkEngine(v.gen) else { continue }
+            let id = VoiceCatalog.Entry(build: v.gen, buildName: version.name, version: version.number, language: "en-US",
+                                        name: v.name, macDir: v.name, macinTalk: true).identifier
+            if var item = byID[id] {
+                item.discVoice = v
+                byID[id] = item
+            } else {
+                add(VoiceItem(id: id, version: version, language: "en-US", name: v.name, kind: .macinTalk, discVoice: v))
+            }
+        }
         items = order.compactMap { byID[$0] }
     }
 
@@ -195,17 +211,18 @@ final class VoiceLibrary {
     }
 
     func download(_ item: VoiceItem) {
-        if let a = item.enhancedAsset { enhanced.download(a) } else if let v = item.macPackage { mac.download(v) }
+        if let a = item.enhancedAsset { enhanced.download(a) } else if let v = item.macPackage { mac.download(v) } else if let v = item.discVoice { disc.download(v) }
     }
 
     func remove(_ item: VoiceItem) {
-        if let a = item.enhancedAsset { enhanced.remove(a) } else if let v = item.macPackage { mac.remove(v) }
+        if let a = item.enhancedAsset { enhanced.remove(a) } else if let v = item.macPackage { mac.remove(v) } else if let v = item.discVoice { disc.remove(v) }
     }
 
     /// 0...1 while downloading.
     func progress(_ item: VoiceItem) -> Double? {
         if let a = item.enhancedAsset { return enhanced.progress[a.id] }
         if let v = item.macPackage { return mac.progress[v.id] }
+        if let v = item.discVoice { return disc.progress[v.id] }
         return nil
     }
 
@@ -213,13 +230,13 @@ final class VoiceLibrary {
         let total = item.downloadSize ?? 0
         if let p = progress(item) { return .downloading(bytesWritten: Int(Double(total) * p), totalBytes: total) }
         if !item.isInstalled { return .notInstalled(byteCount: total) }
-        return item.isDownloadable ? .installed(byteCount: total) : .builtIn
+        return item.isDownloadable ? .installed(byteCount: item.installedSize ?? total) : .builtIn
     }
 
     /// A row's action for a voice that isn't here: start or stop its download.
     func toggleDownload(_ item: VoiceItem) {
         if progress(item) != nil {
-            if let a = item.enhancedAsset { enhanced.cancel(a.id) } else if let v = item.macPackage { mac.cancel(v.id) }
+            if let a = item.enhancedAsset { enhanced.cancel(a.id) } else if let v = item.macPackage { mac.cancel(v.id) } else if let v = item.discVoice { disc.cancel(v.id) }
         } else {
             download(item)
         }
@@ -228,11 +245,13 @@ final class VoiceLibrary {
     func dismissErrors() {
         enhanced.errors = [:]
         mac.errors = [:]
+        disc.errors = [:]
     }
 
     func error(_ item: VoiceItem) -> String? {
         if let a = item.enhancedAsset { return enhanced.errors[a.id] }
         if let v = item.macPackage { return mac.errors[v.id] }
+        if let v = item.discVoice { return disc.errors[v.id] }
         return nil
     }
 
@@ -420,11 +439,12 @@ struct PlatformTab: View {
         guard let v = versions.first(where: { $0.id == versionID }),
               let gen = v.builds.first(where: { $0.hasPrefix("mt") }) else { return nil }
         if !VoiceCatalog.hasMacinTalkEngine(gen) {
-            return "\(v.name)\u{2019}s MacinTalk voices need Apple\u{2019}s speech files from Mac OS X \(v.number) \(v.name), which Classic Voices can\u{2019}t download. Add them with Add from Files below."
+            return "\(v.name)\u{2019}s MacinTalk voices aren\u{2019}t in this build of Classic Voices (a build on GitHub brings them). Add Apple\u{2019}s speech files from Mac OS X \(v.number) \(v.name) with Add from Files below."
         }
-        guard gen != "mt104",  // Alex arrived in Leopard
-              !library.items.contains(where: { $0.version == v && $0.name == "Alex" }) else { return nil }
-        return "Alex isn\u{2019}t here: at several hundred megabytes he doesn\u{2019}t come with the app. Add Alex.SpeechVoice from Mac OS X \(v.name) with Add from Files below."
+        guard let alex = DiscDownloads.catalog.first(where: { $0.gen == gen }),
+              library.item(VoiceCatalog.Entry(build: gen, buildName: v.name, version: v.number, language: "en-US", name: alex.name,
+                                              macDir: alex.name, macinTalk: true).identifier)?.isInstalled == false else { return nil }
+        return "Alex doesn\u{2019}t come with the app: at several hundred megabytes, he downloads on his own from Mac OS X \(v.name)\u{2019}s install disc (\(alex.server))."
     }
 }
 
