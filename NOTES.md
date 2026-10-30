@@ -581,7 +581,7 @@ A process there may map only ~1.3 GB of anonymous memory (mmap fails with
 ENOMEM beyond that, PROT_NONE reservations included; measured on an iPad Air 3
 in both the extension and the app). The engines' flat guest spaces hit this:
 
-- Vocalizer reserves 1 GB per engine (`GUEST_MEM_SIZE`), so a second engine
+- Vocalizer reserves 1.06 GB per engine (`GUEST_MEM_SIZE`), so a second engine
   (another language or firmware) failed to open and VoiceOver went silent on
   every voice switch. `engine_for` (vxstream.c) now closes every other engine,
   MacinTalk included, and retries once when an open fails. Switching costs a
@@ -783,8 +783,11 @@ the same Vocalizer 5.2.3 family as iOS, so the iOS ARM engines run them.
   The voice page says so (VoiceDetail.note).
 - Korean/Chinese Mavericks compacts reject an input that is only "(" or ")"
   (pp/sent_parser 0x8d402000); the utterance is silent, nothing crashes.
-- Guest address space is 1 GB (MAP region 0x04000000–0x40000000) so the
+- Guest address space is 1.06 GB (MAP region 0x04000000–0x44000000) so the
   largest premium synth files (Mikko, Maged, Ting-Ting, Melina, Anna …) fit.
+  Mavericks Anna (MultiLingualVoice, 925 MB synth file) needs 992 MB of
+  mappings; with the old 1 GB space (960 MB of mappings) vx_open failed with
+  "guest map region exhausted" and she was silent.
 - Voice keys: `mac107/KarenCompact`, `mac108/Karen` … The voice folder is
   `<root>/<era>/<folder>` when bundled, else `<group>/EnhancedVoices/<era>/
   <folder>`; common data is always `<root>/<era>/common`. The engine is iOS 6
