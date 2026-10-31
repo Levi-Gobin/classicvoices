@@ -183,6 +183,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
             ImportService.enqueue(this, new ImportService.Job("pack", android.net.Uri.fromFile(new File(pack)).toString(),
                     getString(R.string.the_pack)));
         }
+        String langs = getIntent().getStringExtra("langtest");
+        if (langs != null) SelfTest.langs(this, langs);
         String self = getIntent().getStringExtra("selftest");
         if (self != null) {
             String text = getIntent().getStringExtra("text");

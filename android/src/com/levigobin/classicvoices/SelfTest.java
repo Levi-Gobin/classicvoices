@@ -24,6 +24,31 @@ import java.util.List;
 final class SelfTest {
     private static final String TAG = "CVSELFTEST";
 
+    /**
+     * Test hook (adb): the voice Android's TextToSpeech gives each language
+     * ("de,fr-CA,zh-TW"), as TalkBack's language switching asks for it:
+     *
+     *   adb shell am start -n com.levigobin.classicvoices/.MainActivity --es langtest "de,fr,zh-TW"
+     */
+    static void langs(final Context c, final String langs) {
+        final TextToSpeech[] holder = new TextToSpeech[1];
+        holder[0] = new TextToSpeech(c, new TextToSpeech.OnInitListener() {
+            @Override
+            public void onInit(int status) {
+                TextToSpeech tts = holder[0];
+                if (status != TextToSpeech.SUCCESS || Build.VERSION.SDK_INT < 21) return;
+                for (String l : langs.split(",")) {
+                    long t = System.nanoTime();
+                    int r = tts.setLanguage(VoiceInfo.toLocale(l.trim()));
+                    Voice v = tts.getVoice();
+                    Log.i(TAG, "lang " + l + ": " + (v != null ? v.getName() : "none") + " (setLanguage " + r + ", "
+                            + (System.nanoTime() - t) / 1000 + " us)");
+                }
+                tts.shutdown();
+            }
+        }, c.getPackageName());
+    }
+
     static void run(final Context c, final String keys, final String text) {
         final List<String> want = new ArrayList<>();
         for (String k : keys.split(",")) if (!k.trim().isEmpty()) want.add(k.trim());
