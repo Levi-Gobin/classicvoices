@@ -94,8 +94,12 @@ class SynthDriver(SynthDriver):
         self._newer = False
         self._voice = next(iter(self._voices))
         self._lang_cache = {}
+        # looked up once: each lookup reads the registry and lists folders,
+        # too slow for every utterance
+        self._data_root = cv_paths.data_root()
+        self._voices_root, self._downloads_root = cv_paths.voices_root(), cv_paths.downloads_root()
         self._speaker = cv_engine.Speaker(
-            cv_paths.voices_root(), cv_paths.downloads_root(),
+            self._voices_root, self._downloads_root,
             on_index=self._on_index, on_done=self._on_done,
             feed=self._feed, idle=self._idle,
             native_root=cv_paths.native_root())
@@ -106,7 +110,7 @@ class SynthDriver(SynthDriver):
         v = self._voices.get(key)
         if not self._newer or not v or key.startswith("mt"):
             return None
-        return cv_pron.pack_dir(cv_paths.data_root(), v.language)
+        return cv_pron.pack_dir(self._data_root, v.language)
 
     _downloading = False
 
@@ -187,7 +191,7 @@ class SynthDriver(SynthDriver):
         says nothing for a consonant on its own; joined to a word it's fine)."""
         if not voice or not ipa:
             return None
-        return cv_lib.phoneme_text(cv_paths.voices_root(), cv_paths.downloads_root(), voice.key, voice.language,
+        return cv_lib.phoneme_text(self._voices_root, self._downloads_root, voice.key, voice.language,
                                    ipa, joined)
 
     @staticmethod
@@ -204,11 +208,11 @@ class SynthDriver(SynthDriver):
             return self._voice
         cache = self._lang_cache
         # picks stay until the voice, or the choices (saved here or by the app), change
-        stamp = (self._voice, cv_languages.generation, cv_languages.stamp(cv_paths.data_root()))
+        stamp = (self._voice, cv_languages.generation, cv_languages.stamp(self._data_root))
         if cache.get("for") != stamp:
             cache.clear()
             cache["for"] = stamp
-            cache["choices"] = cv_languages.text(cv_paths.data_root())
+            cache["choices"] = cv_languages.text(self._data_root)
             cache["voices"] = [(k, v.language) for k, v in self._voices.items()]
         if language not in cache:
             cache[language] = cv_languages.pick(cache["choices"], self._voice, language, cache["voices"]) or self._voice
@@ -239,7 +243,7 @@ class SynthDriver(SynthDriver):
                 continue
             if isinstance(item, str):
                 if (self._rules or pack) and voice and "tn" not in state:
-                    item = cv_lib.rules_text(cv_paths.voices_root(), cv_paths.downloads_root(), voice.key, voice.language,
+                    item = cv_lib.rules_text(self._voices_root, self._downloads_root, voice.key, voice.language,
                                              item, own=self._rules, pack=pack)
                 text.append(item)
             elif isinstance(item, IndexCommand):
