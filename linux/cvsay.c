@@ -10,6 +10,7 @@
 // (classicvoices-data pronunciation). Without -o the WAV goes to stdout.
 // Data: $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
 // (~/.local/share/classicvoices).
+#include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@
 #include "cv_paths.h"
 #include "cv_rules.h"
 #include "cv_ssml.h"
+#include "vxlang.h"
 #include "vxstream.h"
 
 void cv_set_native_dir(const char *dir);
@@ -34,9 +36,9 @@ static double now_ms(void) {
 static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 
 int main(int argc, char **argv) {
-    const char *voice = NULL, *lang = NULL, *outp = NULL;
+    const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL;
     int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnN")) != -1) {
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNA:")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -47,8 +49,10 @@ int main(int argc, char **argv) {
         case 'q': quiet = 1; break;
         case 'n': norules = 1; break;
         case 'N': newer = 1; break;
+        case 'A': autofor = optarg; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] TEXT...\n", argv[0]);
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] TEXT...\n"
+                    "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n", argv[0], argv[0]);
             return 2;
         }
     }
@@ -62,6 +66,32 @@ int main(int argc, char **argv) {
                    voices[i].fallback[0] ? "\tpitch fallback " : "", voices[i].fallback);
         if (!nv) fprintf(stderr, "no voices under %s (import firmware with classicvoices-data first)\n", paths.root);
         return nv ? 0 : 1;
+    }
+    if (autofor) {  // "<language>\t<voice key>" for each language the voices speak, bare ("de") and as
+                    // each voice gives it ("de-DE"): the pick of vxlang.h, no choices applied
+        const char **keys = malloc((nv + 1) * sizeof *keys), **langs = malloc((nv + 1) * sizeof *langs);
+        for (size_t i = 0; i < nv; i++) { keys[i] = voices[i].key; langs[i] = voices[i].language; }
+        for (size_t i = 0; i < nv; i++) {
+            char base[16];
+            size_t j = 0;
+            while (voices[i].language[j] && voices[i].language[j] != '-' && voices[i].language[j] != '_' && j < sizeof base - 1)
+                base[j] = (char)tolower((unsigned char)voices[i].language[j]), j++;
+            base[j] = 0;
+            int seen_base = 0, seen_tag = 0;
+            for (size_t k = 0; k < i; k++) {
+                seen_base |= vx_lang_same(voices[k].language, base);
+                seen_tag |= !strcmp(voices[k].language, voices[i].language);
+            }
+            for (int t = 0; t < 2; t++) {
+                const char *l = t ? voices[i].language : base;
+                if ((t ? seen_tag : seen_base) || !l[0] || (t && !strcmp(l, base))) continue;
+                int p = vx_lang_pick(autofor, l, keys, langs, nv);
+                if (p >= 0) printf("%s\t%s\n", l, keys[p]);
+            }
+        }
+        free(keys);
+        free(langs);
+        return 0;
     }
     if (optind >= argc) { fprintf(stderr, "no text\n"); return 2; }
     const CvVoice *v = voice ? cv_find_voice(voices, nv, voice) : cv_pick_voice(voices, nv, lang ? lang : "en-US");

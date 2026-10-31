@@ -9,6 +9,7 @@ import threading
 
 import globalPluginHandler
 import gui
+import languageHandler
 import ui
 import wx
 from gui import nvdaControls
@@ -17,6 +18,8 @@ from logHandler import log
 from synthDrivers._classicvoices import download as cv_download
 from synthDrivers._classicvoices import fastcode as cv_fastcode
 from synthDrivers._classicvoices import firmware as cv_firmware
+from synthDrivers._classicvoices import languages as cv_languages
+from synthDrivers._classicvoices import lib as cv_lib
 from synthDrivers._classicvoices import paths as cv_paths
 from synthDrivers._classicvoices import remote as cv_remote
 from synthDrivers._classicvoices import voices as cv_voices
@@ -132,6 +135,10 @@ class DataDialog(wx.Dialog):
         self.fastBtn = wx.Button(self, label=_("Build fast &code"))
         self.fastBtn.Bind(wx.EVT_BUTTON, lambda evt: self._start(None))
         btns.Add(self.fastBtn)
+        # Translators: button that opens the choice of voices for text in other languages.
+        langBtn = wx.Button(self, label=_("Voices for other &languages..."))
+        langBtn.Bind(wx.EVT_BUTTON, lambda evt: LanguagesDialog(self).ShowModal())
+        btns.Add(langBtn)
         # Translators: button that opens the data folder in Explorer.
         openBtn = wx.Button(self, label=_("&Open data folder"))
         openBtn.Bind(wx.EVT_BUTTON, lambda evt: os.startfile(cv_paths.data_root()))
@@ -323,6 +330,86 @@ class DataDialog(wx.Dialog):
                     cv_download.download_mac_voice(entry, cv_paths.downloads_root(),
                                                    self._progress)
         self._start(work)
+
+
+def _language_name(code):
+    """"German" for "de", "Chinese (Taiwan)" for "zh-TW" (in NVDA's language)."""
+    try:
+        return languageHandler.getLanguageDescription(code.replace("-", "_")) or code
+    except Exception:
+        return code
+
+
+class LanguagesDialog(wx.Dialog):
+    """Automatic language switching: per language, the voice that reads text
+    in it, for every voice or while one voice reads (languages.txt)."""
+
+    def __init__(self, parent):
+        # Translators: title of the dialog choosing voices for other languages.
+        super().__init__(parent, title=_("Voices for other languages"))
+        self.data = cv_paths.data_root()
+        self.voices = cv_voices.scan(cv_paths.voices_root(), cv_paths.downloads_root())
+        self.names = {v.key: v.name for v in self.voices}
+        main = wx.BoxSizer(wx.VERTICAL)
+        # Translators: explains automatic language switching choices.
+        main.Add(wx.StaticText(self, label=_(
+            "With NVDA's automatic language switching on, text in another language is read by a voice of that "
+            "language: by default the one nearest the voice reading. Choose voices here for every voice, or for "
+            "one voice.")), flag=wx.ALL, border=5)
+        # Translators: label of the list choosing whose choices are shown.
+        main.Add(wx.StaticText(self, label=_("&For:")), flag=wx.LEFT | wx.TOP, border=5)
+        self.whos = [None] + [v.key for v in self.voices]
+        # Translators: the first entry of the "For" list.
+        self.who = wx.Choice(self, choices=[_("Every voice")] + [v.name for v in self.voices])
+        self.who.SetSelection(0)
+        self.who.Bind(wx.EVT_CHOICE, lambda evt: self.fill())
+        main.Add(self.who, flag=wx.ALL, border=5)
+        self.rows = wx.ScrolledWindow(self, size=(520, 360), style=wx.VSCROLL)
+        self.rows.SetScrollRate(0, 20)
+        self.grid = wx.FlexGridSizer(2, 5, 5)
+        self.rows.SetSizer(self.grid)
+        main.Add(self.rows, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        close = wx.Button(self, wx.ID_CLOSE)
+        self.Bind(wx.EVT_BUTTON, lambda evt: self.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+        self.SetEscapeId(wx.ID_CLOSE)
+        main.Add(close, flag=wx.ALL, border=5)
+        self.SetSizerAndFit(main)
+        self.fill()
+
+    def fill(self):
+        self.rows.DestroyChildren()
+        self.grid.Clear()
+        who = self.whos[self.who.GetSelection()]
+        by = {}
+        for v in self.voices:
+            by.setdefault(cv_languages.choice_language(v.language), []).append(v)
+        own = next((v.language for v in self.voices if v.key == who), None)
+        langs = sorted((l for l in by if not own or cv_languages.base(l) != cv_languages.base(own)), key=_language_name)
+        choices = cv_languages.load(self.data)
+        every = {l: k for l, k in choices.get("*", {}).items() if k in self.names}
+        mine = {l: k for l, k in choices.get(who, {}).items() if k in self.names} if who else every
+        pairs = [(v.key, v.language) for v in self.voices]
+        for lang in langs:
+            if not who:
+                # Translators: the automatic entry in a language's list, for every voice.
+                first = _("Automatic: the voice nearest the one reading")
+            elif lang in every:
+                # Translators: %s is the voice chosen for that language for every voice.
+                first = _("As for every voice: %s") % self.names[every[lang]]
+            else:
+                auto = cv_lib.lang_pick(who, lang, pairs)
+                # Translators: %s is the voice automatic language switching picks.
+                first = _("Automatic: %s") % self.names.get(auto, _("none"))
+            keys = [None] + [v.key for v in by[lang]]
+            label = wx.StaticText(self.rows, label="%s:" % _language_name(lang))
+            c = wx.Choice(self.rows, choices=[first] + [v.name for v in by[lang]], name=_language_name(lang))
+            c.SetSelection(keys.index(mine[lang]) if mine.get(lang) in keys else 0)
+            c.Bind(wx.EVT_CHOICE, lambda evt, lang=lang, keys=keys, c=c: cv_languages.set_choice(
+                self.data, lang, keys[c.GetSelection()], who))
+            self.grid.Add(label, flag=wx.ALIGN_CENTER_VERTICAL)
+            self.grid.Add(c)
+        self.rows.Layout()
+        self.rows.FitInside()
 
 
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):

@@ -35,6 +35,15 @@
 
     <!-- voice rows: what pressing the row does comes first -->
     <string name="download_voice">Download %1$s, %2$s</string>
+    <string name="page_languages">Voices for other languages</string>
+    <string name="languages_explained">When TalkBack reads text marked as another language, the voice reading hands it to a voice of that language: by default the one nearest it, from the same release where there is one. Choose a voice here to use for a language whichever voice is reading; each voice\'s page can choose differently for that voice.</string>
+    <string name="other_languages">Other languages</string>
+    <string name="other_languages_explained">When %1$s reads text in another language, it hands it to these voices.</string>
+    <string name="no_other_languages">There are no voices for other languages yet.</string>
+    <string name="lang_auto_every">Automatic: the voice nearest the one reading</string>
+    <string name="lang_auto">Automatic: %1$s</string>
+    <string name="lang_as_every">As for every voice: %1$s</string>
+    <string name="lang_none">none</string>
     <string name="requires_firmware">%1$s, requires the %2$s firmware</string>
     <string name="get_firmware_for_voice">%1$s needs Apple\'s %2$s firmware, which isn\'t here yet. Get it from Apple now (streams about %3$s), then download %4$s (%5$s)?</string>
     <string name="get_firmware_for_voice_yes">Get them</string>

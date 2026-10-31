@@ -86,7 +86,13 @@ SAMPLES = {
 
 
 def language_name(code):
-    return LANGUAGES.get(code, code)
+    if code in LANGUAGES:
+        return LANGUAGES[code]
+    # a bare language ("de", as language switching keeps choices): its name without a region
+    for k, name in LANGUAGES.items():
+        if k.split("-")[0] == code:
+            return name.split(" (")[0]
+    return code
 
 
 def sample_text(code, name):

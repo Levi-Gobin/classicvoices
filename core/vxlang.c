@@ -129,10 +129,13 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
     return best;
 }
 
-// The voice key a choices line gives `lang` for `who` ("*" or a voice key);
-// writes it into out (empty: none).
-static void chosen(const char *choices, const char *who, const char *lang, char *out, size_t cap) {
+// The voice key a choices line gives `want` for `who` ("*" or a voice key);
+// writes it into out (empty: none). A line naming the region ("zh-TW") wins
+// over one for the whole language ("zh").
+static void chosen(const char *choices, const char *who, Tag want, char *out, size_t cap) {
     out[0] = 0;
+    int best = 0;  // 1: the language's line, 2: its region's
+    const char *region = want.region[0] ? want.region : default_region(want.lang);
     for (const char *line = choices; line && *line;) {
         const char *end = strchr(line, '\n');
         size_t len = end ? (size_t)(end - line) : strlen(line);
@@ -147,7 +150,14 @@ static void chosen(const char *choices, const char *who, const char *lang, char 
                 f[nf][j++] = line[i++];
             f[nf++][j] = 0;
         }
-        if (nf == 3 && !strcmp(f[0], who) && !strcmp(parse(f[1]).lang, lang)) snprintf(out, cap, "%s", f[2]);
+        if (nf == 3 && !strcmp(f[0], who)) {
+            Tag t = parse(f[1]);
+            int rank = strcmp(t.lang, want.lang) ? 0 : !t.region[0] ? 1 : !strcmp(t.region, region) ? 2 : 0;
+            if (rank > best) {
+                best = rank;
+                snprintf(out, cap, "%s", f[2]);
+            }
+        }
         line = end ? end + 1 : NULL;
     }
 }
@@ -161,7 +171,7 @@ int vx_lang_choose(const char *choices, const char *current_key, const char *lan
     char k[128];
     for (int pass = 0; pass < 2; pass++) {
         if (pass == 0 && !current_key) continue;
-        chosen(choices, pass == 0 ? current_key : "*", want.lang, k, sizeof k);
+        chosen(choices, pass == 0 ? current_key : "*", want, k, sizeof k);
         if (!k[0]) continue;
         for (size_t i = 0; i < n; i++)
             if (!strcmp(keys[i], k)) return (int)i;

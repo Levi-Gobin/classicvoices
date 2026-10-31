@@ -164,6 +164,35 @@ def set_hidden(key, hidden):
     with open(path, "w", encoding="utf-8") as f:
         f.write("".join(k + "\n" for k in sorted(keys)))
 
+def auto_voices(current_key):
+    """Automatic language switching while current_key speaks: {language
+    ("de", and "de-DE" as voices give it): the voice key core/vxlang.c picks
+    for it}, before any choice in
+    languages.txt; over the system's voices (not the hidden ones), as SAPI,
+    NVDA and Speech Dispatcher see them."""
+    out = {}
+    if IS_WIN:
+        from _classicvoices import languages, lib
+        voices = [(v.key, v.language) for v in cv_voices.scan(voices_root(), downloads_root())]
+        tags = {l for _k, l in voices if l}
+        for lang in sorted(tags | {languages.base(l) for l in tags}):
+            k = lib.lang_pick(current_key, lang, voices)
+            if k:
+                out[lang] = k
+        return out
+    say = CliPlayer._say()
+    if not say:
+        return out
+    try:
+        r = subprocess.run([say, "-A", current_key], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return out
+    for line in r.stdout.splitlines():
+        f = line.split("\t")
+        if len(f) == 2:
+            out[f[0]] = f[1]
+    return out
+
 # ---------------------------------------------------------------- hearing a voice
 
 

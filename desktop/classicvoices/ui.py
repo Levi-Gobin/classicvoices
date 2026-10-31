@@ -239,7 +239,8 @@ class Browser(wx.Panel):
             return it.title if it else "Voice"
         if kind == "search":
             return "Search: %s" % route[1]
-        return {"diagnostics": "Diagnostics", "fast": "Speed up the voices", "firmware": "Get the voices"}[kind]
+        return {"diagnostics": "Diagnostics", "fast": "Speed up the voices", "firmware": "Get the voices",
+                "languages": "Voices for other languages"}[kind]
 
     def update_live(self):
         """A progress tick: new values on the progress bars, new labels on the
@@ -277,7 +278,7 @@ class Browser(wx.Panel):
         route = self.stack[-1] if self.stack else None
         {None: self.root_page, "language": self.language_page, "voice": self.voice_page,
          "search": self.search_page, "diagnostics": self.diagnostics_page, "fast": self.fast_page,
-         "firmware": self.firmware_page}[route[0] if route else None](page, route)
+         "firmware": self.firmware_page, "languages": self.languages_page}[route[0] if route else None](page, route)
         other_jobs(page, self.lib.jobs)
         page.finish()
         self.live = page.live
@@ -347,6 +348,7 @@ class Browser(wx.Panel):
         p.section("More")
         if not missing:
             p.button("Get the firmware…", lambda: self.open(("firmware",)))
+        p.button("Voices for other languages", lambda: self.open(("languages",)))
         p.button("Speed up the voices", lambda: self.open(("fast",)))
         p.button("Diagnostics", lambda: self.open(("diagnostics",)))
 
@@ -418,6 +420,55 @@ class Browser(wx.Panel):
                 not self.lib.is_hidden(it), lambda on: frame.set_system_voice(it, on))
         if it.removable:
             p.button("Remove this voice (%s)" % L.size_text(it.size), lambda: frame.remove(it))
+        if it.state in ("builtin", "installed") and not self.lib.is_hidden(it):
+            self._language_rows(p, it)
+
+    def languages_page(self, p, _route):
+        p.text("When a screen reader switches language in the middle of what it reads (NVDA's automatic language "
+               "switching, SSML in SAPI programs, Orca), the voice reading hands that part to a voice of the other "
+               "language: by default the one nearest it, from the same release where there is one. Choose a voice "
+               "here to use for a language whichever voice is reading; each voice's page can choose differently "
+               "for that voice.")
+        self._language_rows(p, None)
+
+    def _language_rows(self, p, voice):
+        """Automatic language switching: per language, the voice for text in
+        it while `voice` reads (None: whichever voice reads), as kept in
+        languages.txt."""
+        from _classicvoices import languages
+        lib = self.lib
+        here = [i for i in lib.items if i.state in ("builtin", "installed") and not lib.is_hidden(i)]
+        by = {}
+        for i in here:
+            by.setdefault(languages.choice_language(i.language), []).append(i)
+        own = languages.choice_language(voice.language) if voice else None
+        own_base = languages.base(voice.language) if voice else None
+        # a voice reads its own language (any region) itself
+        langs = sorted((l for l in by if l != own and languages.base(l) != own_base), key=L.language_name)
+        if voice:
+            p.section("Other languages")
+        if not langs:
+            p.text("There are no voices for other languages yet.")
+            return
+        if voice:
+            p.text("When %s reads text in another language, it hands it to these voices." % voice.name)
+        names = {i.id: "%s, %s" % (i.title, i.version.name) for i in here}
+        choices = languages.load(system.data_root())
+        every = {l: k for l, k in choices.get("*", {}).items() if k in names}
+        mine = {l: k for l, k in choices.get(voice.id, {}).items() if k in names} if voice else every
+        auto = self.frame.auto_voices(voice.id) if voice else {}
+        for lang in langs:
+            if not voice:
+                first = "Automatic: the voice nearest the one reading"
+            elif lang in every:
+                first = "As for every voice: " + names[every[lang]]
+            else:
+                first = "Automatic: " + names.get(auto.get(lang), "none")
+            opts = [("", first)] + [(i.id, names[i.id]) for i in sorted(by[lang], key=lambda i: (
+                [v.id for v in L.VERSIONS].index(i.version.id), i.name.lower(), i.kind))]
+            p.choice(L.language_name(lang) + ":", opts, mine.get(lang, ""),
+                     lambda key, lang=lang: languages.set_choice(system.data_root(), lang, key or None,
+                                                                 voice.id if voice else None))
 
     def firmware_page(self, p, _route):
         lib = self.lib
@@ -663,6 +714,14 @@ class Frame(wx.Frame):
                          % (item.title, L.names_text(item.needs), L.size_text(size), item.name,
                             L.size_text(item.size)), APP, wx.YES_NO | wx.ICON_QUESTION, self) == wx.YES:
             self.lib.get_with_firmware(item)
+
+    def auto_voices(self, key):
+        """system.auto_voices, kept until the voices change."""
+        stamp = (key, tuple(sorted(i.id for i in self.lib.items if i.state in ("builtin", "installed"))),
+                 frozenset(system.hidden_keys()))
+        if getattr(self, "_auto", (None, None))[0] != stamp:
+            self._auto = (stamp, system.auto_voices(key))
+        return self._auto[1]
 
     def remove(self, item):
         if wx.MessageBox("Remove %s? You can download it again later." % item.title, APP,

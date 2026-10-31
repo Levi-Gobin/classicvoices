@@ -40,6 +40,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -263,6 +264,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             }
             case "firmware": return getString(R.string.page_firmware);
             case "fast": return getString(R.string.page_fast);
+            case "languages": return getString(R.string.page_languages);
             default: return getString(R.string.page_diagnostics);
         }
     }
@@ -299,6 +301,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             else if (r[0].equals("voice")) voicePage(r[1]);
             else if (r[0].equals("firmware")) firmwarePage();
             else if (r[0].equals("fast")) fastPage();
+            else if (r[0].equals("languages")) languagesPage();
             else diagnosticsPage();
         }
         if (focusTag == null && !announce) {
@@ -454,6 +457,12 @@ public class MainActivity extends Activity implements ImportService.Listener {
                 }
             });
         }
+        button("languages", getString(R.string.page_languages), new View.OnClickListener() {
+            @Override
+            public void onClick(View b) {
+                open("languages");
+            }
+        });
         button("fast", getString(R.string.page_fast), new View.OnClickListener() {
             @Override
             public void onClick(View b) {
@@ -637,6 +646,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
                     }
                 });
         text(getString(R.string.system_explained));
+        if (!Data.hidden(this).contains(it.id)) languageRows(it);
 
         if (it.installed && !it.builtIn) {
             section(getString(R.string.remove_heading));
@@ -656,6 +666,74 @@ public class MainActivity extends Activity implements ImportService.Listener {
                             })
                             .setNegativeButton(android.R.string.cancel, null)
                             .show();
+                }
+            });
+        }
+    }
+
+    private void languagesPage() {
+        text(getString(R.string.languages_explained));
+        languageRows(null);
+    }
+
+    /**
+     * Automatic language switching: per language, the voice for text in it
+     * while `voice` reads (null: whichever voice reads), kept in languages.txt.
+     */
+    private void languageRows(final Library.Item voice) {
+        List<VoiceInfo> all = Data.voices(this);
+        Map<String, List<VoiceInfo>> by = new java.util.TreeMap<>();
+        for (VoiceInfo v : all) {
+            String l = Languages.choiceLanguage(v.language);
+            if (!by.containsKey(l)) by.put(l, new ArrayList<VoiceInfo>());
+            by.get(l).add(v);
+        }
+        String ownBase = voice != null ? Languages.base(voice.language) : null;
+        List<String> langs = new ArrayList<>();
+        for (String l : by.keySet()) if (ownBase == null || !Languages.base(l).equals(ownBase)) langs.add(l);
+        java.util.Collections.sort(langs, new java.util.Comparator<String>() {
+            @Override
+            public int compare(String a, String b) { return Library.languageName(a).compareToIgnoreCase(Library.languageName(b)); }
+        });
+        if (voice != null) section(getString(R.string.other_languages));
+        if (langs.isEmpty()) {
+            text(getString(R.string.no_other_languages));
+            return;
+        }
+        if (voice != null) text(getString(R.string.other_languages_explained, voice.name));
+        Map<String, String> names = new java.util.HashMap<>();
+        String[] keys = new String[all.size()], tags = new String[all.size()];
+        for (int i = 0; i < keys.length; i++) {
+            VoiceInfo v = all.get(i);
+            names.put(v.key, v.name);
+            keys[i] = v.key;
+            tags[i] = v.language;
+        }
+        Map<String, Map<String, String>> chosen = Languages.load(this);
+        Map<String, String> every = chosen.containsKey(Languages.EVERY) ? chosen.get(Languages.EVERY) : new java.util.HashMap<String, String>();
+        Map<String, String> mine = voice == null ? every
+                : chosen.containsKey(voice.id) ? chosen.get(voice.id) : new java.util.HashMap<String, String>();
+        for (final String lang : langs) {
+            String first;
+            if (voice == null) first = getString(R.string.lang_auto_every);
+            else if (names.containsKey(every.get(lang))) first = getString(R.string.lang_as_every, names.get(every.get(lang)));
+            else {
+                int a = Native.langPick("", voice.id, lang, keys, tags);
+                first = getString(R.string.lang_auto, a >= 0 ? names.get(keys[a]) : getString(R.string.lang_none));
+            }
+            final List<String> optKeys = new ArrayList<>();
+            List<String> labels = new ArrayList<>();
+            optKeys.add(null);
+            labels.add(first);
+            for (VoiceInfo v : by.get(lang)) {
+                optKeys.add(v.key);
+                labels.add(v.name);
+            }
+            int sel = Math.max(0, optKeys.indexOf(mine.get(lang)));
+            choice("lang:" + lang, Library.languageName(lang), labels, sel, new Choice() {
+                @Override
+                public void chose(int i) {
+                    Languages.set(MainActivity.this, lang, optKeys.get(i), voice != null ? voice.id : null);
                 }
             });
         }

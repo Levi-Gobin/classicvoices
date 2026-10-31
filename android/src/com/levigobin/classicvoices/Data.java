@@ -189,6 +189,13 @@ final class Data {
     // voices picked for other languages ("de-DE <home key> <languages.txt time>" -> key), until the list changes
     private static final Map<String, String> near = new HashMap<>();
 
+    /** The app changed languages.txt (its time may not, within a second). */
+    static void languagesChanged() {
+        synchronized (LOCK) {
+            near.clear();
+        }
+    }
+
     private static String readSmall(File f) {
         try {
             java.io.FileInputStream in = new java.io.FileInputStream(f);

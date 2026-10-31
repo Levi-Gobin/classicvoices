@@ -9,7 +9,8 @@ Windows and Linux app, SAPI and Speech Dispatcher (vxlang.h vx_lang_choose):
     ios70/en-US de ios70e/de-DE
 
 <for> is "*" (whichever voice is in use) or a voice key; languages are bare
-codes ("de"), so a choice covers de-DE and de-AT text alike."""
+codes ("de"), so a choice covers de-DE and de-AT text alike, except where the
+regions are languages of their own (Chinese: zh-CN, zh-TW, zh-HK)."""
 import os
 
 from . import lib
@@ -24,8 +25,28 @@ def _path(data_root):
     return os.path.join(data_root, FILE)
 
 
+REGIONAL = ("zh",)  # chosen per region
+
+
 def base(language):
     return (language or "").replace("_", "-").split("-")[0].lower()
+
+
+def choice_language(language):
+    """What a choice is kept under: "de" for de-DE, but "zh-TW" for zh-TW."""
+    parts = (language or "").replace("_", "-").split("-")
+    b = parts[0].lower()
+    if b in REGIONAL and len(parts) > 1 and parts[1]:
+        return "%s-%s" % (b, parts[1].upper())
+    return b
+
+
+def stamp(data_root):
+    """languages.txt's modification time (0 when there is none)."""
+    try:
+        return os.stat(_path(data_root)).st_mtime_ns
+    except OSError:
+        return 0
 
 
 def text(data_root):
@@ -43,7 +64,7 @@ def load(data_root):
     for line in text(data_root).splitlines():
         f = line.split("#", 1)[0].split()
         if len(f) == 3:
-            out.setdefault(f[0], {})[base(f[1])] = f[2]
+            out.setdefault(f[0], {})[choice_language(f[1])] = f[2]
     return out
 
 
@@ -67,9 +88,9 @@ def set_choice(data_root, language, voice_key, for_voice=None):
     c = load(data_root)
     table = c.setdefault(for_voice or "*", {})
     if voice_key:
-        table[base(language)] = voice_key
+        table[choice_language(language)] = voice_key
     else:
-        table.pop(base(language), None)
+        table.pop(choice_language(language), None)
     if not table:
         c.pop(for_voice or "*", None)
     save(data_root, c)
