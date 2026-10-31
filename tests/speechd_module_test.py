@@ -98,6 +98,18 @@ ev, a = speak("char", {"cap_let_recogn": "pitch"}, "A", "CHAR")
 ev, a = speak("key", {}, "shift_a", "KEY")
 ev, a = speak("enhanced_lang", {"synthesis_voice": "NULL", "language": "en-GB"}, "Choosing by language.")
 
+# Automatic language switching: a language set after the voice (as Orca does
+# for text in another language) goes to that language's nearest voice
+names = [v[0] for v in voices]
+if "Samantha (iOS 6)" in names and "Anna (iOS 6)" in names:
+    _, ref = speak("anna_direct", {"language": "de-DE", "synthesis_voice": "Anna (iOS 6)"}, "Guten Tag, wie geht es dir?")
+    _, en = speak("lang_en", {"language": "en-US", "synthesis_voice": "Samantha (iOS 6)"}, "Hello there.")
+    _, de = speak("lang_de", {"language": "de"}, "Guten Tag, wie geht es dir?")
+    assert de == ref, "German after a language change isn't Anna (iOS 6)"
+    _, back = speak("lang_back", {"language": "en-US"}, "Hello there.")
+    assert back == en, "back to English isn't Samantha again"
+    print("language switching: ok")
+
 # STOP in the middle of a long message
 send("SET\nsynthesis_voice=Samantha (iOS 6)\n.\n"); read_until(lambda l: l.startswith("203"))
 send("SPEAK\n"); read_until(lambda l: l.startswith("202"))

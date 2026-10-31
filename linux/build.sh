@@ -22,7 +22,7 @@ for f in $HOST linux/speechd/module_main.c linux/speechd/module_process.c linux/
     $CC $CFLAGS -c "$f" -o "$OBJ/$(basename "$f" .c).o"
 done
 LIBS="-lm -ldl -pthread"
-COMMON="$OBJ/thumb.o $OBJ/vxengine.o $OBJ/vxstream.o $OBJ/vxphonemes.o $OBJ/vxrules.o $OBJ/cv_catalog.o $OBJ/cv_ssml.o $OBJ/cv_rules.o $OBJ/vx_posix.o $OBJ/vx_native_dl.o $OBJ/mt_stub.o"
+COMMON="$OBJ/thumb.o $OBJ/vxengine.o $OBJ/vxstream.o $OBJ/vxphonemes.o $OBJ/vxrules.o $OBJ/vxlang.o $OBJ/cv_catalog.o $OBJ/cv_ssml.o $OBJ/cv_rules.o $OBJ/vx_posix.o $OBJ/vx_native_dl.o $OBJ/mt_stub.o"
 $CC $CFLAGS -o "$OUT/stage/libexec/sd_classicvoices" linux/sd_classicvoices.c $COMMON \
     "$OBJ/module_main.o" "$OBJ/module_process.o" "$OBJ/module_readline.o" $LIBS
 $CC $CFLAGS -o "$OUT/stage/bin/classicvoices-say" linux/cvsay.c $COMMON $LIBS

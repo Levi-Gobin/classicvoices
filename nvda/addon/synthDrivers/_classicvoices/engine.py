@@ -90,8 +90,9 @@ class Speaker:
         marks = (lib.Mark * 64)()
         done = ctypes.c_int(0)
         self._lib.vxs_set_rules_pack(self._s, utt.pack.encode("utf-8") if utt.pack else None)
+        # -1: another voice's part goes straight on, so the stream keeps only ~5 ms of trailing quiet
         self._lib.vxs_start(self._s, utt.voice_key.encode("utf-8"), utt.text.encode("utf-8"),
-                            utt.rate, utt.pitch, utt.volume, 0)
+                            utt.rate, utt.pitch, utt.volume, 0 if utt.last else -1)
         wanted = set(utt.indexes)
         reached = []
         waiting = []  # (frame, index): known, its audio not here yet

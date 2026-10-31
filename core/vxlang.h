@@ -1,8 +1,9 @@
 // Automatic language switching: which voice speaks text marked as another
 // language. By default the voice nearest the one in use: the same release
 // (iOS 6 Samantha -> iOS 6 Anna for German), else the closest release of the
-// same family (iOS, Mac OS X), and the same kind (compact or enhanced) where
-// there is one. A language without a region takes the voice in use when it
+// same family (iOS, Mac OS X); that release's own voice for the language
+// (Mac OS X: the most desirable of its several), its enhanced or premium
+// version when that is here. A language without a region takes the voice in use when it
 // is that language already, else its usual region ("de" -> de-DE).
 //
 // Every platform passes its own voice list (keys and BCP 47 languages); the

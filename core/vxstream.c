@@ -294,6 +294,7 @@ static void rs_init(void) {
 #define QUIET_LEVEL 160                 // |sample| below this counts as silence
 #define PREROLL_FRAMES 110              // ~5 ms kept before the first sound
 #define TAIL_KEEP_FRAMES 660            // ~30 ms kept after the last sound
+#define TAIL_JOINED_FRAMES 110          // ~5 ms when another voice goes straight on (language switching)
 #define QUIET_FLUSH_FRAMES (22050 * 2)  // don't hold more than 2 s of silence
 
 typedef struct {
@@ -632,9 +633,11 @@ static void words_end_call(Sink *k) {
     k->map = NULL;
 }
 
-// End of utterance: keep a short tail, then any requested trailing pause.
+// End of utterance: keep a short tail, then any requested trailing pause
+// (pause_ms < 0: another voice goes straight on, so only ~5 ms of tail).
 static void finish(Sink *k, int pause_ms) {
-    size_t tail = k->nquiet < TAIL_KEEP_FRAMES ? k->nquiet : TAIL_KEEP_FRAMES;
+    size_t keep = pause_ms < 0 ? TAIL_JOINED_FRAMES : TAIL_KEEP_FRAMES;
+    size_t tail = k->nquiet < keep ? k->nquiet : keep;
     if (k->npend) words_resolve(k, 1, 0, 0, 0, k->got_first ? tail : 0);
     if (k->got_first) push(k, k->quiet, tail);
     if (pause_ms > 0) push(k, NULL, (size_t)pause_ms * (size_t)k->rate / 1000);
@@ -1094,7 +1097,7 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     s->job_rate = rate < 10 ? 10 : rate > 400 ? 400 : rate;  // Vocalizer's floor is 50; MacinTalk's modern curve goes lower
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;
     s->job_volume = volume < 0 ? 80 : volume > 100 ? 100 : volume;  // 80 = engine default
-    s->job_pause = trailing_pause_ms < 0 ? 0 : trailing_pause_ms > 5000 ? 5000 : trailing_pause_ms;
+    s->job_pause = trailing_pause_ms < 0 ? -1 : trailing_pause_ms > 5000 ? 5000 : trailing_pause_ms;
     s->has_job = 1;
     s->first_ms = -1;
     atomic_store(&s->word_w, 0);

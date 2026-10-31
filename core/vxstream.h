@@ -23,7 +23,9 @@ void vxs_set_asset_root(VxStream *s, const char *path);
 // Begin speaking (cancels anything in progress). rate/pitch are percentages
 // of normal (100); volume is 0-100, or -1 for the voice default (80).
 // trailing_pause_ms of silence is appended after the speech (SSML <break> at
-// the end of a request). Leading/trailing engine silence is trimmed.
+// the end of a request). Leading/trailing engine silence is trimmed; a
+// negative trailing_pause_ms says another voice's part follows at once (text in
+// another language), so all but ~5 ms of it.
 void vxs_start(VxStream *s, const char *voice_key, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms);
 // As vxs_start, with a second voice (normally the compact version of an

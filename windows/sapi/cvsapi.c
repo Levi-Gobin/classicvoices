@@ -373,15 +373,18 @@ static int write_with_events(Run *r, const Text *t, Words *wq, MarkQueue *mq, co
     return n > done && write_pcm(r, pcm + done, n - done);
 }
 
-// One engine utterance. Returns 1 when aborted.
-static int speak_text(Run *r, const Text *t, const Marks *mk, int rate, int pitch, int volume, int fallback) {
+// One engine utterance (joined: another voice's part follows at once). Returns
+// 1 when aborted.
+static int speak_text(Run *r, const Text *t, const Marks *mk, int rate, int pitch, int volume, int fallback,
+                      int joined) {
     Engine *e = r->e;
     float buf[1024];
     int16_t pcm[1024];
     ULONGLONG start = r->bytes;
     Words wq = {.n = 0};
     MarkQueue mq = {.n = 0};
-    vxs_start_with_fallback(e->vxs, e->key, fallback && e->fallback[0] ? e->fallback : NULL, t->s, rate, pitch, volume, 0);
+    vxs_start_with_fallback(e->vxs, e->key, fallback && e->fallback[0] ? e->fallback : NULL, t->s, rate, pitch, volume,
+                            joined ? -1 : 0);
     for (;;) {
         int done = 0;
         // before the audio they belong to
@@ -635,11 +638,14 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         const SPVSTATE *st = &f->State;
         int r0 = rate_pct(rate + st->RateAdj), p0 = pitch_pct(st->PitchAdj.MiddleAdj),
             v0 = (int)lround(80.0 * volume / 100.0 * st->Volume / 100.0);
-        int cr = r0, cp = p0, cv = v0;
+        int cr = r0, cp = p0, cv = v0, switched = 0;
         for (;;) {
             char cmd[48];
             SPVACTIONS a = f->State.eAction;
-            if (is_text(a) && text.len && strcmp(voice_for(e, f->State.LangID)->key, e->key)) break;
+            if (is_text(a) && text.len && strcmp(voice_for(e, f->State.LangID)->key, e->key)) {
+                switched = 1;
+                break;
+            }
             if (a == SPVA_Bookmark) {
                 if (marks.n == marks.cap) {
                     marks.cap = marks.cap ? marks.cap * 2 : 16;
@@ -681,7 +687,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
             f = f->pNext;
             if (at_last || !f) break;
         }
-        int stop = text.len && speak_text(&r, &text, &marks, r0, p0, v0, fallback);
+        int stop = text.len && speak_text(&r, &text, &marks, r0, p0, v0, fallback, switched);
         for (size_t i = 0; i < marks.n; i++) free(marks.name[i]);
         free(marks.name);
         free(text.s);

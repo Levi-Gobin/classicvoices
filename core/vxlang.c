@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 typedef struct {
     char lang[8];    // "de"
@@ -58,6 +59,74 @@ static const char *default_region(const char *lang) {
     for (size_t i = 0; i < sizeof kRegion / sizeof *kRegion; i++)
         if (!strcmp(lang, kRegion[i][0])) return kRegion[i][1];
     return "";
+}
+
+// A Mac OS X release's own voice for a language, among the several it offers:
+// the one with the highest VoiceRelativeDesirability in its Info.plist (read
+// from Apple's voice packages); where Mavericks has a tie, iOS 7.0's voice (its
+// compacts are iOS 7.0's). NULL: a tie with no such voice.
+static const struct { const char *locale, *name[3]; } kMacDefault[] = {
+    {"ar-SA", {NULL, "Maged", "Tarik"}},
+    {"cs-CZ", {"Zuzana", "Zuzana", "Zuzana"}},
+    {"da-DK", {"Ida", "Ida", "Sara"}},
+    {"de-DE", {"Yannick", "Yannick", "Anna"}},
+    {"el-GR", {"Alexandros", "Alexandros", "Melina"}},
+    {"en-AU", {"Lee", "Lee", "Karen"}},
+    {"en-GB", {"Daniel", "Daniel", "Daniel"}},
+    {"en-IE", {"Moira", "Moira", "Moira"}},
+    {"en-IN", {"Sangeeta", "Sangeeta", "Veena"}},
+    {"en-US", {"Samantha", "Samantha", "Samantha"}},
+    {"en-ZA", {"Tessa", "Tessa", "Tessa"}},
+    {"en-scotland", {"Fiona", "Fiona", "Fiona"}},
+    {"es-AR", {NULL, NULL, "Diego"}},
+    {"es-CO", {NULL, NULL, NULL}},
+    {"es-ES", {"Diego", "Diego", "Monica"}},
+    {"es-MX", {"Javier", "Paulina", "Paulina"}},
+    {"fi-FI", {"Mikko", "Mikko", "Satu"}},
+    {"fr-CA", {"Felix", "Felix", "Amelie"}},
+    {"fr-FR", {"Virginie", "Virginie", "Thomas"}},
+    {"hi-IN", {"Lekha", "Lekha", "Lekha"}},
+    {"hu-HU", {"Eszter", "Eszter", "Mariska"}},
+    {"id-ID", {"Damayanti", "Damayanti", "Damayanti"}},
+    {"it-IT", {"Paolo", "Paolo", "Alice"}},
+    {"ja-JP", {"Kyoko", "Kyoko", "Kyoko"}},
+    {"ko-KR", {"Yuna", "Yuna", "Yuna"}},
+    {"nl-BE", {"Ellen", "Ellen", "Ellen"}},
+    {"nl-NL", {"Xander", "Xander", "Xander"}},
+    {"no-NO", {"Stine", "Stine", "Nora"}},
+    {"pl-PL", {"Agata", "Agata", "Zosia"}},
+    {"pt-BR", {"Raquel", "Raquel", "Luciana"}},
+    {"pt-PT", {"Joana", "Joana", "Joana"}},
+    {"ro-RO", {"Simona", "Simona", "Ioana"}},
+    {"ru-RU", {"Milena", "Milena", "Milena"}},
+    {"sk-SK", {"Laura", "Laura", "Laura"}},
+    {"sv-SE", {"Oskar", "Oskar", "Alva"}},
+    {"th-TH", {"Narisa", "Narisa", "Kanya"}},
+    {"tr-TR", {"Aylin", "Aylin", "Yelda"}},
+    {"zh-CN", {"Ting-Ting", "Ting-Ting", "Ting-Ting"}},
+    {"zh-HK", {"Sin-Ji", "Sin-Ji", "Sin-ji"}},
+    {"zh-TW", {"Ya-Ling", "Ya-Ling", "Mei-Jia"}},
+};
+
+// Whether a voice is its release's own voice for its language: every iOS voice
+// is; a Mac OS X voice ("mac109/AnnaCompact", "de-DE") when kMacDefault says so.
+static int release_default(const char *key, const char *language) {
+    if (!key || strncmp(key, "mac10", 5) || !language) return !key || strncmp(key, "mac", 3);
+    int era = key[5] - '7';  // mac107 / mac108 / mac109
+    const char *slash = strchr(key, '/');
+    if (era < 0 || era > 2 || !slash) return 0;
+    char loc[16];
+    size_t i = 0;
+    for (; language[i] && i < sizeof loc - 1; i++) loc[i] = language[i] == '_' ? '-' : language[i];
+    loc[i] = 0;
+    for (size_t r = 0; r < sizeof kMacDefault / sizeof *kMacDefault; r++) {
+        if (strcasecmp(kMacDefault[r].locale, loc)) continue;
+        if (!kMacDefault[r].name[era]) return 1;  // a tie: each is as much its own
+        size_t n = strlen(kMacDefault[r].name[era]);
+        return !strncasecmp(slash + 1, kMacDefault[r].name[era], n) &&
+               (!slash[1 + n] || !strcmp(slash + 1 + n, "Compact"));
+    }
+    return 0;
 }
 
 // When a voice's release came out, and its family: voices of the same family
@@ -122,7 +191,8 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
         if (region[0] && strcmp(have.region, region)) score += want.region[0] ? 10000 : 5000;
         score += labs((long)(e.year - here.year)) * 100;
         if (e.family != here.family) score += 50;
-        if (e.enhanced != here.enhanced) score += 20;
+        if (!e.enhanced) score += 20;  // the enhanced (premium) version of a voice, when it is here
+        if (!release_default(keys[i], languages[i])) score += 30;  // a release's own voice for it first
         if (e.year == 2012 && !e.enhanced) score -= 1;  // ties: iOS 6's compacts, VoiceOver's own
         if (best < 0 || score < best_score) { best = (int)i; best_score = score; }
     }
