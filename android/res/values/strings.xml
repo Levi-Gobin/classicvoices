@@ -163,4 +163,9 @@
     <string name="update_available">Classic Voices %1$s is available. Open its download page?</string>
     <string name="update_open">Open</string>
     <string name="update_later">Not now</string>
+    <string name="update_install_question">Classic Voices %1$s is available. Download and install it now?</string>
+    <string name="update_install">Install</string>
+    <string name="update_allow">Allow Classic Voices to install apps, then come back: the update goes on.</string>
+    <string name="update_downloading">Downloading Classic Voices %1$s</string>
+    <string name="update_failed">Classic Voices couldn\'t update: %1$s</string>
 </resources>

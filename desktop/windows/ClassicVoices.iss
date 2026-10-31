@@ -48,6 +48,8 @@ Name: "{group}\Uninstall Classic Voices"; Filename: "{uninstallexe}"
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s /n ""/i:{code:DataDir}"" ""{app}\cvsapi64.dll"""; Flags: runhidden 64bit; StatusMsg: "Registering the voices for 64-bit programs..."
 Filename: "{syswow64}\regsvr32.exe"; Parameters: "/s /n ""/i:{code:DataDir}"" ""{app}\cvsapi32.dll"""; Flags: runhidden 32bit; StatusMsg: "Registering the voices for 32-bit programs..."
 Filename: "{app}\Classic Voices.exe"; Description: "Open Classic Voices"; Flags: postinstall nowait skipifsilent
+; an update the app started (silent): open the new version again, as the user rather than elevated
+Filename: "{app}\Classic Voices.exe"; Flags: nowait skipifnotsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\regsvr32.exe"; Parameters: "/s /u ""{app}\cvsapi64.dll"""; Flags: runhidden 64bit; RunOnceId: "unreg64"

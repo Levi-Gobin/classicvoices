@@ -23,6 +23,44 @@ def bundle_dir():
     return os.path.dirname(os.path.dirname(HERE))
 
 
+# ---------------------------------------------------------------- updating itself
+
+def update_asset():
+    """The release file that updates this copy, or None when it can't update
+    itself (run from the repository): Windows' setup program, or the Linux
+    tarball for this processor."""
+    if IS_WIN:
+        return "ClassicVoicesSetup.exe" if FROZEN else None
+    return "classicvoices-linux-%s.tar.gz" % platform.machine() if linux_prefix() else None
+
+
+def linux_prefix():
+    """Where install.sh put this copy (~/.local): HERE is <prefix>/lib/classicvoices/classicvoices."""
+    lib = os.path.dirname(os.path.dirname(HERE))
+    return os.path.dirname(lib) if os.path.basename(lib) == "lib" else None
+
+
+def install_update(path):
+    """Hand a downloaded update to its installer. Windows: the setup program
+    (Windows asks for permission), which closes this app and opens the new
+    one. Linux: unpack the tarball and run its install.sh into this copy's
+    prefix, then start the new app in place of this one."""
+    if IS_WIN:
+        os.startfile(path, "open", "/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS")
+        return
+    import tarfile
+    import tempfile
+    tmp = tempfile.mkdtemp(prefix="classicvoices-update-")
+    with tarfile.open(path) as t:
+        t.extractall(tmp, filter="data") if hasattr(tarfile, "data_filter") else t.extractall(tmp)
+    prefix = linux_prefix()
+    subprocess.run(["sh", os.path.join(tmp, "classicvoices", "install.sh")], check=True,
+                   env=dict(os.environ, PREFIX=prefix), stdout=subprocess.DEVNULL)
+    shutil.rmtree(tmp, ignore_errors=True)
+    app = os.path.join(prefix, "bin", "classicvoices")
+    os.execv("/bin/sh", ["sh", app])
+
+
 def install_dir():
     """Where the installer put the app (and, on Windows, the SAPI DLLs)."""
     return os.path.dirname(sys.executable) if FROZEN else os.path.join(bundle_dir(), "build", "sapi")

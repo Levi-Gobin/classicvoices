@@ -195,6 +195,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
     @Override
     protected void onResume() {
         super.onResume();
+        Update.resume(this);  // back from letting Classic Voices install apps
         ImportService.addListener(this);
         reload();
         render(null, false);

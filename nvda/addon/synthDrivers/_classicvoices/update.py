@@ -1,6 +1,9 @@
 """Is there a newer Classic Voices? GitHub is asked at most once a day, in the
-background, and each new version is announced once. Nothing is downloaded or
-installed: the announcement offers the release page."""
+background, and each new version is offered once. If the person says yes, its
+file for this platform is downloaded (and checked against the SHA-256 GitHub
+publishes for it) and handed to the platform's own installer: NVDA's add-on
+installer, the Windows setup program, the Linux install script."""
+import hashlib
 import json
 import os
 import re
@@ -20,8 +23,9 @@ def _number(v):
 
 
 def newer(state_dir, timeout=10):
-    """(version, release page) of a release newer than this one that hasn't
-    been announced yet, else None (also when GitHub can't be reached)."""
+    """(version, release page, {file name: asset}) of a release newer than this
+    one that hasn't been announced yet, else None (also when GitHub can't be
+    reached). An asset is {"url", "size", "sha256" (or None)}."""
     path = os.path.join(state_dir, "update.json")
     try:
         with open(path, encoding="utf-8") as f:
@@ -44,7 +48,12 @@ def newer(state_dir, timeout=10):
         if rel.get("draft") or _number(v) <= _number(VERSION) or _number(v) <= _number(state.get("announced")):
             continue
         if not found or _number(v) > _number(found[0]):
-            found = (v, rel.get("html_url") or PAGE)
+            assets = {}
+            for a in rel.get("assets") or []:
+                digest = a.get("digest") or ""
+                assets[a.get("name")] = {"url": a.get("browser_download_url"), "size": a.get("size") or 0,
+                                         "sha256": digest[7:].lower() if digest.startswith("sha256:") else None}
+            found = (v, rel.get("html_url") or PAGE, assets)
     if found:
         state["announced"] = found[0]
     try:
@@ -54,3 +63,35 @@ def newer(state_dir, timeout=10):
     except OSError:
         pass
     return found
+
+
+class UpdateError(Exception):
+    pass
+
+
+def download(asset, dest, progress=None, timeout=60):
+    """Fetch an asset (as newer gives it) to dest, checking its size and
+    SHA-256; progress(fraction) as it goes."""
+    h = hashlib.sha256()
+    req = urllib.request.Request(asset["url"], headers={"User-Agent": "ClassicVoices/" + VERSION})
+    tmp = dest + ".part"
+    done = 0
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(tmp, "wb") as f:
+        total = asset.get("size") or int(r.headers.get("Content-Length") or 0)
+        while True:
+            b = r.read(1 << 16)
+            if not b:
+                break
+            f.write(b)
+            h.update(b)
+            done += len(b)
+            if progress and total:
+                progress(done / total)
+    if asset.get("size") and done != asset["size"]:
+        os.remove(tmp)
+        raise UpdateError("the download was cut short")
+    if asset.get("sha256") and h.hexdigest() != asset["sha256"]:
+        os.remove(tmp)
+        raise UpdateError("the download doesn't match what GitHub published")
+    os.replace(tmp, dest)
+    return dest

@@ -118,7 +118,7 @@ def job_gauge(p, job, name):
     p.gauge(name, lambda: job.percent or 0)
 
 
-JOB_VERB = {"download": "Downloading", "firmware": "Getting", "fast": "Building", "pronunciation": "Downloading",
+JOB_VERB = {"download": "Downloading", "update": "Downloading", "firmware": "Getting", "fast": "Building", "pronunciation": "Downloading",
             "copy": "Copying"}
 
 
@@ -834,17 +834,40 @@ def main():
 
 
 def check_for_update(frame):
-    """Once a day at most: a newer Classic Voices is offered once, with its
-    release page."""
+    """Once a day at most: a newer Classic Voices is offered once, to install
+    (or, when this copy can't update itself, with its release page)."""
     from _classicvoices import update
     found = update.newer(system.data_root())
     if found:
         wx.CallAfter(offer_update, frame, *found)
 
 
-def offer_update(frame, version, url):
+def offer_update(frame, version, url, assets):
     if not frame:
         return
-    if wx.MessageBox("Classic Voices %s is available. Open its download page?" % version, APP,
-                     wx.YES_NO | wx.ICON_INFORMATION, frame) == wx.YES:
-        webbrowser.open(url)
+    name = system.update_asset()
+    asset = assets.get(name) if name else None
+    if not asset:
+        if wx.MessageBox("Classic Voices %s is available. Open its download page?" % version, APP,
+                         wx.YES_NO | wx.ICON_INFORMATION, frame) == wx.YES:
+            webbrowser.open(url)
+        return
+    if wx.MessageBox("Classic Voices %s is available. Download and install it now? Classic Voices opens again "
+                     "when it's done%s." % (version, " (Windows asks for permission first)" if system.IS_WIN else ""),
+                     APP, wx.YES_NO | wx.ICON_INFORMATION, frame) != wx.YES:
+        return
+
+    def ready(path):
+        wx.CallAfter(install_update, frame, path, url)
+    frame.lib.get_update(version, asset, ready)
+
+
+def install_update(frame, path, url):
+    try:
+        system.install_update(path)  # Linux doesn't return: the new app takes over
+    except Exception as e:
+        if wx.MessageBox("Classic Voices couldn't install the update: %s. Open its download page?" % e, APP,
+                         wx.YES_NO | wx.ICON_ERROR, frame) == wx.YES:
+            webbrowser.open(url)
+        return
+    frame.Close()  # Windows: the setup program replaces it, then opens the new one
