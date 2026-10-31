@@ -102,10 +102,12 @@ final class Downloads {
         load(c);
         List<Item> out = new ArrayList<>();
         File dl = Data.downloadsDir(c), voices = Data.voicesDir(c);
+        java.util.Set<String> wanted = Languages.wanted(c);  // languages left out aren't offered
         try {
             for (int i = 0; i < enhanced.length(); i++) {
                 JSONObject e = enhanced.getJSONObject(i);
                 String build = e.getString("build"), lang = e.getString("language");
+                if (!Languages.isWanted(lang, wanted)) continue;
                 if (new File(dl, build + "/" + lang + "/broker.hdr.asset").isFile()) continue;
                 // the compact voice of the same language names the voice
                 String voice = voiceName(new File(voices, build + "/TTSResources/" + lang + "/broker.hdr"));
@@ -121,7 +123,7 @@ final class Downloads {
                 String era = v.getString("era");
                 String[] info = null;
                 for (String[] x : ERAS) if (x[0].equals(era)) info = x;
-                if (info == null) continue;
+                if (info == null || !Languages.isWanted(v.optString("locale"), wanted)) continue;
                 if (new File(dl, era + "/" + v.getString("name") + "/broker.hdr").isFile()) continue;
                 String label = v.getString("name") + " (Mac OS X " + info[1] + ", " + v.optString("locale") + ")";
                 Item it = new Item("mac", label, era, v.getString("name"), v.optString("locale"), v.getString("url"),

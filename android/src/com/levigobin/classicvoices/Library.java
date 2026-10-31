@@ -210,6 +210,31 @@ final class Library {
         Data.refresh(c);
     }
 
+    /** Every voice of a language ("de", "zh-TW"), built-in or downloaded; imports leave it out from now on. */
+    static void removeLanguage(Context c, String language) {
+        File voices = Data.voicesDir(c), dl = Data.downloadsDir(c);
+        for (Item it : items(c)) {
+            if (!it.here() || !Languages.sameLanguage(it.language, language)) continue;
+            String rest = it.id.substring(it.id.indexOf('/') + 1);
+            if (it.builtIn) Firmware.deleteTree(new File(voices, it.version.id + "/TTSResources/" + rest));
+            else if (!it.version.mac) Firmware.deleteTree(new File(dl, it.version.id + "/" + rest));
+            else {
+                String base = rest.endsWith("Compact") ? rest.substring(0, rest.length() - 7) : rest;
+                Firmware.deleteTree(new File(dl, it.version.id + "/" + base));
+                Firmware.deleteTree(new File(dl, it.version.id + "/" + base + "Compact"));
+            }
+        }
+        java.util.Set<String> wanted = Languages.wanted(c);
+        java.util.Set<String> keep = new java.util.TreeSet<>(wanted != null ? wanted : java.util.Arrays.asList(Languages.ALL));
+        java.util.Iterator<String> i = keep.iterator();
+        while (i.hasNext()) {
+            String l = i.next();
+            if (l.equals(language) || Languages.base(l).equals(language)) i.remove();
+        }
+        Languages.setWanted(c, keep);
+        Data.refresh(c);
+    }
+
     static long folderSize(File f) {
         if (f.isFile()) return f.length();
         long n = 0;

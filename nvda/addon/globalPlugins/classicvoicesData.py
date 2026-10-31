@@ -135,6 +135,10 @@ class DataDialog(wx.Dialog):
         self.fastBtn = wx.Button(self, label=_("Build fast &code"))
         self.fastBtn.Bind(wx.EVT_BUTTON, lambda evt: self._start(None))
         btns.Add(self.fastBtn)
+        # Translators: button that opens the choice of languages firmware imports take.
+        wantBtn = wx.Button(self, label=_("Languages to &get..."))
+        wantBtn.Bind(wx.EVT_BUTTON, lambda evt: (WantedDialog(self).ShowModal(), self.refresh()))
+        btns.Add(wantBtn)
         # Translators: button that opens the choice of voices for text in other languages.
         langBtn = wx.Button(self, label=_("Voices for other &languages..."))
         langBtn.Bind(wx.EVT_BUTTON, lambda evt: LanguagesDialog(self).ShowModal())
@@ -338,6 +342,62 @@ def _language_name(code):
         return languageHandler.getLanguageDescription(code.replace("-", "_")) or code
     except Exception:
         return code
+
+
+class WantedDialog(wx.Dialog):
+    """The languages firmware imports take and downloads offer
+    (<data>/languages-wanted.txt), and removing the voices of the others."""
+
+    def __init__(self, parent):
+        # Translators: title of the dialog choosing which languages to get.
+        super().__init__(parent, title=_("Languages to get"))
+        self.langs = sorted(cv_firmware.ALL_LANGUAGES, key=_language_name)
+        wanted = cv_firmware.wanted_languages(cv_paths.data_root())
+        main = wx.BoxSizer(wx.VERTICAL)
+        # Translators: explains the languages list.
+        main.Add(wx.StaticText(self, label=_(
+            "Firmware you import from now on brings the checked languages' voices, and only their voices are "
+            "offered for download. Voices you have of the others stay until you remove them.")), flag=wx.ALL, border=5)
+        # Translators: label of the languages checklist.
+        main.Add(wx.StaticText(self, label=_("&Languages:")), flag=wx.LEFT | wx.TOP, border=5)
+        self.list = nvdaControls.CustomCheckListBox(self, choices=[_language_name(l) for l in self.langs],
+                                                    size=(360, 300))
+        self.list.SetCheckedItems([i for i, l in enumerate(self.langs) if wanted is None or l in wanted])
+        self.list.Bind(wx.EVT_CHECKLISTBOX, self.onCheck)
+        main.Add(self.list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        # Translators: button removing every voice of the unchecked languages.
+        rm = wx.Button(self, label=_("&Remove the unchecked languages' voices"))
+        rm.Bind(wx.EVT_BUTTON, self.onRemove)
+        btns.Add(rm)
+        close = wx.Button(self, wx.ID_CLOSE)
+        self.Bind(wx.EVT_BUTTON, lambda evt: self.EndModal(wx.ID_CLOSE), id=wx.ID_CLOSE)
+        self.SetEscapeId(wx.ID_CLOSE)
+        btns.Add(close)
+        main.Add(btns, flag=wx.ALL, border=5)
+        self.SetSizerAndFit(main)
+
+    def _checked(self):
+        return {self.langs[i] for i in self.list.GetCheckedItems()}
+
+    def onCheck(self, evt):
+        got = self._checked()
+        cv_firmware.set_wanted_languages(cv_paths.data_root(), None if len(got) == len(self.langs) else got)
+
+    def onRemove(self, evt):
+        drop = [l for l in self.langs if l not in self._checked()]
+        if not drop:
+            return
+        # Translators: asks before removing voices; %s lists the languages.
+        if gui.messageBox(_("Remove every voice of these languages: %s?") % ", ".join(_language_name(l) for l in drop),
+                          _("Classic Voices"), wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+            return
+        for l in drop:
+            cv_firmware.remove_language(cv_paths.voices_root(), cv_paths.downloads_root(), l)
+        self.onCheck(None)  # remove_language narrows the list; the checks are what was asked for
+        _reload_synth()
+        # Translators: announced when voices were removed.
+        ui.message(_("Removed."))
 
 
 class LanguagesDialog(wx.Dialog):

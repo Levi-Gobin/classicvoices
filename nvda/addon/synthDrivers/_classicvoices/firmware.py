@@ -302,10 +302,11 @@ def _copy_entry(vol, entry, dest):
             left -= len(b)
 
 
-def _copy_tree(vol, entry, dest, progress=None):
+def _copy_tree(vol, entry, dest, progress=None, skip=None):
+    """skip(name): leave out that child of entry (not deeper ones)."""
     for child in vol.children(entry):
         name, is_dir = child[0], child[1]
-        if set(name) & applereaders.ILLEGAL:
+        if set(name) & applereaders.ILLEGAL or (skip and skip(name)):
             continue
         sub = os.path.join(dest, name)
         if is_dir:
@@ -314,6 +315,101 @@ def _copy_tree(vol, entry, dest, progress=None):
             if progress:
                 progress("copying %s" % name, None)
             _copy_entry(vol, child, sub)
+
+
+# ---------------------------------------------------------------- languages
+
+WANTED_FILE = "languages-wanted.txt"
+
+
+def _data_root(voices_root):
+    return os.path.dirname(os.path.normpath(voices_root))
+
+
+def wanted_languages(data_root):
+    """The languages firmware imports take, as languages.choice_language
+    gives them ("de", "zh-TW"), from <data>/languages-wanted.txt; None: all."""
+    try:
+        with open(os.path.join(data_root, WANTED_FILE), encoding="utf-8") as f:
+            got = {line.split("#", 1)[0].strip() for line in f}
+    except OSError:
+        return None
+    got.discard("")
+    return got or None
+
+
+def set_wanted_languages(data_root, langs):
+    """langs: codes (as wanted_languages gives them), or None for all."""
+    path = os.path.join(data_root, WANTED_FILE)
+    if langs is None:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    os.makedirs(data_root, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("# Classic Voices: the languages firmware imports take, one per line\n")
+        f.write("".join(l + "\n" for l in sorted(langs)))
+
+
+def language_wanted(folder, wanted):
+    """Whether a TTSResources folder ("de-DE", "common") is wanted."""
+    from . import languages
+    if wanted is None or folder == "common" or "-" not in folder and "_" not in folder:
+        return True
+    return languages.choice_language(folder) in wanted or languages.base(folder) in wanted
+
+
+def prune_languages(build_dir, wanted):
+    """Remove the voices of unwanted languages from an imported build."""
+    res = os.path.join(build_dir, "TTSResources")
+    for name in os.listdir(res) if wanted is not None and os.path.isdir(res) else []:
+        p = os.path.join(res, name)
+        if os.path.isdir(p) and not language_wanted(name, wanted):
+            shutil.rmtree(p, ignore_errors=True)
+
+
+def remove_language(voices_root, downloads_root, language):
+    """Every voice of a language ("de", "zh-TW"): the firmware's compacts, the
+    downloaded enhanced voices and the Mac OS X voices; and later imports
+    leave it out. Returns the folders removed."""
+    from . import languages, voices as cv_voices
+    def same(tag):
+        return bool(tag) and (languages.choice_language(tag) == language or languages.base(tag) == language)
+    gone = []
+    for build in sorted(os.listdir(voices_root)) if os.path.isdir(voices_root) else []:
+        res = os.path.join(voices_root, build, "TTSResources")
+        for name in os.listdir(res) if os.path.isdir(res) else []:
+            if name != "common" and same(name):
+                shutil.rmtree(os.path.join(res, name), ignore_errors=True)
+                gone.append(os.path.join(res, name))
+    locales = cv_voices._mac_locales()
+    for build in sorted(os.listdir(downloads_root)) if os.path.isdir(downloads_root) else []:
+        d = os.path.join(downloads_root, build)
+        for name in os.listdir(d) if os.path.isdir(d) else []:
+            p = os.path.join(d, name)
+            if build.startswith("mac"):
+                base = name[:-7] if name.endswith("Compact") else name
+                tag = locales.get((build, base.lower()), "")
+                try:  # the Linux importer writes each Mac voice's language beside it
+                    with open(os.path.join(p, "locale"), encoding="utf-8") as f:
+                        tag = f.read().strip() or tag
+                except OSError:
+                    pass
+            else:
+                tag = name
+            if os.path.isdir(p) and same(tag):
+                shutil.rmtree(p, ignore_errors=True)
+                gone.append(p)
+    data = _data_root(voices_root)
+    wanted = wanted_languages(data) or set(ALL_LANGUAGES)
+    wanted = {l for l in wanted if l != language and languages.base(l) != language}
+    set_wanted_languages(data, wanted)
+    return gone
+
+
+# Every language the iOS firmware has voices for (for choosing what imports take).
+ALL_LANGUAGES = ("ar", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hu", "id", "it", "ja", "ko",
+                 "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "th", "tr", "zh-CN", "zh-HK", "zh-TW")
 
 
 def assemble_mac_common(voices_root):
@@ -368,6 +464,7 @@ def _copy_build_dir(src, voices_root, build_key, progress):
                                 os.path.join(dest, "phonemeMaps", name))
     if res and os.path.isdir(res):
         shutil.copytree(res, os.path.join(dest, "TTSResources"))
+        prune_languages(dest, wanted_languages(_data_root(voices_root)))
         if build_key == "ios7":  # engine only; its own voices are not wanted
             res_dir = os.path.join(dest, "TTSResources")
             for name in os.listdir(res_dir):
@@ -506,7 +603,9 @@ def import_rootfs(tmp, rootfs_name, build, voices_root, progress):
                     raise ImportError_("voiced/TTSResources missing from the firmware")
                 progress("Copying the %s engine and voices" % nice, None)
                 _copy_entry(vol, voiced, os.path.join(dest, "voiced"))
-                _copy_tree(vol, res, os.path.join(dest, "TTSResources"), progress)
+                wanted = wanted_languages(_data_root(voices_root))
+                _copy_tree(vol, res, os.path.join(dest, "TTSResources"), progress,
+                           skip=lambda name: not language_wanted(name, wanted))
                 if build_key == "ios7":
                     # iOS 7 is only an engine for the Mavericks voices; its own
                     # voices are not wanted (and are another firmware's anyway).

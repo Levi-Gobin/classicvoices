@@ -19,6 +19,8 @@ compiler, and installs the Speech Dispatcher module.
   classicvoices-data android-pack [--ndk DIR] [--abi arm64-v8a,armeabi-v7a] [-o pack.zip] [ios6 ...]
                                                the same for an Android phone, as a data pack
                                                for the app's "Import a data pack" (needs the NDK)
+  classicvoices-data languages [all | de fr ...]  the languages imports take and downloads offer
+  classicvoices-data remove-language de ...    every voice of a language (imports leave it out)
   classicvoices-data pronunciation [on|off]    Apple's newer pronunciation rules: download
                                                them (about 5 MB) and turn them on, or off
   classicvoices-data install-module            install sd_classicvoices for Speech Dispatcher
@@ -442,9 +444,31 @@ def cmd_pronunciation(args):
     print("Newer pronunciation rules are %s." % ("on" if on else "off"))
 
 
+def cmd_languages(args):
+    if args == ["all"]:
+        firmware.set_wanted_languages(data_root(), None)
+    elif args:
+        bad = [a for a in args if a not in firmware.ALL_LANGUAGES]
+        if bad:
+            sys.exit("unknown language %s (one of: %s)" % (", ".join(bad), " ".join(firmware.ALL_LANGUAGES)))
+        firmware.set_wanted_languages(data_root(), set(args))
+    wanted = firmware.wanted_languages(data_root())
+    print("Languages imports take: %s" % ("all" if wanted is None else " ".join(sorted(wanted))))
+    print("(set with: classicvoices-data languages de fr ... | all)")
+
+
+def cmd_remove_language(args):
+    if not args:
+        sys.exit("remove which language? e.g. classicvoices-data remove-language de")
+    for a in args:
+        gone = firmware.remove_language(VOICES, DOWNLOADS, a)
+        print("%s: removed %d folder%s" % (a, len(gone), "" if len(gone) == 1 else "s"))
+
+
 COMMANDS = {"status": cmd_status, "firmware": cmd_firmware, "import": cmd_import, "voices": cmd_voices,
             "download": cmd_download, "native": cmd_native, "android-pack": cmd_android_pack,
-            "install-module": cmd_install_module, "pronunciation": cmd_pronunciation}
+            "install-module": cmd_install_module, "pronunciation": cmd_pronunciation, "languages": cmd_languages,
+            "remove-language": cmd_remove_language}
 
 
 def main():

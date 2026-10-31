@@ -240,7 +240,7 @@ class Browser(wx.Panel):
         if kind == "search":
             return "Search: %s" % route[1]
         return {"diagnostics": "Diagnostics", "fast": "Speed up the voices", "firmware": "Get the voices",
-                "languages": "Voices for other languages"}[kind]
+                "languages": "Voices for other languages", "wanted": "Languages to get"}[kind]
 
     def update_live(self):
         """A progress tick: new values on the progress bars, new labels on the
@@ -278,7 +278,8 @@ class Browser(wx.Panel):
         route = self.stack[-1] if self.stack else None
         {None: self.root_page, "language": self.language_page, "voice": self.voice_page,
          "search": self.search_page, "diagnostics": self.diagnostics_page, "fast": self.fast_page,
-         "firmware": self.firmware_page, "languages": self.languages_page}[route[0] if route else None](page, route)
+         "firmware": self.firmware_page, "languages": self.languages_page,
+         "wanted": self.wanted_page}[route[0] if route else None](page, route)
         other_jobs(page, self.lib.jobs)
         page.finish()
         self.live = page.live
@@ -393,6 +394,25 @@ class Browser(wx.Panel):
     def language_page(self, p, route):
         items = self.lib.visible(self.platform, None if self.version == "all" else self.version, route[1])
         self._voice_buttons(p, items, self.version == "all", L.language_name(route[1]))
+        from _classicvoices import languages
+        lang = languages.choice_language(route[1])
+        here = [i for i in self.lib.items if i.state in ("builtin", "installed")
+                and languages.choice_language(i.language) == lang]
+        if here:
+            p.section("Remove")
+            p.button("Remove every %s voice (%d)" % (L.language_name(lang), len(here)),
+                     lambda: self.frame.remove_language(lang, len(here)))
+
+    def wanted_page(self, p, _route):
+        from _classicvoices import firmware
+        p.text("The languages Classic Voices takes from Apple's firmware and offers to download. Voices of a "
+               "language you turn off stay until you remove them (on the language's page); turning one back on "
+               "brings its voices with the next firmware you get.")
+        wanted = self.lib.wanted_languages()
+        p.section("Languages")
+        for lang in sorted(firmware.ALL_LANGUAGES, key=L.language_name):
+            p.check(L.language_name(lang), wanted is None or lang in wanted,
+                    lambda on, lang=lang: self.lib.set_language_wanted(lang, on))
 
     def search_page(self, p, route):
         found = self.lib.search(route[1])
@@ -497,6 +517,11 @@ class Browser(wx.Panel):
             job = lib.job_for("fw:" + f)
             if job:
                 job_gauge(p, job, "Getting " + L.FIRMWARE_NAMES[f])
+        wanted = lib.wanted_languages()
+        from _classicvoices import firmware as fw
+        p.section("Languages")
+        p.button("Languages to get: %s" % ("all" if wanted is None else "%d of %d" % (len(wanted), len(fw.ALL_LANGUAGES))),
+                 lambda: self.open(("wanted",)))
         p.section("From a file")
         p.button("Import a firmware file (.ipsw)…", self.frame.import_ipsw)
         p.button("Import an extracted firmware folder…", self.frame.import_folder)
@@ -722,6 +747,20 @@ class Frame(wx.Frame):
         if getattr(self, "_auto", (None, None))[0] != stamp:
             self._auto = (stamp, system.auto_voices(key))
         return self._auto[1]
+
+    def remove_language(self, lang, count):
+        if wx.MessageBox("Remove every %s voice (%d)? Firmware you get from now on leaves %s out; turn it back on "
+                         "under Get the voices, Languages to get." % (L.language_name(lang), count,
+                                                                       L.language_name(lang)),
+                         APP, wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+            return
+        self.stop_speaking()
+        self.lib.remove_language(lang)
+        tab = self.book.GetCurrentPage()
+        if isinstance(tab, Browser):
+            tab.go_back()
+        if system.IS_WIN:
+            self.update_system()
 
     def remove(self, item):
         if wx.MessageBox("Remove %s? You can download it again later." % item.title, APP,

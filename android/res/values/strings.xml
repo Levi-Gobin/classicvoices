@@ -35,6 +35,13 @@
 
     <!-- voice rows: what pressing the row does comes first -->
     <string name="download_voice">Download %1$s, %2$s</string>
+    <string name="page_wanted">Languages to get</string>
+    <string name="languages_heading">Languages</string>
+    <string name="wanted_all">Languages to get: all</string>
+    <string name="wanted_some">Languages to get: %1$d of %2$d</string>
+    <string name="wanted_explained">The languages Classic Voices takes from Apple\'s firmware and offers to download. Voices of a language you turn off stay until you remove them (on the language\'s page); turning one back on brings its voices with the next firmware you get.</string>
+    <string name="remove_language">Remove every %1$s voice (%2$d)</string>
+    <string name="remove_language_question">Remove every %1$s voice? Firmware you get from now on leaves it out; turn it back on under Get the voices, Languages to get.</string>
     <string name="page_languages">Voices for other languages</string>
     <string name="languages_explained">When TalkBack reads text marked as another language, the voice reading hands it to a voice of that language: by default the one nearest it, from the same release where there is one. Choose a voice here to use for a language whichever voice is reading; each voice\'s page can choose differently for that voice.</string>
     <string name="other_languages">Other languages</string>

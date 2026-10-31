@@ -208,10 +208,12 @@ class Library:
                 items.append(Item(key, VERSION[build], name, "compact" if compact else "premium", v.language,
                                   "installed", folder_size(os.path.join(dr, build, rest)),
                                   kind_of=(build, rest[:-7] if compact else rest)))
-        # voices whose firmware isn't here are listed too, saying what they need
+        # voices whose firmware isn't here are listed too, saying what they need;
+        # languages left out (Get the voices, Languages) aren't
+        wanted = self.wanted_languages()
         for e in cv_download.enhanced_catalog():
             b, lang = e["build"], e["language"]
-            if "%se/%s" % (b, lang) in have:
+            if "%se/%s" % (b, lang) in have or not cv_firmware.language_wanted(lang, wanted):
                 continue
             needs = [] if cv_voices.has_engine(vr, b) else [b]
             name = compact_names.get((b, lang)) or language_name(lang)
@@ -219,7 +221,7 @@ class Library:
                               "needs" if needs else "available", e["size"], entry=("enhanced", e), needs=needs))
         for e in cv_download.mac_catalog():
             era = e["era"]
-            if "%s/%s" % (era, e["name"]) in have:
+            if "%s/%s" % (era, e["name"]) in have or not cv_firmware.language_wanted(e.get("locale", ""), wanted):
                 continue
             ready = self.firmware_ready(VERSION[era])
             needs = [] if ready else self.firmware_missing(VERSION[era])
@@ -237,6 +239,26 @@ class Library:
 
     def firmware_imported(self, key):
         return cv_voices.has_engine(system.voices_root(), key)
+
+    # ---- languages
+    def wanted_languages(self):
+        """What firmware imports take (firmware.wanted_languages); None: all."""
+        return cv_firmware.wanted_languages(system.data_root())
+
+    def set_language_wanted(self, lang, on):
+        wanted = self.wanted_languages()
+        wanted = set(cv_firmware.ALL_LANGUAGES) if wanted is None else set(wanted)
+        (wanted.add if on else wanted.discard)(lang)
+        cv_firmware.set_wanted_languages(system.data_root(),
+                                         None if wanted >= set(cv_firmware.ALL_LANGUAGES) else wanted)
+        self.refresh()
+        self.on_change()
+
+    def remove_language(self, lang):
+        """Every voice of the language, and imports leave it out from now on."""
+        cv_firmware.remove_language(system.voices_root(), system.downloads_root(), lang)
+        self.refresh()
+        self.on_change()
 
     def firmware_missing(self, version):
         """The firmware to get (suggested keys) before a version's voices speak."""

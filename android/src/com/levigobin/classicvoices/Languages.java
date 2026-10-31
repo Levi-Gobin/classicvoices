@@ -29,6 +29,62 @@ final class Languages {
 
     static final String EVERY = "*";
 
+    // ---------------------------------------------------------------- languages to get
+
+    /** Every language the iOS firmware has voices for (firmware.py ALL_LANGUAGES). */
+    static final String[] ALL = {"ar", "cs", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "hu", "id", "it",
+            "ja", "ko", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv", "th", "tr", "zh-CN", "zh-HK", "zh-TW"};
+
+    static File wantedFile(Context c) { return new File(Data.root(c), "languages-wanted.txt"); }
+
+    /** The languages firmware imports take and downloads offer ("de", "zh-TW"); null: all. */
+    static java.util.Set<String> wanted(Context c) {
+        File f = wantedFile(c);
+        if (!f.isFile()) return null;
+        java.util.Set<String> out = new java.util.TreeSet<>();
+        try {
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new FileInputStream(f), "UTF-8"));
+            for (String line; (line = r.readLine()) != null; ) {
+                int hash = line.indexOf('#');
+                String l = (hash >= 0 ? line.substring(0, hash) : line).trim();
+                if (!l.isEmpty()) out.add(l);
+            }
+            r.close();
+        } catch (IOException e) {
+            return null;
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    static void setWanted(Context c, java.util.Set<String> langs) {
+        File f = wantedFile(c);
+        if (langs == null || langs.containsAll(java.util.Arrays.asList(ALL))) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+            return;
+        }
+        StringBuilder sb = new StringBuilder("# Classic Voices: the languages firmware imports take, one per line\n");
+        for (String l : new java.util.TreeSet<>(langs)) sb.append(l).append('\n');
+        try {
+            FileOutputStream out = new FileOutputStream(f);
+            out.write(sb.toString().getBytes("UTF-8"));
+            out.close();
+        } catch (IOException ignored) {
+            // all languages stay wanted
+        }
+    }
+
+    /** Whether a voice folder or locale ("de-DE"; "common" always) is in the wanted languages. */
+    static boolean isWanted(String folder, java.util.Set<String> wanted) {
+        if (wanted == null || folder == null || folder.equals("common") || (folder.indexOf('-') < 0 && folder.indexOf('_') < 0))
+            return true;
+        return wanted.contains(choiceLanguage(folder)) || wanted.contains(base(folder));
+    }
+
+    static boolean sameLanguage(String tag, String language) {
+        return tag != null && !tag.isEmpty() && (choiceLanguage(tag).equals(language) || base(tag).equals(language));
+    }
+
     static File file(Context c) { return new File(Data.root(c), "languages.txt"); }
 
     static String base(String tag) {

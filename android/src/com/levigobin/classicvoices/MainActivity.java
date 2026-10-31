@@ -267,6 +267,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             case "firmware": return getString(R.string.page_firmware);
             case "fast": return getString(R.string.page_fast);
             case "languages": return getString(R.string.page_languages);
+            case "wanted": return getString(R.string.page_wanted);
             default: return getString(R.string.page_diagnostics);
         }
     }
@@ -304,6 +305,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             else if (r[0].equals("firmware")) firmwarePage();
             else if (r[0].equals("fast")) fastPage();
             else if (r[0].equals("languages")) languagesPage();
+            else if (r[0].equals("wanted")) wantedPage();
             else diagnosticsPage();
         }
         if (focusTag == null && !announce) {
@@ -481,6 +483,65 @@ public class MainActivity extends Activity implements ImportService.Listener {
 
     private void languagePage(String lang) {
         voiceButtons(Library.filter(items, mac(), versionId(), lang), versionId().equals("all"), Library.languageName(lang));
+        final String language = Languages.choiceLanguage(lang);
+        int n = 0;
+        for (Library.Item i : items) if (i.here() && Languages.sameLanguage(i.language, language)) n++;
+        if (n == 0) return;
+        final String name = Library.languageName(language);
+        section(getString(R.string.remove_heading));
+        button("removelang", getString(R.string.remove_language, name, n), new View.OnClickListener() {
+            @Override
+            public void onClick(View b) {
+                new AlertDialog.Builder(MainActivity.this)
+                        .setMessage(getString(R.string.remove_language_question, name))
+                        .setPositiveButton(R.string.remove, new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface d, int w) {
+                                if (ttsReady) tts.stop();
+                                new Thread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        Library.removeLanguage(MainActivity.this, language);
+                                        runOnUiThread(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                reload();
+                                                goBack();
+                                            }
+                                        });
+                                    }
+                                }).start();
+                            }
+                        })
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .show();
+            }
+        });
+    }
+
+    private void wantedPage() {
+        text(getString(R.string.wanted_explained));
+        java.util.Set<String> wanted = Languages.wanted(this);
+        List<String> langs = new ArrayList<>(java.util.Arrays.asList(Languages.ALL));
+        Collections.sort(langs, new Comparator<String>() {
+            @Override
+            public int compare(String a, String b) { return Library.languageName(a).compareToIgnoreCase(Library.languageName(b)); }
+        });
+        section(getString(R.string.languages_heading));
+        for (final String l : langs) {
+            check("want:" + l, Library.languageName(l), wanted == null || wanted.contains(l),
+                    new CompoundButton.OnCheckedChangeListener() {
+                        @Override
+                        public void onCheckedChanged(CompoundButton b, boolean on) {
+                            java.util.Set<String> w = Languages.wanted(MainActivity.this);
+                            java.util.Set<String> now = new java.util.TreeSet<>(w != null ? w : java.util.Arrays.asList(Languages.ALL));
+                            if (on) now.add(l);
+                            else now.remove(l);
+                            Languages.setWanted(MainActivity.this, now);
+                            reload();
+                        }
+                    });
+        }
     }
 
     /** where: the page's subject, leading each group's name. */
@@ -806,6 +867,15 @@ public class MainActivity extends Activity implements ImportService.Listener {
                 jobBar("firmware", key, getString(R.string.getting, b.nice));
             }
         }
+        java.util.Set<String> wanted = Languages.wanted(this);
+        section(getString(R.string.languages_heading));
+        button("wanted", wanted == null ? getString(R.string.wanted_all)
+                : getString(R.string.wanted_some, wanted.size(), Languages.ALL.length), new View.OnClickListener() {
+            @Override
+            public void onClick(View b) {
+                open("wanted");
+            }
+        });
         section(getString(R.string.from_a_file));
         button("ipsw", getString(R.string.import_ipsw_file), new View.OnClickListener() {
             @Override

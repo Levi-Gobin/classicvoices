@@ -57,9 +57,13 @@ def suggested(f):
 def _listing(voices_root, downloads_root):
     """[(kind, entry, label, size, firmware keys still to get)] of everything
     not installed yet."""
+    from . import firmware
+    wanted = firmware.wanted_languages(os.path.dirname(os.path.normpath(voices_root)))
     out = []
     for e in enhanced_catalog():
         build, lang = e["build"], e["language"]
+        if not firmware.language_wanted(lang, wanted):
+            continue
         dest = os.path.join(downloads_root, build, lang)
         if os.path.isfile(os.path.join(dest, "broker.hdr.asset")):
             continue
@@ -68,6 +72,8 @@ def _listing(voices_root, downloads_root):
         out.append(("enhanced", e, label, e["size"], needs))
     for v in mac_catalog():
         era = v["era"]
+        if not firmware.language_wanted(v.get("locale", ""), wanted):
+            continue
         if os.path.isfile(os.path.join(downloads_root, era, v["name"], "broker.hdr")):
             continue
         needs = [suggested(f) for f in MAC_FIRMWARE[era] if not cv_voices.has_engine(voices_root, f)]

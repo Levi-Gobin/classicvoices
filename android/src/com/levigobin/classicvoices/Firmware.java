@@ -355,7 +355,14 @@ final class Firmware {
                         else if (k.name.equals("common")) vol.copyTree(k, new File(tr, k.name), p);
                     }
                 } else {
-                    vol.copyTree(res, new File(dest, "TTSResources"), p);
+                    // only the languages wanted (Get the voices, Languages to get)
+                    java.util.Set<String> wanted = Languages.wanted(c);
+                    File tr = new File(dest, "TTSResources");
+                    for (Hfs.Entry k : vol.children(res)) {
+                        if (k.name.contains("/") || k.name.startsWith(".")) continue;
+                        if (!k.dir) vol.copyFile(k, new File(tr, k.name), p);
+                        else if (Languages.isWanted(k.name, wanted)) vol.copyTree(k, new File(tr, k.name), p);
+                    }
                 }
                 File fin = new File(voices, b.key);
                 deleteTree(fin);
