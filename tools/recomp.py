@@ -263,14 +263,26 @@ def explore(mo, fn):
             work.append(nxt)
 
 
+def uses_vfp(ins):
+    """VFP/NEON (coprocessor) encodings: 0xEC00-0xEFFF / 0xFC00-0xFFFF, and
+    the NEON loads and stores (0xF9xx with bit 4 clear)."""
+    if ins.size != 4:
+        return False
+    return (ins.hw1 & 0xEC00) == 0xEC00 or (ins.hw1 & 0xFF10) == 0xF900
+
+
 def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budget=False):
     name = f"nf_{prefix}_{fn.start:06x}"
     labels = sorted(fn.insns)
     labelset = set(labels)
     resume = sorted((fn.roots | fn.return_sites | fn.branch_targets) & labelset)
     w = out.append
+    # Without VFP/NEON instructions the function only ever touches the
+    # integer registers: copy just those (recomp_rt.h RT_IN / RT_OUT).
+    vfp = any(uses_vfp(ins) for ins in fn.insns.values())
+    load, store = ("K = c->k;", "c->k = K;") if vfp else ("RT_IN(K, c);", "RT_OUT(c, K);")
     w(f"int {name}(Cpu *c, uint32_t start) {{")
-    w("    Core K = c->k;")
+    w("    Core K = c->k;" if vfp else "    Core K; RT_IN(K, c);")
     w("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];")
     w("    int rc;")
     w("    switch (start) {")
@@ -283,15 +295,15 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
         if t in labelset:
             return f"{indent}goto L_{t:x};"
         if t in entries_of and t not in labelset and not debug_calls:
-            return f"{indent}{{ c->k = K; c->k.r[15] = {t:#x}; c->k.thumb = 1; return {entries_of[t]}(c, {t:#x}); }}"
-        return f"{indent}{{ c->k = K; c->k.r[15] = {t:#x}; c->k.thumb = 1; return 1; }}"
+            return f"{indent}{{ {store} c->k.r[15] = {t:#x}; c->k.thumb = 1; return {entries_of[t]}(c, {t:#x}); }}"
+        return f"{indent}{{ {store} c->k.r[15] = {t:#x}; c->k.thumb = 1; return 1; }}"
 
     for i, a in enumerate(labels):
         ins = fn.insns[a]
         nxt = a + ins.size
         w(f"L_{a:x}:")
         if debug_budget and ins.cond is None:
-            w(f"    if (c->budget_on && --c->budget < 0) {{ c->k = K; c->k.r[15] = {a:#x}; c->budget_exit_pc = {a:#x}; return 1; }}")
+            w(f"    if (c->budget_on && --c->budget < 0) {{ {store} c->k.r[15] = {a:#x}; c->budget_exit_pc = {a:#x}; return 1; }}")
         if ins.kind == "it":
             pass
         else:
@@ -300,25 +312,25 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
             if ins.kind == "bl":
                 t = ins.target
                 body.append(f"K.r[14] = {nxt | 1:#x};")
-                body.append("c->k = K;")
+                body.append(store)
                 if t in entries_of and not debug_calls:
                     body.append(f"rc = {entries_of[t]}(c, {t:#x});")
                 else:
                     body.append(f"c->k.npc = {t:#x}; c->k.thumb = 1; rc = rt_call(c, {nxt | 1:#x});")
-                body.append("K = c->k; if (rc) return 1;")
+                body.append(load + " if (rc) return 1;")
                 body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
             elif ins.kind == "blx_stub":
                 body.append(f"K.r[14] = {nxt | 1:#x};")
                 if ins.stub in DIV_HELPERS:
                     body.append(DIV_HELPERS[ins.stub])
                 else:
-                    body.append(f"c->k = K; rc = rt_import(c, {ins.target:#x}, {nxt | 1:#x}); K = c->k; if (rc) return 1;")
+                    body.append(f"{store} rc = rt_import(c, {ins.target:#x}, {nxt | 1:#x}); {load} if (rc) return 1;")
                     body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
             elif ins.kind == "icall":
                 body.append(f"K.r[15] = {a + 4:#x}; K.npc = {nxt:#x};")
                 body.append(f"exec{16 if ins.size == 2 else 32}(&K, " +
                             (f"{ins.hw1:#06x}, {a:#x}, {ins.in_it});" if ins.size == 2 else f"{ins.hw1:#06x}, {ins.hw2:#06x}, {a:#x});"))
-                body.append(f"c->k = K; rc = rt_call(c, {nxt | 1:#x}); K = c->k; if (rc) return 1;")
+                body.append(f"{store} rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1;")
                 body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
             else:
                 body.append(f"K.r[15] = {a + 4:#x}; K.npc = {nxt:#x};")
@@ -351,7 +363,7 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
             elif ins.kind in ("ijump", "tb", "op"):
                 w(f"    if (K.npc != {nxt:#x}) goto dyn;")
             elif ins.kind == "stop":
-                w(f"    c->k = K; c->k.r[15] = {a:#x}; return 1;")
+                w(f"    {store} c->k.r[15] = {a:#x}; return 1;")
         # fallthrough
         terminator = ins.kind in ("b", "ijump", "tb", "stop") and (ins.cond is None or ins.cond == 14)
         if not terminator:
@@ -360,13 +372,13 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
                 w(exit_to(nxt, "    "))
     w("dyn: {")
     w("    uint32_t t = K.npc;")
-    w("    if (K.thumb && t == entry_lr && K.r[13] == entry_sp) { c->k = K; c->k.r[15] = t; return 0; }")
+    w("    if (K.thumb && t == entry_lr && K.r[13] == entry_sp) { " + store + " c->k.r[15] = t; return 0; }")
     w("    if (K.thumb) switch (t) {")
     for a in resume:
         w(f"    case {a:#x}: goto L_{a:x};")
     w("    default: break;")
     w("    }")
-    w("    c->k = K; c->k.r[15] = t; return 1;")
+    w(f"    {store} c->k.r[15] = t; return 1;")
     w("}")
     w("}")
     return name, resume

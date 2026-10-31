@@ -1192,3 +1192,26 @@ phonetic spans).
   Samantha's doesn't. Profiling each enhanced voice (13,254 -> 16,038 block
   starts) brought Tessa to 0.0 M interpreted, output bit-identical. The iOS
   5/6 enhanced voices were checked the same way and are covered.
+
+## Fast code: copying only the integer registers (2026-10-31)
+
+Profiling Tessa (iOS 7 enhanced) and iOS 6 enhanced voices with `sample`
+showed `memmove` as two thirds of the engines' busy time: every recompiled
+function copied the whole `Core` (r0-r15, flags, FPSCR and 256 bytes of D
+registers, ~360 bytes) into a local on entry and back on every exit and
+around every call, and the engines call tiny helpers (fxd_S32ShMultRndS32S32,
+a fixed-point multiply) millions of times per sentence. tools/recomp.py now
+copies only `offsetof(Core, d)` bytes (recomp_rt.h RT_IN / RT_OUT) in
+functions with no VFP/NEON instruction (coprocessor encodings 0xEC00-0xEFFF,
+0xFC00-0xFFFF, NEON loads/stores 0xF9xx); those never read or write D, so
+leaving c->k.d untouched is exact. memmove fell from ~970 to ~130 samples.
+
+Mac, VoiceOver's rate 190, warm first audio / whole sentence, before -> after:
+"Home button": iOS 6 9 -> 8 / 55 -> 44 ms, iOS 6 enhanced 16 -> 12 / 81 -> 56,
+iOS 7 enhanced Tessa 28 -> 23 / 46 -> 36, Mavericks Ava 11 -> 9 / 13 -> 11.
+A long sentence: iOS 6 enhanced 64 -> 56 / 416 -> 302 ms, Ava 84 -> 71 /
+94 -> 80. Output bit-identical to the interpreter on 66 corpus lines over
+iOS 3, 4, 5, 6, 7.0, iOS 5/6/7 enhanced, Mountain Lion compact, Mavericks
+compact and premium. Most of what's left is the engines' own arithmetic
+(the fixed-point multiply, uselect_CascadingFlatSearch); a call still costs
+two 96-byte copies each way, which passing the Core by pointer could remove.
