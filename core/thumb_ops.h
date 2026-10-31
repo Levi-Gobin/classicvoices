@@ -29,6 +29,16 @@ static inline uint32_t vx_bitrev32(uint32_t x) {
 #define GUEST_MEM_SIZE 0x40000000u  // 1 GB flat guest address space (mostly unbacked)
 #endif
 
+// Register-list loops (PUSH/POP/LDM/STM) unrolled: with the list a
+// constant in fast code, they become straight-line code.
+#if defined(__clang__)
+#define VX_UNROLL _Pragma("clang loop unroll(full)")
+#elif defined(__GNUC__)
+#define VX_UNROLL _Pragma("GCC unroll 16")
+#else
+#define VX_UNROLL
+#endif
+
 typedef struct Core {
     uint32_t r[16];
     uint32_t n, z, c, v;   // condition flags, each 0 or 1
@@ -364,6 +374,7 @@ VX_OPS_INLINE void exec16(Core *c, uint32_t hw1, uint32_t pc, int in_it) {
             uint32_t list = (hw1 & 0xff) | ((hw1 & 0x100) ? 0x4000 : 0);
             uint32_t a = c->r[13] - 4 * __builtin_popcount(list);
             c->r[13] = a;
+            VX_UNROLL
             for (int i = 0; i < 15; i++)
                 if (list & (1u << i)) { s32(c, a, c->r[i]); a += 4; }
             return;
@@ -372,6 +383,7 @@ VX_OPS_INLINE void exec16(Core *c, uint32_t hw1, uint32_t pc, int in_it) {
             uint32_t list = (hw1 & 0xff) | ((hw1 & 0x100) ? 0x8000 : 0);
             uint32_t a = c->r[13];
             c->r[13] = a + 4 * __builtin_popcount(list);
+            VX_UNROLL
             for (int i = 0; i < 16; i++)
                 if (list & (1u << i)) { wreg_load(c, i, g32(c, a)); a += 4; }
             return;
@@ -397,6 +409,7 @@ VX_OPS_INLINE void exec16(Core *c, uint32_t hw1, uint32_t pc, int in_it) {
     case 0x30: case 0x31: {  // STMIA
         unsigned rn = (hw1 >> 8) & 7;
         uint32_t a = c->r[rn];
+        VX_UNROLL
         for (int i = 0; i < 8; i++)
             if (hw1 & (1u << i)) { s32(c, a, c->r[i]); a += 4; }
         c->r[rn] = a;
@@ -405,6 +418,7 @@ VX_OPS_INLINE void exec16(Core *c, uint32_t hw1, uint32_t pc, int in_it) {
     case 0x32: case 0x33: {  // LDMIA
         unsigned rn = (hw1 >> 8) & 7;
         uint32_t a = c->r[rn];
+        VX_UNROLL
         for (int i = 0; i < 8; i++)
             if (hw1 & (1u << i)) { c->r[i] = g32(c, a); a += 4; }
         if (!(hw1 & (1u << rn))) c->r[rn] = a;
@@ -772,9 +786,11 @@ VX_OPS_INLINE void exec32(Core *c, uint32_t hw1, uint32_t hw2, uint32_t pc) {
         uint32_t wb = (op == 1) ? c->r[rn] + 4 * n : c->r[rn] - 4 * n;
         if (l) {
             if (w && !(list & (1u << rn))) c->r[rn] = wb;
+            VX_UNROLL
             for (int i = 0; i < 16; i++)
                 if (list & (1u << i)) { wreg_load(c, i, g32(c, a)); a += 4; }
         } else {
+            VX_UNROLL
             for (int i = 0; i < 15; i++)
                 if (list & (1u << i)) { s32(c, a, c->r[i]); a += 4; }
             if (w) c->r[rn] = wb;

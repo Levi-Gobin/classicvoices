@@ -1235,3 +1235,18 @@ two 96-byte copies each way, which passing the Core by pointer could remove.
   firmware from Apple and then the voice (desktop app, NVDA data dialog,
   Android; `classicvoices-data voices` lists them). Of the two iOS 7s, 7.0.6
   is the one suggested; 7.1.2 is still offered once imported.
+
+## Fast code: register lists unrolled (2026-10-31)
+
+PUSH/POP/LDM/STM loop over their register list (thumb_ops.h). In fast code
+the list is a constant, but clang kept the 15-16 step loop, and its indexed
+`K.r[i]` access kept the whole register file in memory for the function.
+`VX_UNROLL` (clang `loop unroll(full)`, GCC `unroll 16`) on those six loops
+turns them into straight-line code; the generated code is slightly smaller.
+iOS 7 enhanced Tessa, a 70-character sentence at rate 190 (Mac, warm):
+first audio 90 -> 79 ms, whole sentence 175 -> 124 ms; enhanced Samantha
+whole sentence 140 -> 89. All 66 corpus lines byte-identical to the
+interpreter (iOS 3-7, iOS 5/6/7 enhanced, Mountain Lion, Mavericks compact
+and premium). The profile before: Tessa's time is mostly three engine
+functions (unit selection and fixed-point multiplies); the register copies
+were down to ~5%.
