@@ -105,10 +105,11 @@ def open_folder(path):
 
 # ---------------------------------------------------------------- settings
 
-# The two settings the engines read, named as they read them, and the app's
-# own: FastCodeAuto is turned off when a fast-code build fails or is stopped,
-# so it then starts only from the Speed up the voices page.
-SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "FastCodeAuto": True}
+# The settings the engines read, named as they read them, and the app's own:
+# FastCodeAuto is turned off when a fast-code build fails or is stopped, so it
+# then starts only from the Speed up the voices page. NewerPronunciation adds
+# Apple's later pronunciation packs (<data>/Pronunciation/<language>).
+SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True}
 
 if IS_WIN:
     def get_setting(name):
@@ -196,12 +197,16 @@ class WinPlayer(Player):
 
     def speak(self, key, text, rate=100, language=""):
         self.stop()
-        if get_setting("PronunciationRules"):
-            text = self._lib_mod.rules_text(voices_root(), key, language, text)
+        pack = None
+        if get_setting("NewerPronunciation") and not key.startswith("mt"):
+            from _classicvoices import pronunciation
+            pack = pronunciation.pack_dir(data_root(), language)
+        text = self._lib_mod.rules_text(voices_root(), downloads_root(), key, language, text,
+                                        own=get_setting("PronunciationRules"), pack=pack)
         with self._lock:
             self._gen += 1
             gen = self._gen
-        threading.Thread(target=self._run, args=(gen, key, text, rate), daemon=True).start()
+        threading.Thread(target=self._run, args=(gen, key, text, rate, pack), daemon=True).start()
 
     def stop(self):
         with self._lock:
@@ -209,7 +214,7 @@ class WinPlayer(Player):
         if self._s is not None:
             self._lib.vxs_cancel(self._s)
 
-    def _run(self, gen, key, text, rate):
+    def _run(self, gen, key, text, rate, pack=None):
         winmm = ctypes.windll.winmm
 
         class WAVEFORMATEX(ctypes.Structure):
@@ -225,6 +230,7 @@ class WinPlayer(Player):
                         ("lpNext", ctypes.c_void_p), ("reserved", ctypes.c_void_p)]
 
         s = self._stream()
+        self._lib.vxs_set_rules_pack(s, pack.encode("utf-8") if pack else None)
         self._lib.vxs_start(s, key.encode("utf-8"), text.encode("utf-8"), int(rate), 100, -1, 0)
         fmt = WAVEFORMATEX(1, 1, 22050, 44100, 2, 16, 0)
         h = ctypes.c_void_p()
@@ -293,6 +299,8 @@ class CliPlayer(Player):
         args = [say, "-v", key, "-r", str(int(rate)), "-o", "-"]
         if not get_setting("PronunciationRules"):
             args.append("-n")
+        if get_setting("NewerPronunciation"):
+            args.append("-N")
         p1 = subprocess.Popen(args + ["--", text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         p2 = subprocess.Popen(sink, stdin=p1.stdout, stderr=subprocess.DEVNULL)
         p1.stdout.close()

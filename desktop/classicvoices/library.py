@@ -5,10 +5,12 @@ import json
 import os
 import shutil
 import threading
+import traceback
 
-from . import system
+from . import crashlog, system
 from _classicvoices import download as cv_download
 from _classicvoices import firmware as cv_firmware
+from _classicvoices import pronunciation as cv_pron
 from _classicvoices import remote as cv_remote
 from _classicvoices import voices as cv_voices
 
@@ -29,6 +31,7 @@ VERSIONS = [
     Version("ios4", "iOS 4", "ios", ["ios4"], "4.3.5"),
     Version("ios5", "iOS 5", "ios", ["ios5"], "5.1.1"),
     Version("ios6", "iOS 6", "ios", ["ios6"], "6.1.6"),
+    Version("ios70", "iOS 7", "ios", ["ios70"], "7.0.6"),
     Version("mac107", "Lion", "mac", ["ios5", "ios6"], "10.7"),
     Version("mac108", "Mountain Lion", "mac", ["ios6", "ios7"], "10.8"),
     Version("mac109", "Mavericks", "mac", ["ios7", "ios10"], "10.9"),
@@ -36,7 +39,7 @@ VERSIONS = [
 VERSION = {v.id: v for v in VERSIONS}
 
 FIRMWARE_NAMES = {"ios3": "iPhone OS 3.1.3", "ios4": "iOS 4.3.5", "ios5": "iOS 5.1.1", "ios6": "iOS 6.1.6",
-                  "ios7": "iOS 7.1.2", "ios10": "iOS 10.3.4"}
+                  "ios70": "iOS 7.0.6", "ios7": "iOS 7.1.2", "ios10": "iOS 10.3.4"}
 
 LANGUAGES = {
     "ar-SA": "Arabic (Saudi Arabia)", "cs-CZ": "Czech", "da-DK": "Danish", "de-DE": "German",
@@ -157,6 +160,8 @@ class Library:
         threading.Thread(target=self._worker, daemon=True).start()
         self.refresh()
         self.start_fast_code()  # firmware imported before the app built fast code by itself
+        if system.get_setting("NewerPronunciation"):
+            self.get_pronunciation()  # turned on before, and the download didn't finish
 
     # ---- what's there
     def refresh(self):
@@ -167,10 +172,10 @@ class Library:
         for key, v in have.items():
             build, rest = key.split("/", 1)
             name = v.name.split(" (")[0]
-            if build in ("ios3", "ios4", "ios5", "ios6"):
+            if build in ("ios3", "ios4", "ios5", "ios6", "ios70"):
                 compact_names[(build, rest)] = name
                 items.append(Item(key, VERSION[build], name, "compact", v.language, "builtin"))
-            elif build in ("ios5e", "ios6e"):
+            elif build in ("ios5e", "ios6e", "ios70e"):
                 b = build[:-1]
                 items.append(Item(key, VERSION[b], name, "enhanced", v.language, "installed",
                                   folder_size(os.path.join(dr, b, rest)), kind_of=(b, rest)))
@@ -309,10 +314,17 @@ class Library:
                 system.build_fast_code(b, cc, job.progress)
         self._queue(Job("fast", "fast", "Fast engine code", 0, run))
 
+    def get_pronunciation(self):
+        """Apple's newer pronunciation packs (about 5 MB), unless they're here."""
+        if cv_pron.have_packs(system.data_root()):
+            return
+        self._queue(Job("pronunciation", "pronunciation", "Newer pronunciation rules", 4700000,
+                        lambda job: cv_pron.download_all(system.data_root(), job.progress)))
+
     def copy_from(self, src):
         """Copy another data folder's voices (the NVDA add-on's) into ours."""
         def run(job):
-            for sub in ("Voices", "Downloads", "Native"):
+            for sub in ("Voices", "Downloads", "Native", "Pronunciation"):
                 s = os.path.join(src, sub)
                 if not os.path.isdir(s):
                     continue
@@ -351,24 +363,32 @@ class Library:
             except Exception as e:  # shown to the user, who can try again
                 job.error = str(e) or e.__class__.__name__
                 self.errors.append((job.label, job.error))
+                crashlog.write("%s failed:\n%s" % (job.label, traceback.format_exc().rstrip()))
             with self._lock:
                 self.jobs.remove(job)
-            ok = not job.cancelled and not job.error
-            if ok:
-                self.finished.append(job.label)
-            if job.kind == "fast":
-                try:
-                    system.set_setting("FastCodeAuto", ok)
-                except OSError:
-                    pass
-            elif ok and job.kind in ("firmware", "copy"):
-                self.start_fast_code()
-            self.refresh()
+            # Anything going wrong from here on must not end this thread: every
+            # download after it would wait for ever (until the app was opened again).
+            try:
+                ok = not job.cancelled and not job.error
+                if ok:
+                    self.finished.append(job.label)
+                if job.kind == "fast":
+                    try:
+                        system.set_setting("FastCodeAuto", ok)
+                    except OSError:
+                        pass
+                elif ok and job.kind in ("firmware", "copy"):
+                    self.start_fast_code()
+                self.refresh()
+            except Exception as e:
+                self.errors.append(("After %s" % job.label, str(e) or e.__class__.__name__))
+                crashlog.write("After %s:\n%s" % (job.label, traceback.format_exc().rstrip()))
             self.on_change()
 
 
 def diagnostics(lib):
-    lines = ["Classic Voices diagnostics", "Data folder: %s" % system.data_root()]
+    from _classicvoices import update
+    lines = ["Classic Voices %s diagnostics" % update.VERSION, "Data folder: %s" % system.data_root()]
     for key, name in FIRMWARE_NAMES.items():
         state = "imported" if lib.firmware_imported(key) else "not imported"
         if lib.firmware_imported(key):
@@ -381,6 +401,7 @@ def diagnostics(lib):
                                           for k in system.SETTINGS))
     for label, err in lib.errors:
         lines.append("Error: %s: %s" % (label, err))
+    lines.append(crashlog.report())
     return "\n".join(lines)
 
 

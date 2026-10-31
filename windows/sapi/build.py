@@ -28,7 +28,7 @@ HERE = os.path.join(ROOT, "windows", "sapi")
 NVDA_SRC = os.path.join(ROOT, "nvda", "src")
 OUT = os.path.join(ROOT, "build", "sapi")
 
-CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c")]
+CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c")]
 SHIM = [os.path.join(NVDA_SRC, f) for f in ("vx_win.c", "mt_stub.c", "vx_native_load.c")]
 HOST = [os.path.join(ROOT, "ports", "host", "cv_catalog.c"), os.path.join(HERE, "cvsapi.c")]
 RULES = os.path.join(ROOT, "ports", "host", "cv_rules.c")  # with UTF-8 paths and PCRE2 built in

@@ -81,6 +81,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         setTitle(R.string.app_name);
+        Update.check(this);
         for (int i = 0; i < 2; i++) {
             stacks.add(new ArrayList<String[]>());
             cameFrom.add(new ArrayList<String>());
@@ -155,6 +156,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) testHooks();
         // fast code for firmware imported before it could be built here, or by an older version of the app
         if (!FastCode.autoOff(this)) FastCode.startIfNeeded(this);
+        Pronunciation.startIfNeeded(this);
 
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -786,7 +788,13 @@ public class MainActivity extends Activity implements ImportService.Listener {
     }
 
     private String diagnostics() {
-        StringBuilder s = new StringBuilder("Classic Voices diagnostics\n");
+        String version = "?";
+        try {
+            version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+        } catch (Exception e) {
+            // keep "?"
+        }
+        StringBuilder s = new StringBuilder("Classic Voices " + version + " diagnostics\n");
         s.append("Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append("), ")
                 .append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append(", ").append(Data.abi()).append('\n');
         for (Firmware.Build b : Firmware.BUILDS) {
@@ -800,7 +808,9 @@ public class MainActivity extends Activity implements ImportService.Listener {
         s.append("Voices: ").append(here).append(" (").append(Data.hidden(this).size()).append(" hidden from the system)\n");
         String engine = Settings.Secure.getString(getContentResolver(), "tts_default_synth");
         s.append("Preferred engine: ").append(engine).append('\n');
-        s.append("Settings: rules ").append(Data.rulesEnabled(this) ? "on" : "off").append(", pitch fallback ")
+        s.append("Settings: rules ").append(Data.rulesEnabled(this) ? "on" : "off").append(", newer rules ")
+                .append(Pronunciation.enabled(this) ? (Pronunciation.downloaded(this) ? "on" : "on, not downloaded") : "off")
+                .append(", pitch fallback ")
                 .append(Data.fallbackEnabled(this) ? "on" : "off").append('\n');
         for (String e : ImportService.errors()) s.append("Error: ").append(e).append('\n');
         return s.toString().trim();
@@ -810,6 +820,15 @@ public class MainActivity extends Activity implements ImportService.Listener {
         section(getString(R.string.speech));
         check("rules", getString(R.string.setting_rules), Data.rulesEnabled(this), pref("rules"));
         text(getString(R.string.setting_rules_explained));
+        check("newer_rules", getString(R.string.setting_newer_rules), Pronunciation.enabled(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Data.prefs(MainActivity.this).edit().putBoolean("newer_rules", on).commit();
+                        Pronunciation.startIfNeeded(MainActivity.this);
+                    }
+                });
+        text(getString(R.string.setting_newer_rules_explained));
         check("pitch_fallback", getString(R.string.setting_fallback), Data.fallbackEnabled(this), pref("pitch_fallback"));
         text(getString(R.string.setting_fallback_explained));
 

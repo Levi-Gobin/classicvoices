@@ -30,13 +30,21 @@ void mte_set_24_hour(MtEngine *e, int on);
 // Rate as today's Alex maps it (see mte_speak). Off by default.
 void mte_set_modern_rate(MtEngine *e, int on);
 
+// Bookmarks: ESC\mrk=N\ in mte_speak's text ends an utterance there, and
+// cb gets mte_speak's ctx and N once the text before it is spoken (MacinTalk
+// can't say where inside an utterance it is). NULL: they are left out.
+typedef void (*MtMarkCallback)(void *ctx, unsigned id);
+void mte_set_mark_callback(MtEngine *e, MtMarkCallback cb);
+
 // Load `voice` ahead of the first utterance. 0 or an error.
 int mte_prepare(MtEngine *e, const char *voice);
 
 // Speak UTF-8 text with `voice` (folder name without .SpeechVoice), streaming
 // 22.05 kHz float PCM to cb. rate/pitch are percent of the voice's defaults;
 // volume 0-100 or -1. Inline commands: ESC\pause=N\ (ms), ESC\eos=1\
-// (sentence boundary: a separate utterance), ESC\pitch=N\ (1-100, 50 = normal).
+// (sentence boundary: a separate utterance), ESC\pitch=N\ (1-100, 50 = normal),
+// ESC\rate=N\ (percent), ESC\vol=N\ (0-100), letter by letter from
+// ESC\tn=spell\ to ESC\tn=normal\, ESC\mrk=N\ (see mte_set_mark_callback).
 // Returns 0, or an error (mte_error).
 int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pitch, int volume,
               MtPcmCallback cb, void *ctx);

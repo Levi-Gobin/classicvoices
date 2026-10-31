@@ -1,6 +1,6 @@
 # Classic Voices for SAPI 5 (Windows)
 
-The same voices as the NVDA add-on (iOS 3–6 Samantha, Daniel, Karen …, the Mac
+The same voices as the NVDA add-on (iOS 3–7 Samantha, Daniel, Karen …, the Mac
 OS X Lion–Mavericks voices) as ordinary Windows SAPI 5 voices, for every
 program that speaks through SAPI: JAWS, NVDA's "Microsoft Speech API version
 5" driver, Balabolka, System.Speech/.NET programs, and the rest. There are
@@ -67,9 +67,14 @@ times.
 - Each voice is a token `ClassicVoices_<key>` under `Speech\Voices\Tokens`,
   holding `CVKey` (the stream key, e.g. `ios6/en-US`) and `CVFallback` (the
   compact voice that speaks pitch-changed text, as on iOS 5 and 6).
-- Consecutive text fragments with the same prosody become one engine
-  utterance. Rate −10…+10 maps to 50–400 % (+10 is the engine's fastest),
+- Everything from the first text fragment to the last is one engine
+  utterance: bookmarks, `<silence>`, `<spell>` and changes of rate, pitch
+  and volume go into it as engine commands, so none of them breaks the
+  sentence. Rate −10…+10 maps to 50–400 % (+10 is the engine's fastest),
   pitch ±10 to an octave either way, and volume 100 to the voice's own level.
+- `<pron sym="...">` in SAPI's American English phone set (what NVDA's SAPI5
+  driver sends) is spoken as phonemes where the voice can say them
+  (core/vxphonemes.c), else its text is read.
 - Bookmarks become `SPEI_TTS_BOOKMARK` events at the exact audio offset,
   and each word a `SPEI_WORD_BOUNDARY` event where its audio begins (the
   engine's own word and sentence markers, carried through the stream; iOS 3

@@ -8,6 +8,7 @@
 #include <strings.h>
 
 #include "cv_rules.h"
+#include "vxphonemes.h"
 #include "vxstream.h"
 
 typedef struct { char *s; size_t n, cap; } Buf;
@@ -23,9 +24,12 @@ static void put(Buf *b, const char *s, size_t n) {
 }
 static void puts_(Buf *b, const char *s) { put(b, s, strlen(s)); }
 
-// One token stream per segment, assembled the way SSMLParser.assemble does.
-typedef enum { T_TEXT, T_PAUSE, T_EOS, T_PITCH } TokKind;
-typedef struct { TokKind kind; int value; char *text; } Tok;
+// The token stream of an utterance, assembled the way SSMLParser.assemble
+// does. T_SPELL's value is 1 for on, 0 for off; T_MARK's the bookmark's id;
+// T_PHON's text is the IPA, alt the element's own text (said when the voice
+// can't say the IPA).
+typedef enum { T_TEXT, T_PAUSE, T_EOS, T_PITCH, T_RATE, T_VOL, T_SPELL, T_MARK, T_PHON } TokKind;
+typedef struct { TokKind kind; int value; char *text, *alt; } Tok;
 typedef struct {
     Tok *t;
     size_t n, cap;
@@ -45,78 +49,113 @@ static void tok(Seg *s, TokKind k, int value, const char *text, size_t len) {
     Tok *t = &s->t[s->n++];
     t->kind = k;
     t->value = value;
-    t->text = NULL;
-    if (k == T_TEXT) { t->text = malloc(len + 1); memcpy(t->text, text, len); t->text[len] = 0; }
+    t->text = t->alt = NULL;
+    if (text) { t->text = malloc(len + 1); memcpy(t->text, text, len); t->text[len] = 0; }
 }
+
+static int speaks(const Tok *t);
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static int blank(const char *s) {
     for (; *s; s++) if (!isspace((unsigned char)*s)) return 0;
     return 1;
 }
 
-static void finish_rules(Seg *s, const char *mark, const CvRules *rules, CvUtterance *out);
+typedef struct {
+    const CvRules *rules;
+    CvPhonemeFn phoneme;
+    void *ctx;
+} Opts;
 
-static void finish(Seg *s, const char *mark, CvUtterance *out) { finish_rules(s, mark, NULL, out); }
+// A token that is heard: text with something in it, or phonemes.
+static int speaks(const Tok *t) {
+    return (t->kind == T_TEXT && !blank(t->text)) || t->kind == T_PHON;
+}
 
-static void finish_rules(Seg *s, const char *mark, const CvRules *rules, CvUtterance *out) {
+// The utterance from its tokens: one segment, its text with ESC commands.
+static void finish(Seg *s, const Opts *o, CvUtterance *out) {
     ssize_t first = -1, last = -1;
     for (size_t i = 0; i < s->n; i++)
-        if (s->t[i].kind == T_TEXT && !blank(s->t[i].text)) { if (first < 0) first = (ssize_t)i; last = (ssize_t)i; }
+        if (speaks(&s->t[i])) { if (first < 0) first = (ssize_t)i; last = (ssize_t)i; }
     Buf b = {0};
     puts_(&b, "");
     int pause = 0, start_pitch = s->pitch;
-    int seen_pitch = 0;
+    int seen_pitch = 0, spell = 0;
     for (size_t i = 0; i < s->n; i++) {
         Tok *t = &s->t[i];
+        char esc[48];
+        if (t->kind == T_MARK) {  // wherever it is: it is reached where it is written
+            snprintf(esc, sizeof esc, "\x1b\\mrk=%d\\", t->value);
+            puts_(&b, esc);
+            continue;
+        }
         if (last >= 0 && (ssize_t)i > last) {
             if (t->kind == T_PAUSE) pause += t->value;
             continue;
         }
         if (first < 0 || (ssize_t)i < first) {
-            // leading pauses add latency; a leading pitch sets the start pitch
+            // leading pauses add latency; a leading pitch sets the start pitch;
+            // rate and volume before the first text are the segment's own
             if (t->kind == T_PITCH && !seen_pitch) { start_pitch = t->value; seen_pitch = 1; continue; }
             if (first < 0 && t->kind == T_PAUSE) pause += t->value;
-            if (t->kind != T_PITCH) continue;
+            if (t->kind != T_PITCH && t->kind != T_SPELL) continue;
         }
-        char esc[48];
         switch (t->kind) {
         case T_TEXT: {
             for (char *p = t->text; *p; p++) if (*p == 0x1b) *p = ' ';
-            char *r = cv_rules_apply(rules, t->text);
+            char *r = cv_rules_apply(spell ? NULL : o->rules, t->text);  // spelled text is read as it is
             puts_(&b, r);
             free(r);
+            break;
+        }
+        case T_PHON: {
+            // joined: right after a word, nothing between them
+            int joined = b.n && !isspace((unsigned char)b.s[b.n - 1]) && b.s[b.n - 1] != '\\';
+            char *ph = o->phoneme ? o->phoneme(o->ctx, t->text, joined) : NULL;
+            if (ph) puts_(&b, ph);
+            else if (t->alt) {
+                char *r = cv_rules_apply(spell ? NULL : o->rules, t->alt);
+                puts_(&b, r);
+                free(r);
+            }
+            free(ph);
             break;
         }
         case T_PAUSE: snprintf(esc, sizeof esc, " \x1b\\pause=%d\\ ", t->value); puts_(&b, esc); break;
         case T_EOS: puts_(&b, " \x1b\\eos=1\\ "); break;
         case T_PITCH: snprintf(esc, sizeof esc, "\x1b\\pitch=%d\\", vxs_engine_pitch(t->value)); puts_(&b, esc); break;
+        case T_RATE: snprintf(esc, sizeof esc, "\x1b\\rate=%d\\", clampi(t->value, 50, 400)); puts_(&b, esc); break;
+        case T_VOL: snprintf(esc, sizeof esc, "\x1b\\vol=%d\\", clampi(t->value < 0 ? 80 : t->value, 0, 100)); puts_(&b, esc); break;
+        case T_SPELL:
+            if (t->value != spell) puts_(&b, t->value ? "\x1b\\tn=spell\\" : "\x1b\\tn=normal\\");
+            spell = t->value;
+            break;
+        case T_MARK: break;
         }
     }
     // trim
     size_t a = 0, z = b.n;
     while (a < z && isspace((unsigned char)b.s[a])) a++;
     while (z > a && isspace((unsigned char)b.s[z - 1])) z--;
-    int has_text = first >= 0;
-    if (has_text || mark || pause) {
+    if (z > a || pause) {
         out->seg = realloc(out->seg, (out->n + 1) * sizeof *out->seg);
         CvSegment *g = &out->seg[out->n++];
         g->text = malloc(z - a + 1);
         memcpy(g->text, b.s + a, z - a);
         g->text[z - a] = 0;
-        g->mark = mark ? strdup(mark) : NULL;
         g->rate = s->rate;
         g->pitch = start_pitch;
         g->volume = s->volume;
         g->trailing_pause_ms = pause > 5000 ? 5000 : pause;
     }
     free(b.s);
-    for (size_t i = 0; i < s->n; i++) free(s->t[i].text);
+    for (size_t i = 0; i < s->n; i++) { free(s->t[i].text); free(s->t[i].alt); }
     s->n = 0;
     s->captured = 0;
 }
 
 // ---------------------------------------------------------------- prosody
-static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 static int scale(const char *raw, int base, const char *const *kw, const int *kv) {
     char s[32];
@@ -221,14 +260,62 @@ static size_t decode(const char *s, size_t n, char *dst) {
     return o;
 }
 
+char *cv_voice_phonemes(void *voice, const char *ipa, int joined) {
+    const CvPhonemeVoice *v = voice;
+    return vx_phoneme_text(v->voices_root, v->asset_root, v->voice_key, v->language, ipa, joined);
+}
+
 void cv_parse_ssml(const char *in, int base_rate, int base_pitch, int base_volume, CvUtterance *out) {
-    cv_parse_ssml_rules(in, base_rate, base_pitch, base_volume, NULL, out);
+    cv_parse_ssml_ex(in, base_rate, base_pitch, base_volume, NULL, NULL, NULL, out);
 }
 
 void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base_volume, const CvRules *rules,
                          CvUtterance *out) {
-    out->seg = NULL;
-    out->n = 0;
+    cv_parse_ssml_ex(in, base_rate, base_pitch, base_volume, rules, NULL, NULL, out);
+}
+
+static void clamp_segments(CvUtterance *out) {
+    for (size_t i = 0; i < out->n; i++) {
+        out->seg[i].rate = clampi(out->seg[i].rate, 50, 400);
+        out->seg[i].pitch = clampi(out->seg[i].pitch, 50, 200);
+        if (out->seg[i].volume > 100) out->seg[i].volume = 100;
+    }
+}
+
+// What is in effect while walking the markup, and what the tokens have said so far.
+typedef struct {
+    int rate, pitch, volume;
+} Prosody;
+typedef struct {
+    Prosody cur, emitted;
+    int spell[32], sdepth, emitted_spell;  // say-as: whether each open one spells
+} Walk;
+
+// Before something heard: the changes since the last thing heard.
+static void heard(Seg *s, Walk *w) {
+    if (!s->captured) {  // the segment starts with the prosody around its first text
+        s->rate = w->cur.rate;
+        s->volume = w->cur.volume;
+        s->captured = 1;
+        w->emitted.rate = w->cur.rate;
+        w->emitted.volume = w->cur.volume;
+    }
+    if (w->cur.pitch != w->emitted.pitch) tok(s, T_PITCH, w->emitted.pitch = w->cur.pitch, NULL, 0);
+    if (w->cur.rate != w->emitted.rate) tok(s, T_RATE, w->emitted.rate = w->cur.rate, NULL, 0);
+    if (w->cur.volume != w->emitted.volume) tok(s, T_VOL, w->emitted.volume = w->cur.volume, NULL, 0);
+    int sp = w->sdepth && w->spell[w->sdepth - 1];
+    if (sp != w->emitted_spell) tok(s, T_SPELL, w->emitted_spell = sp, NULL, 0);
+}
+
+static int spelled(const char *interpret_as) {
+    return !strcasecmp(interpret_as, "characters") || !strcasecmp(interpret_as, "spell-out") ||
+           !strcasecmp(interpret_as, "verbatim") || !strcasecmp(interpret_as, "letters");
+}
+
+void cv_parse_ssml_ex(const char *in, int base_rate, int base_pitch, int base_volume, const CvRules *rules,
+                      CvPhonemeFn phoneme, void *ctx, CvUtterance *out) {
+    memset(out, 0, sizeof *out);
+    Opts o = {rules, phoneme, ctx};
     Seg s = {0};
     s.rate = base_rate;
     s.volume = base_volume;
@@ -237,12 +324,17 @@ void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base
     while (isspace((unsigned char)*p)) p++;
     if (*p != '<') {  // plain text
         tok(&s, T_TEXT, 0, in, strlen(in));
-        finish_rules(&s, NULL, rules, out);
+        finish(&s, &o, out);
         free(s.t);
+        clamp_segments(out);
         return;
     }
-    struct { int rate, pitch, volume; } cur = {base_rate, base_pitch, base_volume}, stack[32];
-    int depth = 0, emitted = base_pitch;
+    Walk w = {{base_rate, base_pitch, base_volume}, {base_rate, base_pitch, base_volume}, {0}, 0, 0};
+    Prosody stack[32];
+    int depth = 0;
+    // inside <phoneme>: its IPA, and its own text (collected, said if the IPA can't be)
+    char *ph = NULL;
+    Buf alt = {0};
     char *tmp = malloc(strlen(in) * 4 + 16);
     while (*p) {
         if (*p == '<') {
@@ -253,18 +345,19 @@ void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base
             size_t blen = (size_t)(e - body);
             int closing = blen && body[0] == '/';
             if (closing) { body++; blen--; }
+            int empty = blen && body[blen - 1] == '/';  // <x ... />
             size_t nl = 0;
             while (nl < blen && !isspace((unsigned char)body[nl]) && body[nl] != '/') nl++;
             char name[32];
             snprintf(name, sizeof name, "%.*s", (int)(nl < 31 ? nl : 31), body);
             char *colon = strchr(name, ':');  // ssml:prosody
             const char *nm = colon ? colon + 1 : name;
-            char v[64];
+            char v[256];
             if (!closing && !strcmp(nm, "mark")) {
                 attr(body, blen, "name", v, sizeof v);
-                finish_rules(&s, v, rules, out);
-                s.rate = cur.rate; s.volume = cur.volume; s.pitch = cur.pitch;
-                emitted = cur.pitch;
+                out->marks = realloc(out->marks, (out->nmarks + 1) * sizeof *out->marks);
+                out->marks[out->nmarks] = strdup(v);
+                tok(&s, T_MARK, (int)out->nmarks++, NULL, 0);
             } else if (!closing && !strcmp(nm, "break")) {
                 char t[32], st[32];
                 attr(body, blen, "time", t, sizeof t);
@@ -272,17 +365,48 @@ void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base
                 int ms = break_ms(t, st[0] ? st : NULL);
                 if (ms > 0) tok(&s, T_PAUSE, ms, NULL, 0);
             } else if (!strcmp(nm, "prosody")) {
-                if (closing) { if (depth) cur = stack[--depth]; }
-                else if (blen && body[blen - 1] != '/') {
-                    if (depth < 32) stack[depth++] = cur;
+                if (closing) { if (depth) w.cur = stack[--depth]; }
+                else if (!empty) {
+                    if (depth < 32) stack[depth++] = w.cur;
                     static const char *rkw[] = {"x-slow", "slow", "medium", "default", "fast", "x-fast", NULL};
                     static const int rkv[] = {50, 75, 100, 100, 150, 200};
                     static const char *vkw[] = {"silent", "x-soft", "soft", "medium", "default", "loud", "x-loud", NULL};
                     static const int vkv[] = {0, 20, 40, 60, 80, 90, 100};
-                    if (attr(body, blen, "rate", v, sizeof v)) cur.rate = scale(v, cur.rate, rkw, rkv);
-                    if (attr(body, blen, "pitch", v, sizeof v)) cur.pitch = pitch_scale(v, cur.pitch);
+                    if (attr(body, blen, "rate", v, sizeof v)) w.cur.rate = scale(v, w.cur.rate, rkw, rkv);
+                    if (attr(body, blen, "pitch", v, sizeof v)) w.cur.pitch = pitch_scale(v, w.cur.pitch);
                     if (attr(body, blen, "volume", v, sizeof v) && !strstr(v, "dB"))
-                        cur.volume = scale(v, cur.volume < 0 ? 80 : cur.volume, vkw, vkv);
+                        w.cur.volume = scale(v, w.cur.volume < 0 ? 80 : w.cur.volume, vkw, vkv);
+                }
+            } else if (!strcmp(nm, "say-as")) {
+                if (closing) { if (w.sdepth) w.sdepth--; }
+                else if (!empty && w.sdepth < 32) {
+                    attr(body, blen, "interpret-as", v, sizeof v);
+                    w.spell[w.sdepth++] = spelled(v);
+                }
+            } else if (!strcmp(nm, "phoneme")) {
+                if (closing && ph) {
+                    heard(&s, &w);
+                    tok(&s, T_PHON, 0, ph, strlen(ph));
+                    s.t[s.n - 1].alt = alt.s ? strdup(alt.s) : NULL;
+                    free(ph);
+                    ph = NULL;
+                    alt.n = 0;
+                    if (alt.s) alt.s[0] = 0;
+                } else if (!closing) {
+                    char a[32];
+                    attr(body, blen, "alphabet", a, sizeof a);
+                    if (attr(body, blen, "ph", v, sizeof v) && (!a[0] || !strcasecmp(a, "ipa"))) {
+                        size_t dn = decode(v, strlen(v), tmp);
+                        tmp[dn] = 0;
+                        free(ph);
+                        ph = strdup(tmp);
+                        if (empty) {  // no text of its own
+                            heard(&s, &w);
+                            tok(&s, T_PHON, 0, ph, strlen(ph));
+                            free(ph);
+                            ph = NULL;
+                        }
+                    }
                 }
             } else if (closing && (!strcmp(nm, "s") || !strcmp(nm, "p"))) {
                 tok(&s, T_EOS, 0, NULL, 0);
@@ -294,43 +418,39 @@ void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base
         size_t n = e ? (size_t)(e - p) : strlen(p);
         size_t dn = decode(p, n, tmp);
         tmp[dn] = 0;
-        if (!blank(tmp)) {
-            if (!s.captured) { s.rate = cur.rate; s.volume = cur.volume; s.captured = 1; }
-            if (cur.pitch != emitted) { tok(&s, T_PITCH, cur.pitch, NULL, 0); emitted = cur.pitch; }
-        }
-        tok(&s, T_TEXT, 0, tmp, dn);
         p += n;
+        if (ph) {  // a phoneme element's own text
+            put(&alt, tmp, dn);
+            continue;
+        }
+        if (!blank(tmp)) heard(&s, &w);
+        tok(&s, T_TEXT, 0, tmp, dn);
     }
-    finish_rules(&s, NULL, rules, out);
+    finish(&s, &o, out);
     free(tmp);
+    free(ph);
+    free(alt.s);
     free(s.t);
-    for (size_t i = 0; i < out->n; i++) {
-        out->seg[i].rate = clampi(out->seg[i].rate, 50, 400);
-        out->seg[i].pitch = clampi(out->seg[i].pitch, 50, 200);
-        if (out->seg[i].volume > 100) out->seg[i].volume = 100;
-    }
+    clamp_segments(out);
 }
 
 void cv_parse_plain(const char *in, int base_rate, int base_pitch, int base_volume, CvUtterance *out) {
-    out->seg = NULL;
-    out->n = 0;
+    memset(out, 0, sizeof *out);
+    Opts o = {0};
     Seg s = {0};
     s.rate = base_rate;
     s.volume = base_volume;
     s.pitch = base_pitch;
     tok(&s, T_TEXT, 0, in, strlen(in));
-    finish(&s, NULL, out);
+    finish(&s, &o, out);
     free(s.t);
-    for (size_t i = 0; i < out->n; i++) {
-        out->seg[i].rate = clampi(out->seg[i].rate, 50, 400);
-        out->seg[i].pitch = clampi(out->seg[i].pitch, 50, 200);
-        if (out->seg[i].volume > 100) out->seg[i].volume = 100;
-    }
+    clamp_segments(out);
 }
 
 void cv_free_utterance(CvUtterance *u) {
-    for (size_t i = 0; i < u->n; i++) { free(u->seg[i].text); free(u->seg[i].mark); }
+    for (size_t i = 0; i < u->n; i++) free(u->seg[i].text);
+    for (size_t i = 0; i < u->nmarks; i++) free(u->marks[i]);
     free(u->seg);
-    u->seg = NULL;
-    u->n = 0;
+    free(u->marks);
+    memset(u, 0, sizeof *u);
 }

@@ -2,7 +2,7 @@
 # Download the iPhone firmware Classic Voices runs, from Apple's servers, and
 # copy out only the speech engine and voices into extracted/<build>/.
 #
-#   tools/fetch_firmware.sh [ios3 ios4 ios5 ios6 ios7 ios10]   (default: all)
+#   tools/fetch_firmware.sh [ios3 ios4 ios5 ios6 ios70 ios7 ios10]   (default: all)
 #
 # Each IPSW is fetched by tools/ipswtool.py (keys for the encrypted ones come
 # from The Apple Wiki), mounted read-only, copied from, and deleted again, so
@@ -14,14 +14,16 @@ ROOT=$(pwd)
 PY=${PYTHON:-python3}
 WORK=${WORK:-$ROOT/build/firmware}
 
-# build -> version, device. iPhone 3GS firmware for the classic voices; iOS 7
-# and 10 are only engines for the Mac OS X Mavericks voices.
+# build -> version, device. iPhone 3GS firmware for the classic voices, and
+# the iPhone 4's iOS 7.0.6 for iOS 7's; iOS 7.1.2 and 10 are only engines for
+# the Mac OS X Mavericks voices.
 spec() {
     case $1 in
         ios3) echo "3.1.3 iPhone2,1" ;;
         ios4) echo "4.3.5 iPhone2,1" ;;
         ios5) echo "5.1.1 iPhone2,1" ;;
         ios6) echo "6.1.6 iPhone2,1" ;;
+        ios70) echo "7.0.6 iPhone3,1" ;;
         ios7) echo "7.1.2 iPhone3,1" ;;
         ios10) echo "10.3.4 iPhone5,1" ;;
         *) echo "unknown build $1" >&2; exit 2 ;;
@@ -76,7 +78,7 @@ mac_common() {
     done
 }
 
-builds=${*:-ios3 ios4 ios5 ios6 ios7 ios10}
+builds=${*:-ios3 ios4 ios5 ios6 ios70 ios7 ios10}
 for b in $builds; do fetch "$b"; done
 mac_common mac107 ios5:lid.dat ios6:synth_med_fxd_bet2f22.dat
 mac_common mac108 ios6:lid.dat ios6:synth_med_fxd_bet2f22.dat ios7:synth_med_fxd_bet3f22.dat

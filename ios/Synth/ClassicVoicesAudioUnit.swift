@@ -1,4 +1,5 @@
 import AVFoundation
+import os
 
 /// System speech-synthesis provider backed by the original iOS 6 Vocalizer engine.
 public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
@@ -14,12 +15,28 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         busses = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outputBus])
         VoiceCatalog.adoptLegacy()
         DispatchQueue.global(qos: .utility).async { VoiceCatalog.unprotectVoices() }
-        // Warm up the most recently used voice so the first utterance is fast.
-        VoiceEngine.shared.preload(UserDefaults.standard.string(forKey: "lastVoiceKey") ?? "ios6/en-US")
+        // Warm up the most recently used voice so the first utterance is fast,
+        // with the pronunciation pack it will speak with.
+        let last = UserDefaults.standard.string(forKey: "lastVoiceKey") ?? "ios6/en-US"
+        let lastEntry = VoiceCatalog.entry(forKey: last)
+        let settings = SpeechSettings.current
+        VoiceEngine.shared.preload(last, rulesPack: PronunciationRules.newerPack(
+            forVoiceKey: last, identifier: lastEntry?.identifier ?? "", language: lastEntry?.language ?? "",
+            settings: settings))
+        // and its rules: reading a newer pack's thousands of them takes tens of milliseconds
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = PronunciationRules.rules(forVoiceKey: last, identifier: lastEntry?.identifier ?? "",
+                                         language: lastEntry?.language ?? "", settings: settings)
+        }
         log.notice("CLASSICVOICES audio unit created; root=\(VoiceCatalog.root?.path ?? "nil", privacy: .public) voices=\(VoiceCatalog.entries.count)")
     }
 
     public override var outputBusses: AUAudioUnitBusArray { busses }
+
+    /// The request being spoken and its SSML marks' names, for reporting
+    /// each bookmark (ESC\mrk=N\) as the audio reaches it.
+    private let marks = OSAllocatedUnfairLock<(request: AVSpeechSynthesisProviderRequest?, names: [String])>(
+        initialState: (nil, []))
 
     private let fileChannel = FileChannel()
     public override func messageChannel(for channelName: String) -> any AUMessageChannel {
@@ -61,27 +78,39 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let entry = VoiceCatalog.entry(forIdentifier: request.voice.identifier)
         let key = entry?.key ?? "ios6/" + (request.voice.primaryLanguages.first ?? "en-US")
         let settings = SpeechSettings.current
-        let rules = settings.rulesEnabled(entry?.identifier ?? "") ? PronunciationRules.rules(forVoiceKey: key) : nil
-        let job = SpeechJob.from(ssml: request.ssmlRepresentation, rules: rules, exactPitch: key.hasPrefix("mt"))
+        let language = entry?.language ?? request.voice.primaryLanguages.first ?? ""
+        let rules = PronunciationRules.rules(forVoiceKey: key, identifier: entry?.identifier ?? "", language: language,
+                                             settings: settings)
+        let job = SpeechJob.from(ssml: request.ssmlRepresentation, rules: rules, exactPitch: key.hasPrefix("mt")) { ipa, joined in
+            guard let root = VoiceCatalog.root?.path,
+                  let p = vx_phoneme_text(root, VoiceCatalog.enhancedRoot?.path, key, language, ipa, joined ? 1 : 0) else { return nil }
+            defer { free(p) }
+            return String(cString: p)
+        }
+        marks.withLock { $0 = (job.markNames.isEmpty ? nil : request, job.markNames) }
         let fallback = entry.flatMap { settings.pitchFallbackEnabled($0.identifier) ? VoiceCatalog.compactCounterpart(of: $0)?.key : nil }
-        VoiceEngine.shared.speak(job, voiceKey: key, fallbackKey: fallback,
+        let pack = PronunciationRules.newerPack(forVoiceKey: key, identifier: entry?.identifier ?? "", language: language,
+                                                settings: settings)
+        VoiceEngine.shared.speak(job, voiceKey: key, fallbackKey: fallback, rulesPack: pack,
                                  resetCommands: settings.resetCommandsEnabled(entry?.identifier ?? ""),
                                  twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate)
         dumpRenderLog(start: previous.0, count: previous.1, renders: previous.2)
-        log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
+        log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) newer=\(pack != nil) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
         if UserDefaults.standard.string(forKey: "lastVoiceKey") != key {
             UserDefaults.standard.set(key, forKey: "lastVoiceKey")
         }
     }
 
     public override func cancelSpeechRequest() {
+        marks.withLock { $0 = (nil, []) }
         VoiceEngine.shared.cancel()
     }
 
     public override var internalRenderBlock: AUInternalRenderBlock {
         let stream = VoiceEngine.shared.stream
         let renderLog = self.renderLog, renderCount = self.renderCount
-        return { actionFlags, _, frameCount, _, outputData, _, _ in
+        let marks = self.marks
+        return { [weak self] actionFlags, _, frameCount, _, outputData, _, _ in
             let buffers = UnsafeMutableAudioBufferListPointer(outputData)
             guard let raw = buffers[0].mData else { return noErr }
             let out = raw.assumingMemoryBound(to: Float.self)
@@ -100,6 +129,22 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                     done = d
                     if n == frames || d != 0 || mach_absolute_time() > deadline { break }
                     usleep(500)
+                }
+            }
+            if let stream {
+                // Bookmarks are known before their audio: hand them over as
+                // they come, placed by their sample (32-bit float, mono).
+                var got = [VxsMark](repeating: VxsMark(), count: 8)
+                let k = got.withUnsafeMutableBufferPointer { vxs_read_marks(stream, $0.baseAddress, 8) }
+                if k > 0 {
+                    let (request, names) = marks.withLock { $0 }
+                    if let request, let report = self?.speechSynthesisOutputMetadataBlock {
+                        let markers = got[..<k].compactMap { m in
+                            Int(m.id) < names.count ? AVSpeechSynthesisMarker(bookmarkName: names[Int(m.id)],
+                                                                                atByteSampleOffset: Int(m.frame) * 4) : nil
+                        }
+                        if !markers.isEmpty { report(markers, request) }
+                    }
                 }
             }
             let i = Int(renderCount.pointee)

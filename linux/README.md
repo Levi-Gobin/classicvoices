@@ -1,6 +1,6 @@
 # Classic Voices for Linux
 
-The iOS 3–6 VoiceOver voices, their enhanced versions, and the Mac OS X Lion,
+The iOS 3–7 VoiceOver voices, their enhanced versions, and the Mac OS X Lion,
 Mountain Lion and Mavericks voices, as a Speech Dispatcher output module:
 Orca, and anything else that speaks through Speech Dispatcher, can use them.
 The voices run on Apple's original ARM engines through the same bit-exact
@@ -46,6 +46,7 @@ classicvoices-data import all      # every firmware, about 5.5 GB to stream
 classicvoices-data import ~/iPhone2,1_6.1.6_10B500_Restore.ipsw   # or a file you have
 classicvoices-data voices          # enhanced iOS and Mac OS X voices you can download
 classicvoices-data download "Daniel" "enhanced en-US" all-enhanced
+classicvoices-data pronunciation   # Apple's newer pronunciation rules: download (~5 MB), turn on
 classicvoices-data status
 ```
 
@@ -58,8 +59,9 @@ with the key from The Apple Wiki, using OpenSSL's libcrypto.
 |---|---|
 | ios3, ios4 | the iOS 3 and 4 voices |
 | ios5, ios6 | the iOS 5 and 6 voices, and the engines for their enhanced voices |
+| ios70 | the iOS 7 voices (iOS 7.0.6), and the engine for their enhanced voices |
 | ios6 (with ios5) | the engine and common files for the Lion and Mountain Lion voices |
-| ios7 | engine only: Mavericks compact voices |
+| ios7 | engine only (iOS 7.1.2): Mavericks compact voices |
 | ios10 | engine only: Mavericks premium voices |
 
 ## Use them
@@ -114,9 +116,12 @@ every system); without it they are skipped.
 - `sd_classicvoices` speaks Speech Dispatcher's module protocol through
   Speech Dispatcher's own helpers (vendored in `speechd/`, BSD licence) and
   sends audio to the server (server-side audio). One worker thread runs each
-  message through the engine stream; every SSML `<mark>` ends a segment and
-  is reported once the audio before it has gone out, so Orca's reading
-  position follows the speech.
+  message through the engine stream as one utterance; every SSML `<mark>`
+  is an engine bookmark inside it, reported once the audio before it has
+  gone out, so Orca's reading position follows the speech without breaking
+  the sentence. `<prosody>` rate, pitch and volume, `<say-as
+  interpret-as="characters">` (spelled) and `<phoneme alphabet="ipa">` go
+  into the utterance as engine commands.
 - Volume 100 (Speech Dispatcher's default) is the voice's own level; rate and
   pitch map onto the engine's 50–400 % and 50–200 % exponentially.
 - The engine, the voice catalogue and the SSML parser are the shared C code in

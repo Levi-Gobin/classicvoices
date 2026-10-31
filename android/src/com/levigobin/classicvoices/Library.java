@@ -39,6 +39,7 @@ final class Library {
         new Version("ios4", "iOS 4", "4.3.5", false, "ios4"),
         new Version("ios5", "iOS 5", "5.1.1", false, "ios5"),
         new Version("ios6", "iOS 6", "6.1.6", false, "ios6"),
+        new Version("ios70", "iOS 7", "7.0.6", false, "ios70"),
         new Version("mac107", "Lion", "10.7", true, "ios5", "ios6"),
         new Version("mac108", "Mountain Lion", "10.8", true, "ios6", "ios7"),
         new Version("mac109", "Mavericks", "10.9", true, "ios7", "ios10"),
@@ -94,7 +95,7 @@ final class Library {
         File dl = Data.downloadsDir(c);
         for (VoiceInfo v : Data.allVoices(c)) {
             String build = v.key.substring(0, v.key.indexOf('/')), rest = v.key.substring(build.length() + 1);
-            if (build.matches("ios[3-6]")) {
+            if (build.matches("ios[3-6]|ios70")) {
                 compactNames.put(build + "/" + rest, v.voice);
                 out.add(new Item(v.key, version(build), v.voice, "compact", v.language, true, true, 0, null));
             } else if (build.endsWith("e")) {

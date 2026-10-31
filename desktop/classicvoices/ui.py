@@ -3,6 +3,8 @@ and Mac apps (pages of buttons you drill into, each saying what it does
 before you press it), with native controls only so screen readers read
 everything."""
 import os
+import threading
+import webbrowser
 
 import wx
 
@@ -21,14 +23,23 @@ class Page:
         self.group = None
         self.first = None
         self.live = []  # (control, function giving its label or percent now): progress updates in place
+        self.keyed = []  # (control, key): what a rebuilt page finds the focused control again by
+        self.gauged = set()  # the jobs whose progress bar is on the page
 
     def _parent(self):
         return self.group.GetStaticBox() if self.group else self.panel
 
-    def _add(self, ctrl, expand=True):
+    def _add(self, ctrl, expand=True, key=None):
+        """key: what the control stands for (a voice, a firmware), for one whose
+        label changes as it works; others go by their kind and label."""
         (self.group or self.sizer).Add(ctrl, 0, (wx.EXPAND if expand else 0) | wx.ALL, 4)
         if self.first is None and ctrl.AcceptsFocus():
             self.first = ctrl
+        if key is None:
+            named = isinstance(ctrl, (wx.TextCtrl, wx.Choice, wx.Gauge))
+            key = (type(ctrl).__name__, ctrl.GetName() if named else ctrl.GetLabel())
+        key = (key, sum(1 for _, k in self.keyed if k[0] == key))  # the same label twice: which one
+        self.keyed.append((ctrl, key))
         return ctrl
 
     def section(self, title):
@@ -42,14 +53,14 @@ class Page:
             self.sizer.Add(self.group, 0, wx.EXPAND | wx.ALL, 6)
             self.group = None
 
-    def button(self, label, handler, enabled=True, live=None):
+    def button(self, label, handler, enabled=True, live=None, key=None):
         """live: a function giving the label as progress changes."""
         b = wx.Button(self._parent(), label=live() if live else label, style=wx.BU_LEFT)
         b.Bind(wx.EVT_BUTTON, lambda e: handler())
         b.Enable(enabled)
         if live:
             self.live.append((b, live))
-        return self._add(b)
+        return self._add(b, key=key)
 
     def gauge(self, name, percent):
         """A native progress bar, so the screen reader reports the progress its
@@ -103,7 +114,22 @@ def percent(job):
 def job_gauge(p, job, name):
     """The progress of a job, in a progress bar after its Stop button. Labels
     stay put while it runs: the bar carries the progress, every 1%."""
+    p.gauged.add(job.key)
     p.gauge(name, lambda: job.percent or 0)
+
+
+JOB_VERB = {"download": "Downloading", "firmware": "Getting", "fast": "Building", "pronunciation": "Downloading",
+            "copy": "Copying"}
+
+
+def other_jobs(p, jobs):
+    """Every job without a progress bar on this page gets one at its end, so
+    the progress goes on being heard after leaving the page it started on."""
+    others = [j for j in jobs if j.key not in p.gauged]
+    if others:
+        p.section("In progress")
+        for j in others:
+            job_gauge(p, j, "%s %s" % (JOB_VERB.get(j.kind, "Working on"), j.label))
 
 
 def voice_label(lib, item):
@@ -131,22 +157,44 @@ class Browser(wx.Panel):
         self.version = "all"
         self.query = ""
         self.stack = []  # routes: ("language", code), ("voice", id), ("search", q), ("diagnostics",), ("fast",)
-        self.came_from = []  # per page opened: the index of the control that opened it, to return to
+        self.came_from = []  # per page opened: the key of the control that opened it, to return to
         self.live = []
+        self.keyed = []  # the page's (control, key)s
+        self.focus_key = None  # the control last focused on this page, by key
         top = wx.BoxSizer(wx.HORIZONTAL)
         self.back = wx.Button(self, label="&Back")
         self.back.Bind(wx.EVT_BUTTON, lambda e: self.go_back())
         top.Add(self.back, 0, wx.ALL, 4)
         self.where = wx.StaticText(self, label="")
         top.Add(self.where, 1, wx.ALIGN_CENTER_VERTICAL | wx.ALL, 4)
+        # The first page's search field and version list stay put while the
+        # page under them is rebuilt: choosing a version rebuilt the page with
+        # the list in it, and focus fell to the panel ("panel" instead of the
+        # version) and out of the list.
+        self.head = wx.Panel(self)
+        head = wx.BoxSizer(wx.VERTICAL)
+        head.Add(wx.StaticText(self.head, label="Search all voices:"), 0, wx.ALL, 4)
+        self.search = wx.TextCtrl(self.head, value="", style=wx.TE_PROCESS_ENTER)
+        self.search.SetName("Search all voices")
+        self.search.Bind(wx.EVT_TEXT_ENTER, lambda e: self._search(self.search.GetValue()))
+        head.Add(self.search, 0, wx.EXPAND | wx.ALL, 4)
+        head.Add(wx.StaticText(self.head, label="Version:"), 0, wx.ALL, 4)
+        self.versions = wx.Choice(self.head)
+        self.versions.SetName("Version")
+        self.version_ids = []
+        self.versions.Bind(wx.EVT_CHOICE, lambda e: self._set_version(self.version_ids[self.versions.GetSelection()]))
+        head.Add(self.versions, 0, wx.ALL, 4)
+        self.head.SetSizer(head)
         self.body = wx.ScrolledWindow(self, style=wx.VSCROLL)
         self.body.SetScrollRate(0, 20)
         outer = wx.BoxSizer(wx.VERTICAL)
         outer.Add(top, 0, wx.EXPAND)
         outer.Add(wx.StaticLine(self), 0, wx.EXPAND)
+        outer.Add(self.head, 0, wx.EXPAND)
         outer.Add(self.body, 1, wx.EXPAND)
         self.SetSizer(outer)
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key)
+        self.body.Bind(wx.EVT_CHILD_FOCUS, self.on_child_focus)
         self.render(focus=False)
 
     @property
@@ -160,18 +208,25 @@ class Browser(wx.Panel):
         else:
             e.Skip()
 
+    def on_child_focus(self, e):
+        key = self._key_of(self.FindFocus())
+        if key:
+            self.focus_key = key
+        e.Skip()
+
+    def _key_of(self, w):
+        return next((k for c, k in self.keyed if c is w), None) if w else None
+
     def open(self, route):
-        ctrls = list(self._controls(self.body))
-        f = self.FindFocus()
-        self.came_from.append(ctrls.index(f) if f in ctrls else None)
+        self.came_from.append(self._key_of(self.FindFocus()))
         self.stack.append(route)
         self.render()
 
     def go_back(self):
         if self.stack:
             self.stack.pop()
-            index = self.came_from.pop() if self.came_from else None
-            self.render(focus_index=index)
+            key = self.came_from.pop() if self.came_from else None
+            self.render(focus_key=key)
 
     def title(self, route):
         kind = route[0]
@@ -197,15 +252,23 @@ class Browser(wx.Panel):
             elif ctrl.GetLabel() != value:
                 ctrl.SetLabel(value)
 
-    def render(self, focus=True, keep=False, focus_index=None):
+    def render(self, focus=True, keep=False, focus_key=None):
         """Rebuild the current page. keep: stay on the control that had focus
-        (something changed under it); focus_index: focus that control (going
-        back); else focus the page's first control."""
-        had = self.FindFocus()
-        had_index = focus_index
-        if keep and had:
-            ctrls = list(self._controls(self.body))
-            had_index = ctrls.index(had) if had in ctrls else None
+        (something changed under it), found again by what it is, not where it
+        is; focus_key: focus that control (going back); else focus the page's
+        first control."""
+        key = focus_key
+        if keep:
+            had = self.FindFocus()
+            key = self._key_of(had)
+            if key is None and (had is None or had in (self, self.body, self.frame, self.frame.root)):
+                # focus is nowhere: the control was destroyed by a rebuild a moment
+                # ago, whose own focusing hasn't happened yet (two downloads ending
+                # together). Without this it went to the page's first control.
+                key = self.focus_key
+            elif key is None:
+                focus = False  # focus is outside the page (the tabs): leave it there
+        self.keyed = []
         self.body.Freeze()
         self.body.DestroyChildren()
         page = Page(self.body)
@@ -213,45 +276,49 @@ class Browser(wx.Panel):
         {None: self.root_page, "language": self.language_page, "voice": self.voice_page,
          "search": self.search_page, "diagnostics": self.diagnostics_page, "fast": self.fast_page,
          "firmware": self.firmware_page}[route[0] if route else None](page, route)
+        other_jobs(page, self.lib.jobs)
         page.finish()
         self.live = page.live
+        self.keyed = page.keyed
         self.body.FitInside()
         self.body.Thaw()
         self.back.Enable(bool(self.stack))
+        self.head.Show(not self.stack)
         v = L.VERSION.get(self.version)
         crumbs = [self.tab_name, "%s (%s)" % (v.name, v.number) if v else "All versions"] + \
             [self.title(r) for r in self.stack]
         self.where.SetLabel(" › ".join(crumbs))
         self.where.SetName("Current location: " + ", ".join(crumbs))
         self.Layout()
-        target = None
-        if had_index is not None:
-            ctrls = list(self._controls(self.body))
-            if had_index < len(ctrls):
-                target = ctrls[had_index]
+        target = next((c for c, k in page.keyed if k == key), None) if key else None
         if target is None and focus:
-            target = page.first
+            target = page.first if self.stack else self.search
         if target:
+            self.focus_key = self._key_of(target)
             # after the toolkit has settled the new page, or GTK's screen
             # readers miss the focus change
             wx.CallAfter(lambda: target and target.SetFocus())
 
-    def _controls(self, w):
-        for c in w.GetChildren():
-            if isinstance(c, wx.StaticBox):
-                yield from self._controls(c)
-            elif c.AcceptsFocus():
-                yield c
+    def refocus(self):
+        """Focus the control last focused on this page (after a rebuild that
+        destroyed it); False if it isn't here any more."""
+        target = next((c for c, k in self.keyed if k == self.focus_key), None) if self.focus_key else None
+        if target:
+            target.SetFocus()
+        return bool(target)
 
     # ---- pages
     def root_page(self, p, _route):
         lib = self.lib
-        search = p.field("Search all voices:", self.query)
-        search.SetWindowStyleFlag(search.GetWindowStyleFlag() | wx.TE_PROCESS_ENTER)
-        search.Bind(wx.EVT_TEXT_ENTER, lambda e: self._search(search.GetValue()))
         versions = lib.versions(self.platform)
-        p.choice("Version:", [("all", "All versions")] + [(v.id, "%s (%s)" % (v.name, v.number)) for v in versions],
-                 self.version, self._set_version)
+        ids = ["all"] + [v.id for v in versions]
+        if ids != self.version_ids:  # only when the list changes: setting it again moves a screen reader
+            self.version_ids = ids
+            self.versions.Set(["All versions"] + ["%s (%s)" % (v.name, v.number) for v in versions])
+        if self.version not in ids:
+            self.version = "all"
+        if self.versions.GetSelection() != ids.index(self.version):
+            self.versions.SetSelection(ids.index(self.version))
         shown = [v for v in versions if self.version in ("all", v.id)]
         missing = [v for v in shown if not lib.firmware_ready(v)]
         if missing:
@@ -306,7 +373,7 @@ class Browser(wx.Panel):
 
     def _rows(self, p, items):
         for it in sorted(items, key=lambda i: (i.name.lower(), i.kind)):
-            p.button("", lambda i=it: self._press(i), live=lambda i=it: voice_label(self.lib, i))
+            p.button("", lambda i=it: self._press(i), live=lambda i=it: voice_label(self.lib, i), key="voice:" + it.id)
             job = self.lib.job_for(it.id)
             if job:
                 job_gauge(p, job, "Downloading " + it.title)
@@ -369,7 +436,7 @@ class Browser(wx.Panel):
             return "Get %s from Apple (streams about %s), for %s" % (
                 L.FIRMWARE_NAMES[f], L.size_text(remote.FIRMWARE[f][2]), remote.PURPOSE[f])
         for f in needed:
-            p.button("", lambda f=f: lib.import_firmware(f), live=lambda f=f: label(f))
+            p.button("", lambda f=f: lib.import_firmware(f), live=lambda f=f: label(f), key="fw:" + f)
             job = lib.job_for("fw:" + f)
             if job:
                 job_gauge(p, job, "Getting " + L.FIRMWARE_NAMES[f])
@@ -377,7 +444,8 @@ class Browser(wx.Panel):
         p.button("Import a firmware file (.ipsw)…", self.frame.import_ipsw)
         p.button("Import an extracted firmware folder…", self.frame.import_folder)
         for j in [j for j in lib.jobs if j.key.startswith("file:")]:
-            p.button("", lambda j=j: lib.cancel(j.key), live=lambda j=j: "Stop importing %s, %s" % (j.label, j.message))
+            p.button("", lambda j=j: lib.cancel(j.key), live=lambda j=j: "Stop importing %s, %s" % (j.label, j.message),
+                     key=j.key)
             job_gauge(p, j, "Importing " + j.label)
 
     def fast_page(self, p, _route):
@@ -396,7 +464,7 @@ class Browser(wx.Panel):
             p.text("%s: %s" % (L.FIRMWARE_NAMES[f], "fast code ready" if lib.fast_code(f) else "no fast code yet"))
         job = lib.job_for("fast")
         if job:
-            p.button("", lambda: lib.cancel("fast"), live=lambda: "Stop building, %s" % job.message)
+            p.button("", lambda: lib.cancel("fast"), live=lambda: "Stop building, %s" % job.message, key="fast")
             job_gauge(p, job, "Building fast code")
         elif imported and system.recompiler():
             todo = [f for f in imported if not lib.fast_code(f)]
@@ -427,6 +495,11 @@ class SettingsPanel(wx.ScrolledWindow):
         self.SetScrollRate(0, 20)
         self.render()
 
+    def set_newer(self, on):
+        system.set_setting("NewerPronunciation", on)
+        if on:
+            self.frame.lib.get_pronunciation()
+
     def render(self):
         self.Freeze()
         self.DestroyChildren()
@@ -434,11 +507,14 @@ class SettingsPanel(wx.ScrolledWindow):
         p.section("Speech")
         p.check("Apple’s pronunciation rules", system.get_setting("PronunciationRules"),
                 lambda v: system.set_setting("PronunciationRules", v))
+        p.check("Newer pronunciation rules", system.get_setting("NewerPronunciation"), self.set_newer)
         p.check("Compact voice for pitch changes", system.get_setting("PitchFallback"),
                 lambda v: system.set_setting("PitchFallback", v))
-        p.text("Apple’s rules are the text fixes iOS made before the engine read it (“iOS”, "
-               "“OS X” …). Enhanced and premium voices can’t change their pitch; iOS used the "
-               "compact voice for those words, and so does Classic Voices unless this is off.")
+        p.text("Apple’s rules are the text fixes each voice’s own iOS or Mac OS X release made "
+               "before the engine read it (“iOS”, “OS X” …). The newer rules add Apple’s later "
+               "pronunciation dictionary and rules to every voice; turning them on downloads them "
+               "from Apple (about 5 MB). Enhanced and premium voices can’t change their pitch; iOS "
+               "used the compact voice for those words, and so does Classic Voices unless this is off.")
         if system.IS_WIN:
             p.section("Windows programs")
             n = system.system_voice_count()
@@ -521,11 +597,13 @@ class Frame(wx.Frame):
     def _restore_focus(self):
         target = self._last_focus
         try:
-            if not target or not target.IsShownOnScreen():
-                target = self.book
+            if target and target.IsShownOnScreen():
+                return target.SetFocus()
         except RuntimeError:  # the control was destroyed (the page was rebuilt)
-            target = self.book
-        target.SetFocus()
+            pass
+        tab = self.book.GetCurrentPage()
+        if not (isinstance(tab, Browser) and tab.refocus()):
+            self.book.SetFocus()
 
     def on_frame_focus(self, e):
         wx.CallAfter(self._restore_focus)
@@ -621,4 +699,22 @@ def main():
     app.SetAppDisplayName(APP)
     f = Frame()
     f.Show()
+    threading.Thread(target=check_for_update, args=(f,), name="update", daemon=True).start()
     app.MainLoop()
+
+
+def check_for_update(frame):
+    """Once a day at most: a newer Classic Voices is offered once, with its
+    release page."""
+    from _classicvoices import update
+    found = update.newer(system.data_root())
+    if found:
+        wx.CallAfter(offer_update, frame, *found)
+
+
+def offer_update(frame, version, url):
+    if not frame:
+        return
+    if wx.MessageBox("Classic Voices %s is available. Open its download page?" % version, APP,
+                     wx.YES_NO | wx.ICON_INFORMATION, frame) == wx.YES:
+        webbrowser.open(url)

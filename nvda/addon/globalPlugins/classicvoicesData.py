@@ -29,7 +29,7 @@ except Exception:
 
 
 BUILDS = (("ios3", "iPhone OS 3.1.3"), ("ios4", "iOS 4.3.5"), ("ios5", "iOS 5.1.1"), ("ios6", "iOS 6.1.6"),
-          ("ios7", "iOS 7.1.2 (engine only)"), ("ios10", "iOS 10.3.4 (engine only)"))
+          ("ios70", "iOS 7.0.6"), ("ios7", "iOS 7.1.2 (engine only)"), ("ios10", "iOS 10.3.4 (engine only)"))
 
 # One job at a time, also while the dialog is closed (fast code builds on in the background).
 _work = threading.Lock()

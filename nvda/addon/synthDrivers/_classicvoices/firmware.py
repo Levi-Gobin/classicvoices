@@ -28,6 +28,7 @@ SUPPORTED = {
     "8L1": ("ios4", "iPhone2,1", "iOS 4.3.5"),
     "9B206": ("ios5", "iPhone2,1", "iOS 5.1.1"),
     "10B500": ("ios6", "iPhone2,1", "iOS 6.1.6"),
+    "11B651": ("ios70", "iPhone3,1", "iOS 7.0.6"),
     "11D257": ("ios7", "iPhone3,1", "iOS 7.1.2"),
     "14G61": ("ios10", "iPhone5,1", "iOS 10.3.4"),
 }
@@ -352,6 +353,12 @@ def _copy_build_dir(src, voices_root, build_key, progress):
         shutil.rmtree(dest)
     os.makedirs(dest)
     shutil.copyfile(voiced, os.path.join(dest, "voiced"))
+    if voiced == bundle:  # iOS 10: Apple's IPA -> L&H+ maps sit beside the engine
+        for name in os.listdir(os.path.dirname(bundle)):
+            if re.match(r"phonemeMap-[A-Za-z-]+\.json$", name):
+                os.makedirs(os.path.join(dest, "phonemeMaps"), exist_ok=True)
+                shutil.copyfile(os.path.join(os.path.dirname(bundle), name),
+                                os.path.join(dest, "phonemeMaps", name))
     if res and os.path.isdir(res):
         shutil.copytree(res, os.path.join(dest, "TTSResources"))
         if build_key == "ios7":  # engine only; its own voices are not wanted
@@ -475,6 +482,11 @@ def import_rootfs(tmp, rootfs_name, build, voices_root, progress):
                     raise ImportError_("TTSSpeechBundle not found in the firmware")
                 progress("Copying the iOS 10 engine", None)
                 _copy_entry(vol, entry, os.path.join(dest, "voiced"))
+                # Apple's IPA -> L&H+ maps, for phonemes (core/vxphonemes.c)
+                bundle = vol.entry("System/Library/TTSPlugins/TTSSpeechBundle.speechbundle")
+                for child in vol.children(bundle) if bundle else []:
+                    if re.match(r"phonemeMap-[A-Za-z-]+\.json$", child[0]):
+                        _copy_entry(vol, child, os.path.join(dest, "phonemeMaps", child[0]))
             else:
                 fw = vol.entry("System/Library/PrivateFrameworks/VoiceServices.framework")
                 if not fw:

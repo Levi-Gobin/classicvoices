@@ -48,7 +48,8 @@ func profileAppGroups(_ url: URL) -> [String]? {
 /// extension) plus enhanced voices downloaded into the App Group.
 enum VoiceCatalog {
     static let builds = [("ios6", "iOS 6", "6.1.6"), ("ios5", "iOS 5", "5.1.1"),
-                         ("ios4", "iOS 4", "4.3.5"), ("ios3", "iOS 3", "3.1.3")]
+                         ("ios4", "iOS 4", "4.3.5"), ("ios3", "iOS 3", "3.1.3"),
+                         ("ios70", "iOS 7", "7.0.6")]  // iOS 7.0.6's own engine ("ios7" is 7.1.2's)
 
     /// Mac OS X releases whose Nuance voices we carry: compacts are bundled,
     /// premium voices (and the extra compacts) are downloaded.
@@ -56,7 +57,7 @@ enum VoiceCatalog {
                           ("mac109", "Mavericks", "10.9")]
 
     struct Entry: Hashable, Codable {
-        let build: String      // "ios6" / "ios5" / "ios4" / "ios3", or a Mac era "mac107"
+        let build: String      // "ios6" / "ios5" / "ios4" / "ios3" / "ios70", or a Mac era "mac107"
         let buildName: String  // "iOS 6" / "Lion"
         let version: String
         let language: String   // e.g. "en-US"
@@ -78,9 +79,9 @@ enum VoiceCatalog {
         var key: String { macDir.map { "\(build)/\($0)" } ?? "\(tag)/\(language)" }  // engine voice key
         /// Voices whose pitch the engine can't change: the iOS 5 and 6
         /// enhanced voices and the Lion and Mountain Lion premium voices
-        /// (Vocalizer 5.2.3 unit selection). Mavericks premium voices run on
-        /// the iOS 10 engine, which changes their pitch itself, as every
-        /// compact voice does.
+        /// (Vocalizer 5.2.3 unit selection). The iOS 7 enhanced voices and
+        /// Mavericks premium voices (iOS 7 and 10 engines) change their pitch
+        /// themselves, as every compact voice does.
         var fixedPitch: Bool {
             if macinTalk { return false }
             if macDir != nil { return premium && (build == "mac107" || build == "mac108") }
@@ -494,15 +495,20 @@ struct SpeechJob {
     var pitch = 100    // percent of normal, engine accepts 50...200
     var volume = -1    // 0...100, or -1 to leave the voice's default
     var trailingPauseMs = 0  // silence after the speech (an SSML <break> at the end)
+    var markNames: [String] = []  // each <mark>'s name: ESC\mrk=N\ in the text is markNames[N]
 
     /// `rules` (Apple's text rules for the voice's language) are applied to
     /// the text itself, never to the prosody markup around it.
     /// `exactPitch`: pitch changes go to the engine as percents (ESC\pitchpct=N\),
     /// for MacinTalk, which goes far beyond Vocalizer's 0.56-1.58 range.
-    static func from(ssml: String, rules: PronunciationRules? = nil, exactPitch: Bool = false) -> SpeechJob {
+    /// `phonemes`: engine text for a <phoneme>'s IPA (and whether it comes
+    /// right after a word), or nil to say the element's own text.
+    static func from(ssml: String, rules: PronunciationRules? = nil, exactPitch: Bool = false,
+                     phonemes: ((String, Bool) -> String?)? = nil) -> SpeechJob {
         let parser = SSMLParser()
         parser.rules = rules
         parser.exactPitch = exactPitch
+        parser.phonemes = phonemes
         let xml = XMLParser(data: Data(ssml.utf8))
         xml.delegate = parser
         if xml.parse() {
@@ -522,43 +528,70 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
     var job = SpeechJob()
     var rules: PronunciationRules?
     var exactPitch = false
+    var phonemes: ((String, Bool) -> String?)?
     // prosody currently in effect while walking the tree
     private var current = (rate: 100, pitch: 100, volume: -1)
     private var stack: [(rate: Int, pitch: Int, volume: Int)] = []
     private var captured = false
+    private var spelling: [Bool] = []  // each open <say-as>: whether it spells
+    private var phoneme: (ipa: String, text: String)?  // inside <phoneme>
 
-    enum Token { case text(String), pause(Int), sentenceEnd, pitch(Int) }
+    enum Token {
+        case text(String), pause(Int), sentenceEnd, pitch(Int), rate(Int), volume(Int), spell(Bool), mark(Int)
+        case phoneme(ipa: String, text: String)
+    }
     private var emittedPitch: Int?
+    private var emitted = (rate: 100, volume: -1, spell: false)
     private var tokens: [Token] = []
 
-    /// Build engine text with Vocalizer escapes: ESC\pause=N\ and ESC\eos=1\.
+    private func heard(_ tok: Token) -> Bool {
+        switch tok {
+        case .text(let t): return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .phoneme: return true
+        default: return false
+        }
+    }
+
+    /// Build engine text with Vocalizer escapes: ESC\pause=N\, ESC\eos=1\,
+    /// ESC\pitch=N\, ESC\rate=N\, ESC\vol=N\, ESC\tn=spell\, ESC\mrk=N\.
     func assemble(into job: inout SpeechJob) {
-        guard let lastText = tokens.lastIndex(where: {
-            if case .text(let t) = $0 { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            return false
-        }) else { job.text = ""; return }
-        let firstText = tokens.firstIndex(where: {
-            if case .text(let t) = $0 { return !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            return false
-        })!
+        let lastText = tokens.lastIndex(where: heard)
+        let firstText = tokens.firstIndex(where: heard)
         var out = ""
-        for (i, tok) in tokens[...lastText].enumerated() {
-            if i < firstText, case .pitch = tok {} else if i < firstText { continue }  // leading pauses add latency
+        var spell = false
+        for (i, tok) in tokens.enumerated() {
+            if case .mark(let n) = tok { out += "\u{1b}\\mrk=\(n)\\"; continue }  // reached where it is written
+            guard let first = firstText, let last = lastText, i <= last else { continue }
+            if i < first {  // leading pauses add latency
+                switch tok {
+                case .pitch, .spell: break
+                default: continue
+                }
+            }
             switch tok {
             case .text(let t):
                 let clean = t.replacingOccurrences(of: "\u{1b}", with: " ")
-                out += rules?.apply(clean) ?? clean
+                out += spell ? clean : rules?.apply(clean) ?? clean  // spelled text is read as it is
+            case .phoneme(let ipa, let text):
+                let joined = out.last.map { !$0.isWhitespace && $0 != "\\" } ?? false
+                if let ph = phonemes?(ipa, joined) { out += ph } else { out += spell ? text : rules?.apply(text) ?? text }
             case .pause(let ms): out += " \u{1b}\\pause=\(ms)\\ "
             case .sentenceEnd: out += " \u{1b}\\eos=1\\ "
             case .pitch(let p):
                 out += exactPitch ? "\u{1b}\\pitchpct=\(p)\\" : "\u{1b}\\pitch=\(vxs_engine_pitch(Int32(min(p, 1000))))\\"
+            case .rate(let r): out += "\u{1b}\\rate=\(min(max(r, exactPitch ? 10 : 50), 400))\\"  // MacinTalk goes slower
+            case .volume(let v): out += "\u{1b}\\vol=\(min(max(v < 0 ? 80 : v, 0), 100))\\"
+            case .spell(let on):
+                if on != spell { out += on ? "\u{1b}\\tn=spell\\" : "\u{1b}\\tn=normal\\" }
+                spell = on
+            case .mark: break
             }
         }
         job.text = out.trimmingCharacters(in: .whitespacesAndNewlines)
-        job.trailingPauseMs = tokens[(lastText + 1)...].reduce(0) {
+        job.trailingPauseMs = lastText.map { tokens[($0 + 1)...].reduce(0) {
             if case .pause(let ms) = $1 { return $0 + ms }
             return $0
-        }
+        } } ?? 0
     }
 
     static func breakMs(_ attrs: [String: String]) -> Int {
@@ -591,6 +624,15 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
         case "break":
             let ms = Self.breakMs(attributes)
             if ms > 0 { tokens.append(.pause(ms)) }
+        case "mark":
+            job.markNames.append(attributes["name"] ?? "")
+            tokens.append(.mark(job.markNames.count - 1))
+        case "say-as":
+            let kind = (attributes["interpret-as"] ?? "").lowercased()
+            spelling.append(["characters", "spell-out", "verbatim", "letters"].contains(kind))
+        case "phoneme":
+            let alphabet = (attributes["alphabet"] ?? "ipa").lowercased()
+            if let ph = attributes["ph"], alphabet == "ipa" { phoneme = (ph, "") }
         default:
             break
         }
@@ -598,24 +640,38 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
 
     func parser(_ parser: XMLParser, didEndElement name: String, namespaceURI: String?, qualifiedName: String?) {
         if name == "prosody", let saved = stack.popLast() { current = saved }
+        if name == "say-as" { _ = spelling.popLast() }
+        if name == "phoneme", let ph = phoneme {
+            phoneme = nil
+            changes()
+            tokens.append(.phoneme(ipa: ph.ipa, text: ph.text))
+        }
         if name == "s" || name == "p" { tokens.append(.sentenceEnd) }
     }
 
-    func parser(_ parser: XMLParser, foundCharacters string: String) {
-        // One engine call per request, so the prosody around the first real
-        // text wins.
-        let hasText = !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if !captured && hasText {
-            // The utterance's baseline is the prosody around its first text,
-            // except pitch, which follows each span inline (VoiceOver lowers
-            // pitch for just a word or two).
+    /// Before something heard: the prosody that changed since the last thing heard.
+    private func changes() {
+        if !captured {
+            // The utterance's baseline is the prosody around its first text;
+            // later changes go inline (VoiceOver lowers pitch for just a word or two).
             (job.rate, job.volume) = (current.rate, current.volume)
+            emitted.rate = current.rate
+            emitted.volume = current.volume
             captured = true
         }
-        if hasText && emittedPitch != current.pitch {
+        if emittedPitch != current.pitch {
             if emittedPitch != nil || current.pitch != 100 { tokens.append(.pitch(current.pitch)) }
             emittedPitch = current.pitch
         }
+        if emitted.rate != current.rate { tokens.append(.rate(current.rate)); emitted.rate = current.rate }
+        if emitted.volume != current.volume { tokens.append(.volume(current.volume)); emitted.volume = current.volume }
+        let spell = spelling.last ?? false
+        if emitted.spell != spell { tokens.append(.spell(spell)); emitted.spell = spell }
+    }
+
+    func parser(_ parser: XMLParser, foundCharacters string: String) {
+        if phoneme != nil { phoneme!.text += string; return }  // said only if the IPA can't be
+        if !string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { changes() }
         if case .text(let prev)? = tokens.last {
             tokens[tokens.count - 1] = .text(prev + string)
         } else {
@@ -680,10 +736,14 @@ final class VoiceEngine {
     }
 
     /// `fallbackKey`: the compact voice that speaks the parts whose pitch
-    /// isn't normal (VoiceCatalog.compactCounterpart), or nil.
-    func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil, resetCommands: Bool = true,
-               twentyFourHour: Bool = true, modernRate: Bool = true) {
+    /// isn't normal (VoiceCatalog.compactCounterpart), or nil. `rulesPack`:
+    /// Apple's later pronunciation pack for the voice's language
+    /// (PronunciationRules.newerPack), whose dictionary the engine loads, or
+    /// nil for the voice as it shipped. Its rules come with `job`'s text.
+    func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil, rulesPack: String? = nil,
+               resetCommands: Bool = true, twentyFourHour: Bool = true, modernRate: Bool = true) {
         guard let stream else { return }
+        vxs_set_rules_pack(stream, rulesPack)
         vxs_set_mt_reset(stream, resetCommands ? 1 : 0)
         vxs_set_mt_24_hour(stream, twentyFourHour ? 1 : 0)
         vxs_set_mt_modern_rate(stream, modernRate ? 1 : 0)
@@ -695,7 +755,9 @@ final class VoiceEngine {
         if let stream { vxs_cancel(stream) }
     }
 
-    func preload(_ voiceKey: String) {
-        if let stream { vxs_preload(stream, voiceKey) }
+    func preload(_ voiceKey: String, rulesPack: String? = nil) {
+        guard let stream else { return }
+        vxs_set_rules_pack(stream, rulesPack)
+        vxs_preload(stream, voiceKey)
     }
 }

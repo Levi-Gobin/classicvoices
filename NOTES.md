@@ -528,7 +528,7 @@ experience"), never shipping Apple's code, as frictionless as possible.
   dlopen loader for `cvnative_<build>.so`, QoS no-op, force-included
   `vx_posix.h`) and `ports/host/` (voice catalogue after the NVDA add-on's
   voices.py with the iOS app's compact fallbacks, SSML parser after the
-  Swift SSMLParser with marks splitting segments, PCRE2 pronunciation rules
+  Swift SSMLParser (marks as inline bookmarks since 2026-10-28), PCRE2 pronunciation rules
   loaded by dlopen). MacinTalk is stubbed (nvda/src/mt_stub.c): Panthera
   Speech covers it on both platforms (its Android APK runs Tiger-Lion via
   Box64; its Linux host is a CLI, no speechd module).
@@ -1044,3 +1044,151 @@ re-implementation over a 2 GB guest space at `m->mem`.
     the next one came (for the index callback) and polled every 4 ms: 4-8 ms
     of every first sound. It now keeps back only the last 10 ms and polls
     every 1 ms.
+
+## Speech commands inline, bookmarks, phonemes (2026-10-28)
+
+- **What the engines take inside the text** (measured on every build):
+  `ESC\tn=spell\ ... ESC\tn=normal\` everywhere (about 250 ms of pause after
+  the letters); `ESC\rate=N\` and `ESC\vol=N\` on iOS 5 and later, on the
+  parameters' own scale (iOS 3 and 4 ignore them: speak_segmented splits
+  there and sets the parameters, joining with at most 100 ms, as it already
+  did for pitch); `ESC\toi=lhp\ ... ESC\toi=orth\` (L&H+ phonemes) everywhere
+  but iOS 4, which reads the symbols out. iOS 3 says nothing for a lone
+  consonant in L&H+, but is fine with it right after a word.
+- **Bookmarks.** `ESC\mrk=N\` gives VE_MARKINFO type 8 (src pos/len, dest pos,
+  the id at +28) and leaves the audio byte-identical. The engines drop some:
+  iOS 3 and 4 one at the very start of a call and the second of two in a
+  row, iOS 5-7 one at the very end. So vxstream places each bookmark by its
+  place in the text: the first engine marker (word, sentence or bookmark)
+  at or past it reaches it, one right after a reported bookmark or sentence
+  start (nothing but spaces and commands between) comes with it, and any
+  left at the end of a call come at its end. All are reported, in order,
+  before their audio (vxs_read_marks). MacinTalk can't say where it is
+  inside an utterance, so mte_speak splits there and reports between the
+  pieces (mte_set_mark_callback).
+- **One utterance everywhere.** The NVDA driver writes each IndexCommand as a
+  bookmark into one engine call (engine.py cuts the PCM it feeds at each
+  bookmark's frame; a bookmark where the fed audio already ends rides on one
+  sample of silence); SAPI speaks everything from the first text fragment to
+  the last as one call (bookmarks, silence, spelling, rate/pitch/volume
+  inline; leading and trailing silence still written directly, since the
+  stream trims silence around speech); cv_ssml (Linux, Android) and the
+  Swift SSMLParser put marks, prosody, `say-as` spelling and phonemes
+  inline. With indexes or marks the audio is byte-identical to the same text
+  without them (NVDA on the VM, SAPI via System.Speech, speechd module).
+- **MacinTalk** gets `[[rate]]`, `[[volm]]`, `[[char LTRL]]`/`[[char NORM]]`
+  for the same commands, drops L&H+ phonemes, and takes its own phonemes
+  (`[[inpt PHON]] ... [[inpt TEXT]]`).
+- **Phonemes** (core/vxphonemes.c, shared by every platform): IPA -> L&H+
+  checked against the voice's own symbol table (the STMC/STMF key/value
+  tables, chunk names XORed with 0xA9, in phonmap_*.dat or the voice's
+  clc_*_cfg*.dat; the one whose keys hold ' and #), nearest sound when the
+  language lacks one, Apple's iOS 10 phonemeMap-<locale>.json (imported, never
+  shipped) first for tones and as a fallback; IPA -> MacinTalk's American
+  phonemes for MacinTalk voices. SAPI `<pron>` arrives as phone ids of
+  SAPI's American English set (1 - 2 ! 3 & ... 10 aa ... 49 zh, checked with
+  SpPhoneConverter for 0x409). Android hands engines text, not SSML: verbatim
+  TtsSpans become `say-as characters`.
+
+## iOS 7–12 voices compared; pronunciation packs (2026-10-30)
+
+Root filesystems of 7.0 (11A465), 7.0.6 (11B651), 7.1 (11D169), 7.1.2
+(11D257) for iPhone3,1, 8.4.1 (12H321), 9.3.5 (13G36), 10.3.4 (14G61) for
+iPhone5,1 and 12.5.7 (16H81, APFS, mounted with hdiutil) for iPhone6,1,
+compared file by file (compact voices: TTSResources/<lang>/select_*_bet3f22.dat):
+
+- 7.0 = 7.0.6. 7.1 changed 16 compacts; 11 of them (Samantha, Daniel, Karen,
+  Thomas, Kyoko, Ting-Ting, Zuzana, Mariska, Luciana, Joana, Mei-Jia) are
+  already the recording iOS 12 has. Tarik, Alice, Xander, Zosia and Alva have
+  a 7.1-only version. 7.1.2 = 7.1 (voices and rules), and its voiced is the
+  engine we already use.
+- iOS 8: 19 more reach their final recording (Hebrew/Carmit new, Tarik ->
+  Maged); iOS 9 the last 6 (Paulina, Satu, Alice, Nora, Milena, Carmit).
+  10.3.4 = 12.5.7 byte for byte, rules included.
+- iOS 7.0 compacts are the Mavericks compacts (select and clc identical)
+  except Karen, Zosia and Mei-Jia (Mavericks Mei-Jia = 7.1's); iOS adds a
+  per-voice <voice>_userdct_<lang>.dat and user_rules.txt.
+- Enhanced (Samantha): format 5 (iOS 7) = iOS 6's synth + select with new clc;
+  format 6 (iOS 8) new select DB; format 7 (iOS 9) = iOS 10+ premium,
+  byte-identical. voice_format_version.plist: 7.x = 5, 8 = 6, 9-12 = "7,6".
+  The catalog keeps one posting per format (format 5 is 7.1's, 2014-03-10).
+
+Pronunciation packs ("Newer pronunciation rules"): VoiceServices.VoiceResources
+MobileAssets, one per language. iOS 10 preinstalls compatibility 3, iOS 12
+compatibility 8 (in /System/Library/PreinstalledAssets/*.cpio; the catalog's
+compat-8 assets are later content, 39 languages, 4.6 MB). voice_configs.plist
+loads, in order: vocalizer-user-dict.dat (application/edct-bin-dictionary, the
+same format as iOS 6's userdct), vocalizer-user-rules.txt, domain rules (SMS,
+music, address: Siri's, left out), vocalizer-override-rules.txt (both
+application/x-vocalizer-rettt+text, the user_rules.txt syntax with \e/+...\e/+
+phonetic spans).
+
+- `ve_ttsResourceLoad(hInst, mime, size, data, &hRes)` (vx_load_resource):
+  exported by iOS 5/6 (vauto_), 7 and 10 (ve_); iOS 3 at 0xBE438, iOS 4 at
+  0xCA85C (stripped; same frame as iOS 5's: sub sp,#0xb0, data at [sp+0xc4]).
+  All five engines take every file; the engine keeps using the data.
+- The old phonetic switch `ESC/+ ... ESC/+` works on iOS 3-6, identical to
+  `ESC\toi=lhp\`; iOS 4 ignores toi=lhp but takes ESC/+, so vx_phoneme_text
+  now gives iOS 4 phonemes that way.
+- Compiling the rule sets used to fill the 40 MB guest heap (fr-FR 44 MB,
+  ja-JP > 168 MB high water) though only 3-5 MB stays live: realloc always
+  moved, and small exact-size free lists never served other sizes. Now
+  realloc stays put when it fits or grows the last block in place, and small
+  requests take (and split) large free blocks: 0.7-5.6 MB for every language;
+  40 corpus sentences byte-identical on iOS 3/4/5/6/7/10, fbstress clean.
+- Loaded into the engine, the rule sets cost 20-137 ms of first-audio latency
+  on every utterance (fast code, Mac: en-US 12 -> 33 ms, ja-JP 15 -> 137 ms;
+  the rettt matcher isn't in the fast-code profiles) and 0.3-1.2 s per engine
+  open; the dictionary alone costs nothing. So only the dictionary goes into
+  the engine (vxs_set_rules_pack) and the rule files are applied to the text
+  with the voice's own rules (cv_rules_for_voice_pack, PronunciationRules.swift,
+  Rules.java), each compiled only when needed, behind a pre-check
+  (core/vxrules.c: the literal every match must contain, found in the text
+  with a two-byte index). No rule was skipped that matches, over all 211 rule
+  files (39 packs x 2, every iOS release's, every Mac voice's) against PCRE2;
+  15-66 of thousands run per phrase. Cost: 0.01-0.05 ms per phrase in C
+  (worst 0.33), 0.035-0.086 Swift, ~0.05-0.065 Java; loading 3-90 ms once.
+- Order: the engine runs the rule set loaded last first. iOS 12 loaded
+  user-dict, user-rules, (domain rules), override-rules, so outside the
+  engine the overrides go before the user rules ("Cinco de Mayo" proves it);
+  then 46 of 46 test lines are byte-identical to loading them into the engine.
+  The voice's own user_rules come first (VoiceServices ran them before the
+  engine saw the text).
+- Default rules are now each voice's own: an iOS voice its release's
+  user_rules.txt only (no more iOS 6's for everyone), a Mac voice the
+  user_rules.dat in its folder (113 of 154 have one), MacinTalk none
+  (cv_rules_for_voice, PronunciationRules.swift, Rules.java).
+
+## iOS 7 voices (iOS 7.0.6, 11B651) on their own engine (2026-10-31)
+
+- Keys: `ios70/<lang>` (compact, bundled or imported) and `ios70e/<lang>`
+  (enhanced, downloaded into `<downloads>/ios70/<lang>`), shown as "iOS 7"
+  (7.0.6). `ios7` stays iOS 7.1.2, only the engine for the Mavericks compacts.
+- 7.0.6's voiced is VoiceServices-225.1 (7.1.2's is 228, which added the
+  Chinese DAG segmenter, maxent homographs, FE_PROSODY_WORD ...), so it is a
+  build of its own in kBuilds: stubs 0x259978, heap/critsec/stream interfaces
+  0x25B008/0x25B018/0x25B028 (found by the same function-pointer deltas as
+  7.1.2's 0x281018 table), API by symbol (`_ve_tts*`). With the iOS 7.0
+  voices both engines gave byte-identical audio for 20 corpus lines each in
+  en-US, zh-CN, ja-JP and de-DE, but the voices run on their own release's
+  engine anyway.
+- Pitch: percent of normal like 7.1.2 (50 -> 90 Hz, 100 -> 181, 200 -> 361
+  for Samantha; 25 is ignored), so vxstream's `percent` path covers `ios70`.
+- Enhanced voices: format 5 (`voice_format_version.plist` in 7.0.6 says 5),
+  36 languages on appldnld.apple.com/iOS7/031-3752.20140310.35GMf (7.1's
+  posting; the catalog keeps one per format). They speak on the 7.0.6 engine
+  and change pitch themselves (Samantha 178 -> 350 Hz at 200), unlike the
+  iOS 5/6 enhanced voices, so they get no compact fallback (cv_catalog.c,
+  VoiceCatalog.fixedPitch).
+- Firmware: iPhone3,1_7.0.6_11B651_Restore.ipsw on secure-appldnld
+  (1,201,645,522 bytes); the root filesystem is encrypted and its key is on
+  The Apple Wiki. remote.import_from_apple("ios70") streams 1111 MB and
+  imports in ~2.5 min (64 MB kept), byte-identical to the mounted IPSW's files.
+- Fast code: tools/profiles/ios70.txt (corpus over en-US, en-GB, ja-JP and
+  all 36 enhanced voices), build/gen70, `vx_native_ios70`. With only enhanced
+  Samantha profiled, every other enhanced voice ran 19 M instructions per
+  sentence in the interpreter (Tessa: 96-106 ms to first audio on an iPhone 17
+  Pro Max against iOS 6 Tessa's 62-72); their unit-selection data takes paths
+  Samantha's doesn't. Profiling each enhanced voice (13,254 -> 16,038 block
+  starts) brought Tessa to 0.0 M interpreted, output bit-identical. The iOS
+  5/6 enhanced voices were checked the same way and are covered.

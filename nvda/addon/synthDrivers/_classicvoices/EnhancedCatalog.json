@@ -574,5 +574,293 @@
   "size": 109615374,
   "unarchivedSize": 122776206,
   "sha1": "cb0ee02f0f5d268332e884a0f4b043eac9a8946d"
+ },
+ {
+  "build": "ios70",
+  "language": "ar-SA",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/f6b3c76676e2fbf2411861af4a67cc141537c5fe.zip",
+  "size": 29159792,
+  "unarchivedSize": 33974462,
+  "sha1": "3180d942a3cf2f8f1b2f8f7f83515ff8e8e70d56"
+ },
+ {
+  "build": "ios70",
+  "language": "cs-CZ",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e832cf58183709c59e53fb46e68ace059b18c0fe.zip",
+  "size": 102446626,
+  "unarchivedSize": 114072805,
+  "sha1": "cc4f31c1bfde65a978360ff74d4881cfa1bbd80b"
+ },
+ {
+  "build": "ios70",
+  "language": "da-DK",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/6209a5504f9cdaf801171a54b9c9e96054e7cf8a.zip",
+  "size": 37424759,
+  "unarchivedSize": 42950615,
+  "sha1": "3b2884991bbae160cb08c85bf57bf2f73935f195"
+ },
+ {
+  "build": "ios70",
+  "language": "de-DE",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/1e75b71b64f72f62beb3ba8932adb4206b94fc9b.zip",
+  "size": 166702875,
+  "unarchivedSize": 189095605,
+  "sha1": "5d672fbdc85010c175c97d95e15ddb21e8fbc1fc"
+ },
+ {
+  "build": "ios70",
+  "language": "el-GR",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/cda8d1b462cd430193c51176220d712f668274d7.zip",
+  "size": 168037308,
+  "unarchivedSize": 189732425,
+  "sha1": "76f15acec41911e9a91b0f0b3bef53d767bd2145"
+ },
+ {
+  "build": "ios70",
+  "language": "en-AU",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/7f2502878f5feb6dacba7325218c75db5b1eda45.zip",
+  "size": 112334655,
+  "unarchivedSize": 125871054,
+  "sha1": "1932f6a0a09fe875f03ab272d8b7ba0f33ab8fac"
+ },
+ {
+  "build": "ios70",
+  "language": "en-GB",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/3bdbdf4bb1ed6bed763df19740628bc87efc01af.zip",
+  "size": 110579954,
+  "unarchivedSize": 122805656,
+  "sha1": "8b53205d911a7f8a04765e8660611b51a6c54cbc"
+ },
+ {
+  "build": "ios70",
+  "language": "en-IE",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/0b438b507cd9de7f563afc201c1e4e35b6bba416.zip",
+  "size": 117269991,
+  "unarchivedSize": 131275733,
+  "sha1": "899e7891267aa95b3245013c481845878c271868"
+ },
+ {
+  "build": "ios70",
+  "language": "en-US",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e76e4f07eb38fe8dadb9fc4a617e9763d1db2604.zip",
+  "size": 133432291,
+  "unarchivedSize": 151906439,
+  "sha1": "24f74743f88f09f497fffef952f0b9802ef1fcdc"
+ },
+ {
+  "build": "ios70",
+  "language": "en-ZA",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/197710e127437c28b8e9c12a72750d84c97609e9.zip",
+  "size": 114064129,
+  "unarchivedSize": 126814897,
+  "sha1": "1ad9ee8b075846be80acb963510c5de1a14a320d"
+ },
+ {
+  "build": "ios70",
+  "language": "es-ES",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/2beb1163bbc1ac3c5d5d2c4de057dfdc115882c0.zip",
+  "size": 113755433,
+  "unarchivedSize": 128387479,
+  "sha1": "06b085ca1bc5d9bad71665bc10921e61385045ae"
+ },
+ {
+  "build": "ios70",
+  "language": "es-MX",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e720c247a431d764dfef30afb6d3042fa7766293.zip",
+  "size": 108359580,
+  "unarchivedSize": 122498892,
+  "sha1": "c8a734faac612c2a41667da422ce47d822fa3c5b"
+ },
+ {
+  "build": "ios70",
+  "language": "fi-FI",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/73439cb292e7ecd447f7b517c3f99f90ce73444a.zip",
+  "size": 41933142,
+  "unarchivedSize": 47738934,
+  "sha1": "114e9c645718c99695b87ab017aba53c872a480d"
+ },
+ {
+  "build": "ios70",
+  "language": "fr-CA",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/833b71f2e343e924c0a5ae17d17894b7a62a7408.zip",
+  "size": 98274883,
+  "unarchivedSize": 106578902,
+  "sha1": "a8cc40a84f94e0dd9d1582020f20ed1d859a04d4"
+ },
+ {
+  "build": "ios70",
+  "language": "fr-FR",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/762ee30e15e7122b8bf078bce9c49d4d36f65765.zip",
+  "size": 116829207,
+  "unarchivedSize": 132901832,
+  "sha1": "60cbff723713481eda3e429a079e83671261e8bf"
+ },
+ {
+  "build": "ios70",
+  "language": "hi-IN",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/4d979f9e8608ac8d689584acbaba1c10a00dff99.zip",
+  "size": 98796433,
+  "unarchivedSize": 112523614,
+  "sha1": "f7a80ca10d3635f1b5b11dc8654d935eaca606b3"
+ },
+ {
+  "build": "ios70",
+  "language": "hu-HU",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/93c4fe9b5503aa40289cccb2c1a6aac49b0b137d.zip",
+  "size": 39983677,
+  "unarchivedSize": 45184507,
+  "sha1": "55a24a435e62b6e90d82e9ca8d1ff70cc064ce8a"
+ },
+ {
+  "build": "ios70",
+  "language": "id-ID",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e7d43b099663925b46f65e0d5d18ecd3c6a095b2.zip",
+  "size": 116861774,
+  "unarchivedSize": 130509459,
+  "sha1": "5200009c5bdf18f893f7725e04fe6b2a9a0f99fa"
+ },
+ {
+  "build": "ios70",
+  "language": "it-IT",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/cb46fbb92b82db6adac4e075221da26c3c76c151.zip",
+  "size": 92294455,
+  "unarchivedSize": 105402517,
+  "sha1": "998f96429810f83e9cbf5c3b1176e553bcd0369c"
+ },
+ {
+  "build": "ios70",
+  "language": "ja-JP",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/7dbda5ee649ec8ea88bc5a8bfe863b9de3b0f392.zip",
+  "size": 114880017,
+  "unarchivedSize": 129860405,
+  "sha1": "ae820e729f7853e0051393ff46040aaf891967bd"
+ },
+ {
+  "build": "ios70",
+  "language": "ko-KR",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/f6cb266e22e37dca362941c00fc1cf42edfa0ea0.zip",
+  "size": 50440358,
+  "unarchivedSize": 58160430,
+  "sha1": "2503ad7385cc65ef168302fbf5098cdd0bb91ad2"
+ },
+ {
+  "build": "ios70",
+  "language": "nl-BE",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/0e9b0db217bdbc20a19a8ea42745256b715c0265.zip",
+  "size": 47010698,
+  "unarchivedSize": 52604001,
+  "sha1": "25837618f8660df7ba338f0b42ba15a4b7948932"
+ },
+ {
+  "build": "ios70",
+  "language": "nl-NL",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/58487295046c83dd05f1369d63e7222b931b3b49.zip",
+  "size": 136540289,
+  "unarchivedSize": 158345321,
+  "sha1": "377650d95936ba66830759db055dc1291185acfe"
+ },
+ {
+  "build": "ios70",
+  "language": "no-NO",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/775db4bfaadf46793eda3196c84bea66b148ff8f.zip",
+  "size": 35183321,
+  "unarchivedSize": 38420785,
+  "sha1": "564f9f5cb93db0743623c0a5cc6d610d8115aaec"
+ },
+ {
+  "build": "ios70",
+  "language": "pl-PL",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/f91c9814b7331582f264f0c851c7bed9b80b59a1.zip",
+  "size": 32891600,
+  "unarchivedSize": 37429954,
+  "sha1": "8f0037c9eaade15e23b35092a0df5d118cd2bca9"
+ },
+ {
+  "build": "ios70",
+  "language": "pt-BR",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/3dce5b7a7dc70cdd11de8367e3cd027ad64feacd.zip",
+  "size": 34972468,
+  "unarchivedSize": 39539479,
+  "sha1": "de8875ad7eb11a349597f4d7b65a236be964312c"
+ },
+ {
+  "build": "ios70",
+  "language": "pt-PT",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e8474d1e214ff984ced6e8a51eb7a0d2d407410e.zip",
+  "size": 124389933,
+  "unarchivedSize": 142310383,
+  "sha1": "cd02de82e54b72b0ca137478b5332d3e4564a464"
+ },
+ {
+  "build": "ios70",
+  "language": "ro-RO",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/401c8369897cb565ff05039586d2e15e9ee6836b.zip",
+  "size": 33547296,
+  "unarchivedSize": 38209521,
+  "sha1": "bd43c9234f1e7cfcf5f81e15ae906e6d21dfce22"
+ },
+ {
+  "build": "ios70",
+  "language": "ru-RU",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/dce5f8b20b75bccb3f7d787b4b10f4387b7108d9.zip",
+  "size": 131121576,
+  "unarchivedSize": 143669344,
+  "sha1": "73519dcb225030892678890d2ed0de6fb8e1021c"
+ },
+ {
+  "build": "ios70",
+  "language": "sk-SK",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/6ea0e9d8d748606464f1c0705a056501c6facf47.zip",
+  "size": 84453180,
+  "unarchivedSize": 93944580,
+  "sha1": "47cb454d2bb49c25bfcfe7f6cc4b728be4d155d1"
+ },
+ {
+  "build": "ios70",
+  "language": "sv-SE",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/79c5e11fbfc4c52679ebec5c7a9c2b2c1a631d9d.zip",
+  "size": 136793556,
+  "unarchivedSize": 155718151,
+  "sha1": "68bdf1f7e98e57be5343e66f46bc6bdbb8fdade5"
+ },
+ {
+  "build": "ios70",
+  "language": "th-TH",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/20c7856fd2d69b1517d4e82b703df2db1da328d7.zip",
+  "size": 55233920,
+  "unarchivedSize": 62092497,
+  "sha1": "97d34db1bcd1cc45b356e77980803375bc421f9b"
+ },
+ {
+  "build": "ios70",
+  "language": "tr-TR",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/d5f12354aa9abd71d46d607bb8b4e54886389880.zip",
+  "size": 116241173,
+  "unarchivedSize": 126704335,
+  "sha1": "2d1bf0226f38acd87f463940e26162c733276033"
+ },
+ {
+  "build": "ios70",
+  "language": "zh-CN",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/5f197f8425f277d0fac873f6c5f45b05585e7aa3.zip",
+  "size": 160301363,
+  "unarchivedSize": 186116874,
+  "sha1": "337b4f02138067a625935bbae4e4abbba7b976c4"
+ },
+ {
+  "build": "ios70",
+  "language": "zh-HK",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/e4f8286a2371bf714a82fc6aa28244d07e39572f.zip",
+  "size": 97368254,
+  "unarchivedSize": 107815606,
+  "sha1": "e84d2d657d1579d4d98f84356a9a266900fdb00c"
+ },
+ {
+  "build": "ios70",
+  "language": "zh-TW",
+  "url": "http://appldnld.apple.com/iOS7/031-3752.20140310.35GMf/com_apple_MobileAsset_VoiceServicesVocalizerVoice/efeb5c289185814d6a46fbd944b8be0ad4453fb9.zip",
+  "size": 178198292,
+  "unarchivedSize": 202031380,
+  "sha1": "1f549f08cd3454b666de41440e106b67b6ba80dc"
  }
 ]

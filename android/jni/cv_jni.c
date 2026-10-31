@@ -14,6 +14,7 @@
 #include "cv_catalog.h"
 #include "cv_ssml.h"
 #include "vxstream.h"
+#include "vxrules.h"
 
 void cv_set_native_dir(const char *dir);
 long long cv_native_status(const char *build);
@@ -30,6 +31,7 @@ static CvUtterance g_utt;
 static size_t g_seg;          // next segment to start
 static int g_seg_running;     // a segment is being drained
 static char g_key[96], g_fallback[96];
+static char g_pack[1024];     // Apple's later pronunciation pack for the next utterance, or ""
 static atomic_int g_cancel;
 
 static char *dup_utf(JNIEnv *env, jstring s) {
@@ -125,6 +127,51 @@ JNIEXPORT jobjectArray JNICALL Java_com_levigobin_classicvoices_Native_voices(JN
     return out;
 }
 
+// The pronunciation pack folder (Pronunciation/<language>) for the utterances
+// begun from now on, or null for none.
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setRulesPack(JNIEnv *env, jclass cls, jstring dir) {
+    (void)cls;
+    char *d = dup_utf(env, dir);
+    pthread_mutex_lock(&g_mu);
+    snprintf(g_pack, sizeof g_pack, "%s", d ? d : "");
+    pthread_mutex_unlock(&g_mu);
+    free(d);
+}
+
+// The pronunciation rules' pre-check (core/vxrules.h), for Rules.java.
+JNIEXPORT jlong JNICALL Java_com_levigobin_classicvoices_Native_newRuleIndex(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    return (jlong)(intptr_t)vx_rule_index_new();
+}
+
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_ruleIndexAdd(JNIEnv *env, jclass cls, jlong index,
+                                                                            jint rule, jbyteArray pattern, jboolean icase) {
+    (void)cls;
+    if (!index || !pattern || rule < 0) return;
+    char *p = bytes_utf(env, pattern);
+    vx_rule_index_add((VxRuleIndex *)(intptr_t)index, (uint32_t)rule, p, icase ? 1 : 0);
+    free(p);
+}
+
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_ruleIndexMark(JNIEnv *env, jclass cls, jlong index,
+                                                                             jbyteArray text, jbyteArray marks) {
+    (void)cls;
+    if (!index || !text || !marks) return;
+    char *t = bytes_utf(env, text);
+    jsize n = (*env)->GetArrayLength(env, marks);
+    jbyte *m = (*env)->GetByteArrayElements(env, marks, NULL);
+    if (m) {
+        vx_rule_index_mark((const VxRuleIndex *)(intptr_t)index, t, (uint8_t *)m, (size_t)n);
+        (*env)->ReleaseByteArrayElements(env, marks, m, 0);
+    }
+    free(t);
+}
+
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_freeRuleIndex(JNIEnv *env, jclass cls, jlong index) {
+    (void)env; (void)cls;
+    if (index) vx_rule_index_free((VxRuleIndex *)(intptr_t)index);
+}
+
 // Start an utterance. text is UTF-8; ssml != 0 parses markup.
 JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env, jclass cls, jstring key, jstring fallback,
                                                                      jbyteArray text, jboolean ssml, jint rate,
@@ -139,6 +186,7 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
         free(k); free(f); free(t);
         return -1;
     }
+    vxs_set_rules_pack(g_stream, g_pack);  // for each segment's vxs_start
     cv_free_utterance(&g_utt);
     if (ssml) cv_parse_ssml(t, rate, pitch, volume, &g_utt);
     else cv_parse_plain(t, rate, pitch, volume, &g_utt);
@@ -200,9 +248,12 @@ JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_cancel(JNIEnv *en
 JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_preload(JNIEnv *env, jclass cls, jstring key) {
     (void)cls;
     char *k = dup_utf(env, key);
-    pthread_rwlock_rdlock(&g_life);
-    if (g_stream && k) vxs_preload(g_stream, k);
-    pthread_rwlock_unlock(&g_life);
+    pthread_mutex_lock(&g_mu);
+    if (g_stream && k) {
+        vxs_set_rules_pack(g_stream, g_pack);
+        vxs_preload(g_stream, k);
+    }
+    pthread_mutex_unlock(&g_mu);
     free(k);
 }
 

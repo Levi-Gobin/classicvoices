@@ -24,7 +24,7 @@ mkdir -p "$OUT/apk" "$OUT/classes" "$OUT/gen" "$OUT/obj"
 
 # ---- native library, per ABI
 CFLAGS="-O2 -std=gnu11 -ffp-contract=off -fPIC -w -fvisibility=hidden -Icore -Iports/host -Iports/posix/compat -DVX_DYNAMIC_NATIVE"
-CORE="core/thumb.c core/vxengine.c core/vxstream.c"
+CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c"
 HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c android/jni/cv_jni.c"
 # the .xz decoder, for the Zig compiler the phone downloads to build fast code
 XZ="third_party/xz-embedded/xz_crc32.c third_party/xz-embedded/xz_crc64.c third_party/xz-embedded/xz_dec_lzma2.c third_party/xz-embedded/xz_dec_stream.c third_party/xz-embedded/xz_dec_bcj.c android/jni/cv_untar.c"
@@ -74,7 +74,7 @@ cp nvda/addon/synthDrivers/_classicvoices/EnhancedCatalog.json nvda/addon/synthD
 # what the phone needs to build fast code itself (FastCode.java): the recompiler's
 # profiles (addresses only) and the instruction semantics the generated C includes
 cp tools/profiles/ios3.txt tools/profiles/ios4.txt tools/profiles/ios5.txt tools/profiles/ios6.txt \
-    tools/profiles/ios7.txt tools/profiles/ios10.txt "$OUT/assets/fastcode/profiles/"
+    tools/profiles/ios7.txt tools/profiles/ios70.txt tools/profiles/ios10.txt "$OUT/assets/fastcode/profiles/"
 cp core/thumb.h core/thumb_ops.h core/recomp_rt.h nvda/src/native_glue.c "$OUT/assets/fastcode/"
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
 # DEBUG=1: a debuggable build, so adb can reach the app's files (run-as) while developing

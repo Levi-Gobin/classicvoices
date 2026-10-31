@@ -5,8 +5,13 @@ import Foundation
 /// `settings.json` in the extension's store, written by the app over the
 /// store's channel and read by the extension on each request.
 struct SpeechSettings: Codable, Equatable {
-    /// Apple's text rules (PronunciationRules), as the original iOS applied them.
+    /// Apple's text rules (PronunciationRules): the ones the voice's own iOS
+    /// release or Mac OS X voice had.
     var rules = true
+    /// Apple's later pronunciation dictionary and rules (a VoiceResources
+    /// pack per language, see PronunciationPacks), loaded into the engine on
+    /// top of the voice's own. Off: each voice speaks as its release did.
+    var newerRules = false
     /// Pitch changes speak with the voice's compact version, as the original
     /// VoiceOver did: enhanced and premium voices can't change pitch themselves.
     var pitchFallback = true
@@ -20,12 +25,16 @@ struct SpeechSettings: Codable, Equatable {
     /// at, instead of a percent of the voice's own default rate.
     var modernRate = true
     var rulesOverride: [String: Bool] = [:]
+    var newerRulesOverride: [String: Bool] = [:]
     var pitchFallbackOverride: [String: Bool] = [:]
     var resetCommandsOverride: [String: Bool] = [:]
 
     static let file = "settings.json"
 
     func rulesEnabled(_ voiceID: String) -> Bool { rulesOverride[voiceID] ?? rules }
+    func newerRulesEnabled(_ voiceID: String) -> Bool { newerRulesOverride[voiceID] ?? newerRules }
+    /// Whether any voice has the newer rules on, so their packs are needed.
+    var newerRulesWanted: Bool { newerRules || newerRulesOverride.values.contains(true) }
     func pitchFallbackEnabled(_ voiceID: String) -> Bool { pitchFallbackOverride[voiceID] ?? pitchFallback }
     func resetCommandsEnabled(_ voiceID: String) -> Bool { resetCommandsOverride[voiceID] ?? resetCommands }
 
@@ -34,11 +43,13 @@ struct SpeechSettings: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         rules = try c.decodeIfPresent(Bool.self, forKey: .rules) ?? rules
+        newerRules = try c.decodeIfPresent(Bool.self, forKey: .newerRules) ?? newerRules
         pitchFallback = try c.decodeIfPresent(Bool.self, forKey: .pitchFallback) ?? pitchFallback
         resetCommands = try c.decodeIfPresent(Bool.self, forKey: .resetCommands) ?? resetCommands
         twentyFourHour = try c.decodeIfPresent(Bool.self, forKey: .twentyFourHour) ?? twentyFourHour
         modernRate = try c.decodeIfPresent(Bool.self, forKey: .modernRate) ?? modernRate
         rulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .rulesOverride) ?? [:]
+        newerRulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .newerRulesOverride) ?? [:]
         pitchFallbackOverride = try c.decodeIfPresent([String: Bool].self, forKey: .pitchFallbackOverride) ?? [:]
         resetCommandsOverride = try c.decodeIfPresent([String: Bool].self, forKey: .resetCommandsOverride) ?? [:]
     }

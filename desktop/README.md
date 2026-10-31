@@ -26,8 +26,9 @@ What the phone and Mac apps get built in, this app gets for you:
   uses clang if you have it, else Zig too. A firmware takes one to three
   minutes. If a build fails or you stop it, it starts again only from this
   page.
-- **Settings**: Apple's pronunciation rules and the compact voice for pitch
-  changes, as on iOS. On Windows, re-registering the Windows voices; on
+- **Settings**: Apple's pronunciation rules (each voice's own release's), the
+  newer pronunciation rules (Apple's later dictionary and rules, downloaded
+  when turned on) and the compact voice for pitch changes, as on iOS. On Windows, re-registering the Windows voices; on
   Linux, the Speech Dispatcher module's status.
 
 ## Windows

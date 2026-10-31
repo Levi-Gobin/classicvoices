@@ -19,6 +19,8 @@ compiler, and installs the Speech Dispatcher module.
   classicvoices-data android-pack [--ndk DIR] [--abi arm64-v8a,armeabi-v7a] [-o pack.zip] [ios6 ...]
                                                the same for an Android phone, as a data pack
                                                for the app's "Import a data pack" (needs the NDK)
+  classicvoices-data pronunciation [on|off]    Apple's newer pronunciation rules: download
+                                               them (about 5 MB) and turn them on, or off
   classicvoices-data install-module            install sd_classicvoices for Speech Dispatcher
 
 Data lives in $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
@@ -46,7 +48,7 @@ for cand in (os.path.join(HERE, "..", "lib", "classicvoices"), os.path.join(HERE
 else:
     sys.exit("classicvoices-data: can't find its _classicvoices library next to it")
 
-from _classicvoices import download, firmware, remote, voices  # noqa: E402
+from _classicvoices import download, firmware, pronunciation, remote, voices  # noqa: E402
 
 
 FIRMWARE, PURPOSE = remote.FIRMWARE, remote.PURPOSE
@@ -121,7 +123,7 @@ def cmd_firmware(_args):
 
 def cmd_import(args):
     if not args:
-        sys.exit("import what? an .ipsw file, a build (ios3 ios4 ios5 ios6 ios7 ios10) or all")
+        sys.exit("import what? an .ipsw file, a build (ios3 ios4 ios5 ios6 ios70 ios7 ios10) or all")
     if args == ["all"]:
         args = list(FIRMWARE)
     os.makedirs(VOICES, exist_ok=True)
@@ -394,9 +396,39 @@ def cmd_install_module(_args):
           "In Orca: Preferences, Voice, Speech synthesizer: Classic Voices.")
 
 
+def _set_setting(name, value):
+    """<data>/settings.conf, as the Classic Voices app writes it (the module reads it)."""
+    path = os.path.join(data_root(), "settings.conf")
+    s = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 2 and not line.startswith("#"):
+                    s[parts[0]] = parts[1]
+    except OSError:
+        pass
+    s[name] = "1" if value else "0"
+    os.makedirs(data_root(), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# Classic Voices settings (the app writes this; the speech module reads it)\n")
+        for k, v in sorted(s.items()):
+            f.write("%s %s\n" % (k, v))
+
+
+def cmd_pronunciation(args):
+    on = not args or args[0] != "off"
+    if on and not pronunciation.have_packs(data_root()):
+        p = Progress()
+        pronunciation.download_all(data_root(), p)
+        p.done()
+    _set_setting("NewerPronunciation", on)
+    print("Newer pronunciation rules are %s." % ("on" if on else "off"))
+
+
 COMMANDS = {"status": cmd_status, "firmware": cmd_firmware, "import": cmd_import, "voices": cmd_voices,
             "download": cmd_download, "native": cmd_native, "android-pack": cmd_android_pack,
-            "install-module": cmd_install_module}
+            "install-module": cmd_install_module, "pronunciation": cmd_pronunciation}
 
 
 def main():

@@ -26,4 +26,5 @@ recomp ios4 $E/ios4/VoiceServices.framework/Support/voiced build/gen4 stripped
 recomp ios5 $E/ios5/VoiceServices.framework/Support/voiced build/gen5 stripped
 recomp ios6 $E/ios6/VoiceServices.framework/Support/voiced build/gen
 recomp ios7 $E/ios7/VoiceServices.framework/Support/voiced build/gen7
+recomp ios70 $E/ios70/VoiceServices.framework/Support/voiced build/gen70
 recomp ios10 $E/ios10/TTSSpeechBundle.speechbundle/TTSSpeechBundle build/gen10

@@ -27,6 +27,7 @@
 
 #include "cv_catalog.h"
 #include "cv_rules.h"
+#include "vxphonemes.h"
 #include "vxstream.h"
 
 void cv_set_native_dir(const char *utf8);
@@ -130,15 +131,16 @@ static void data_dir(WCHAR *out, DWORD cap) {
 
 // ---------------------------------------------------------------- the engine object
 
-typedef struct {
+typedef struct Engine Engine;
+struct Engine {
     ISpTTSEngine eng;          // first: the object's identity
     ISpObjectWithToken tok;
     LONG refs;
     ISpObjectToken *token;
     VxStream *vxs;
     char key[96], fallback[96], build[16], language[24];
-    char voices[MAX_PATH * 3 + 16];
-} Engine;
+    char root[MAX_PATH * 3 + 16], voices[MAX_PATH * 3 + 16], downloads[MAX_PATH * 3 + 16];
+};
 
 static Engine *from_tok(ISpObjectWithToken *t) { return (Engine *)((char *)t - offsetof(Engine, tok)); }
 
@@ -209,17 +211,93 @@ static int text_put(Text *t, char c, ULONG src) {
     return 1;
 }
 
-static void text_fragment(Text *t, const SPVTEXTFRAG *f) {
-    if (t->len && f->ulTextSrcOffset != t->end) text_put(t, ' ', f->ulTextSrcOffset);  // text that markup separated
+static void text_cmd(Text *t, const char *cmd, ULONG src) {
+    for (; *cmd; cmd++) text_put(t, *cmd, src);
+}
+
+static void apply_rules(Engine *e, Text *t);
+
+// One fragment's text: Apple's rules applied to what is spoken as words, a
+// spelled fragment between ESC\tn=spell\ and ESC\tn=normal\.
+static void text_fragment(Engine *e, Text *t, const SPVTEXTFRAG *f) {
+    Text piece = {0};
     for (ULONG i = 0; i < f->ulTextLen;) {
         int n = (f->pTextStart[i] >= 0xD800 && f->pTextStart[i] < 0xDC00 && i + 1 < f->ulTextLen) ? 2 : 1;
         char b[8];
         int len = WideCharToMultiByte(CP_UTF8, 0, f->pTextStart + i, n, b, sizeof b, NULL, NULL);
-        for (int j = 0; j < len; j++) text_put(t, b[j], f->ulTextSrcOffset + i);
+        for (int j = 0; j < len; j++) text_put(&piece, b[j] == 0x1b ? ' ' : b[j], f->ulTextSrcOffset + i);
         i += (ULONG)n;
-        if (f->State.eAction == SPVA_SpellOut && i < f->ulTextLen) text_put(t, ' ', f->ulTextSrcOffset + i);  // letter by letter
     }
+    int spell = f->State.eAction == SPVA_SpellOut;
+    if (piece.len && !spell) apply_rules(e, &piece);
+    if (t->len && f->ulTextSrcOffset != t->end) text_put(t, ' ', f->ulTextSrcOffset);  // text that markup separated
+    if (spell) text_cmd(t, "\x1b\\tn=spell\\", f->ulTextSrcOffset);
+    for (size_t i = 0; i < piece.len; i++) text_put(t, piece.s[i], piece.src[i]);
+    if (spell) text_cmd(t, "\x1b\\tn=normal\\", f->ulTextSrcOffset + f->ulTextLen);
     t->end = f->ulTextSrcOffset + f->ulTextLen;
+    free(piece.s);
+    free(piece.src);
+}
+
+// <pron sym="..."> (SPVA_Pronounce): SAPI's American English phone set (the
+// one programs use for English, NVDA's SAPI5 driver among them; phone ids as
+// SpPhoneConverter gives them for language 0x409) -> IPA, with each stress
+// mark (after its vowel in SAPI) put before the consonants leading into it.
+// NULL for other languages or a phone it doesn't know.
+static int sapi_vowel(const char *p) {
+    static const char *const k[] = {"ɑ", "æ", "ʌ", "ɔ", "a", "ə", "ɛ", "ɚ", "e", "ɪ", "i", "o", "ʊ", "u"};
+    for (size_t i = 0; i < sizeof k / sizeof *k; i++)
+        if (!strncmp(p, k[i], strlen(k[i]))) return 1;
+    return 0;
+}
+
+static char *sapi_ipa(const Engine *e, const SPPHONEID *ids) {
+    static const char *const kPhones[] = {
+        NULL, ".", NULL, " ", NULL, NULL, NULL, " ", "1", "2",  // 1-9: - ! & , . ? _ 1 2
+        "ɑ", "æ", "ʌ", "ɔ", "aʊ", "ə", "aɪ", "b", "tʃ", "d", "ð", "ɛ", "ɚ", "eɪ", "f", "ɡ", "h", "ɪ", "i", "dʒ",
+        "k", "l", "m", "n", "ŋ", "oʊ", "ɔɪ", "p", "ɹ", "s", "ʃ", "t", "θ", "ʊ", "u", "v", "w", "j", "z", "ʒ",
+    };
+    if (strncmp(e->language, "en", 2) || !ids || !ids[0]) return NULL;
+    // as IPA pieces, then stresses moved
+    const char *piece[256];
+    int n = 0;
+    for (int i = 0; ids[i] && n < 255; i++) {
+        if (ids[i] < 1 || ids[i] > 49) return NULL;
+        const char *p = kPhones[ids[i]];
+        if (!p) continue;  // punctuation
+        if (p[0] == '1' || p[0] == '2') {
+            // back over the vowel before it, then the consonants before that
+            int at = n;
+            while (at > 0 && sapi_vowel(piece[at - 1])) at--;
+            while (at > 0 && !sapi_vowel(piece[at - 1]) && piece[at - 1][0] != ' ' && piece[at - 1][0] != '.') at--;
+            memmove(piece + at + 1, piece + at, (size_t)(n - at) * sizeof *piece);
+            piece[at] = p[0] == '1' ? "ˈ" : "ˌ";
+            n++;
+            if (p[0] == '1' && at + 1 < n && !strcmp(piece[n - 1], "ɚ")) piece[n - 1] = "ɝ";  // stressed er
+            continue;
+        }
+        piece[n++] = p;
+    }
+    size_t len = 1;
+    for (int i = 0; i < n; i++) len += strlen(piece[i]);
+    char *out = malloc(len);
+    out[0] = 0;
+    for (int i = 0; i < n; i++) strcat(out, piece[i]);
+    return out;
+}
+
+// The bookmarks inside an engine utterance (ESC\mrk=N\, N the index here).
+typedef struct {
+    WCHAR **name;
+    size_t n, cap;
+} Marks;
+
+static WCHAR *frag_string(const SPVTEXTFRAG *f) {
+    WCHAR *s = malloc(((size_t)f->ulTextLen + 1) * sizeof(WCHAR));
+    if (!s) return NULL;
+    memcpy(s, f->pTextStart, (size_t)f->ulTextLen * sizeof(WCHAR));
+    s[f->ulTextLen] = 0;
+    return s;
 }
 
 // Word boundaries. SAPI places an event where the audio written so far
@@ -250,35 +328,54 @@ static void word_event(Run *r, const Text *t, Words *wq, const VxsWord *w) {
     r->site->lpVtbl->AddEvents(r->site, &ev, 1);
 }
 
+static void bookmark(Run *r, const WCHAR *s);
+
+// Bookmarks reached in the utterance, waiting for the audio before them.
+typedef struct {
+    VxsMark m[64];
+    size_t n;
+} MarkQueue;
+
 // Write n samples of the utterance that began at byte `start`, sending each
-// word as the audio reaches it.
-static int write_with_words(Run *r, const Text *t, Words *wq, ULONGLONG start, const int16_t *pcm, size_t n) {
+// word and bookmark as the audio reaches it (a bookmark first, where both
+// fall on the same sample: it was written before the word).
+static int write_with_events(Run *r, const Text *t, Words *wq, MarkQueue *mq, const Marks *mk, ULONGLONG start,
+                             const int16_t *pcm, size_t n) {
     size_t done = 0;
-    while (wq->n) {
-        ULONGLONG at = start + (ULONGLONG)wq->w[0].frame * 2;
+    while (wq->n || mq->n) {
+        int mark = mq->n && (!wq->n || mq->m[0].frame <= wq->w[0].frame);
+        ULONGLONG at = start + (ULONGLONG)(mark ? mq->m[0].frame : wq->w[0].frame) * 2;
         if (at >= r->bytes + (n - done) * 2) break;  // later than this audio
         if (at > r->bytes) {
             size_t k = (size_t)((at - r->bytes) / 2);
             if (write_pcm(r, pcm + done, k)) return 1;
             done += k;
         }
-        word_event(r, t, wq, &wq->w[0]);
-        memmove(wq->w, wq->w + 1, --wq->n * sizeof wq->w[0]);
+        if (mark) {
+            if (mq->m[0].id < mk->n) bookmark(r, mk->name[mq->m[0].id]);
+            memmove(mq->m, mq->m + 1, --mq->n * sizeof mq->m[0]);
+        } else {
+            word_event(r, t, wq, &wq->w[0]);
+            memmove(wq->w, wq->w + 1, --wq->n * sizeof wq->w[0]);
+        }
     }
     return n > done && write_pcm(r, pcm + done, n - done);
 }
 
 // One engine utterance. Returns 1 when aborted.
-static int speak_text(Run *r, const Text *t, int rate, int pitch, int volume, int fallback) {
+static int speak_text(Run *r, const Text *t, const Marks *mk, int rate, int pitch, int volume, int fallback) {
     Engine *e = r->e;
     float buf[1024];
     int16_t pcm[1024];
     ULONGLONG start = r->bytes;
     Words wq = {.n = 0};
+    MarkQueue mq = {.n = 0};
     vxs_start_with_fallback(e->vxs, e->key, fallback && e->fallback[0] ? e->fallback : NULL, t->s, rate, pitch, volume, 0);
     for (;;) {
         int done = 0;
-        if (wq.n < 64) wq.n += vxs_read_words(e->vxs, wq.w + wq.n, 64 - wq.n);  // before the audio they belong to
+        // before the audio they belong to
+        if (wq.n < 64) wq.n += vxs_read_words(e->vxs, wq.w + wq.n, 64 - wq.n);
+        if (mq.n < 64) mq.n += vxs_read_marks(e->vxs, mq.m + mq.n, 64 - mq.n);
         size_t n = vxs_read(e->vxs, buf, 1024, &done);
         if (n) {
             for (size_t i = 0; i < n; i++) {
@@ -289,7 +386,7 @@ static int speak_text(Run *r, const Text *t, int rate, int pitch, int volume, in
                 r->first = 1;
                 logf_("first audio %.1f ms (%s)", now_ms() - r->t0, e->key);
             }
-            if (write_with_words(r, t, &wq, start, pcm, n)) { vxs_cancel(e->vxs); return 1; }
+            if (write_with_events(r, t, &wq, &mq, mk, start, pcm, n)) { vxs_cancel(e->vxs); return 1; }
         }
         if (aborted(r)) {
             double t = now_ms();
@@ -297,9 +394,20 @@ static int speak_text(Run *r, const Text *t, int rate, int pitch, int volume, in
             logf_("aborted, stopped in %.1f ms", now_ms() - t);
             return 1;
         }
-        if (done) {
-            for (size_t i = 0; i < wq.n; i++) word_event(r, t, &wq, &wq.w[i]);  // past the end of the audio
-            return 0;
+        if (done) {  // what is left is past the end of the audio
+            for (;;) {
+                wq.n += vxs_read_words(e->vxs, wq.w + wq.n, 64 - wq.n);
+                mq.n += vxs_read_marks(e->vxs, mq.m + mq.n, 64 - mq.n);
+                if (!wq.n && !mq.n) return 0;
+                int mark = mq.n && (!wq.n || mq.m[0].frame <= wq.w[0].frame);
+                if (mark) {
+                    if (mq.m[0].id < mk->n) bookmark(r, mk->name[mq.m[0].id]);
+                    memmove(mq.m, mq.m + 1, --mq.n * sizeof mq.m[0]);
+                } else {
+                    word_event(r, t, &wq, &wq.w[0]);
+                    memmove(wq.w, wq.w + 1, --wq.n * sizeof wq.w[0]);
+                }
+            }
         }
         if (!n) short_wait();
     }
@@ -316,11 +424,8 @@ static int silence(Run *r, ULONG ms) {
     return 0;
 }
 
-static void bookmark(Run *r, const SPVTEXTFRAG *f) {
-    WCHAR *s = malloc(((size_t)f->ulTextLen + 1) * sizeof(WCHAR));
+static void bookmark(Run *r, const WCHAR *s) {
     if (!s) return;
-    memcpy(s, f->pTextStart, (size_t)f->ulTextLen * sizeof(WCHAR));
-    s[f->ulTextLen] = 0;
     SPEVENT ev;
     memset(&ev, 0, sizeof ev);
     ev.eEventId = SPEI_TTS_BOOKMARK;
@@ -329,7 +434,6 @@ static void bookmark(Run *r, const SPVTEXTFRAG *f) {
     ev.lParam = (LPARAM)s;  // SAPI copies the string
     ev.wParam = (WPARAM)_wtol(s);
     r->site->lpVtbl->AddEvents(r->site, &ev, 1);
-    free(s);
 }
 
 // SAPI's -10..10 onto the engine's percentages: rate +10 is the engine's
@@ -358,17 +462,32 @@ static int ensure_stream(Engine *e) {
     data_dir(dir, MAX_PATH);
     char *d = utf8_of(dir, -1);
     if (!d) return 0;
-    char downloads[MAX_PATH * 3 + 16], native[MAX_PATH * 3 + 16];
+    char native[MAX_PATH * 3 + 16];
+    snprintf(e->root, sizeof e->root, "%s", d);
     snprintf(e->voices, sizeof e->voices, "%s\\Voices", d);
-    snprintf(downloads, sizeof downloads, "%s\\Downloads", d);
+    snprintf(e->downloads, sizeof e->downloads, "%s\\Downloads", d);
     snprintf(native, sizeof native, "%s\\Native", d);
     free(d);
     static LONG native_set;
     if (!InterlockedExchange(&native_set, 1)) cv_set_native_dir(native);
     e->vxs = vxs_create(e->voices);
     if (!e->vxs) return 0;
-    vxs_set_asset_root(e->vxs, downloads);
+    vxs_set_asset_root(e->vxs, e->downloads);
     return 1;
+}
+
+static DWORD user_setting(const WCHAR *name, DWORD fallback);
+
+// Apple's newer pronunciation pack for the voice when that setting is on
+// (written into buf), else NULL.
+static const char *newer_pack(Engine *e, char *buf, size_t cap) {
+    return user_setting(L"NewerPronunciation", 0) ? cv_rules_pack_dir(e->root, e->key, e->language, buf, cap) : NULL;
+}
+
+// Its dictionary goes into the engine; its rules are applied with apply_rules.
+static void set_pack(Engine *e) {
+    char pack[MAX_PATH * 3 + 64];
+    vxs_set_rules_pack(e->vxs, newer_pack(e, pack, sizeof pack));
 }
 
 // HKCU\Software\Classic Voices: the user's settings (the app writes them).
@@ -380,11 +499,15 @@ static DWORD user_setting(const WCHAR *name, DWORD fallback) {
     return fallback;
 }
 
-// Apple's pronunciation rules (user_rules.txt), unless turned off. Word
-// positions stay on the text SAPI gave: rewritten text maps to its original.
+// Apple's pronunciation rules (the voice's own, unless turned off, and the
+// newer ones when on). Word positions stay on the text SAPI gave: rewritten
+// text maps to its original.
 static void apply_rules(Engine *e, Text *t) {
-    if (!user_setting(L"PronunciationRules", 1) || !e->build[0]) return;
-    const CvRules *rules = cv_rules_for(e->voices, e->build, e->language);
+    char pack[MAX_PATH * 3 + 64];
+    int own = (int)user_setting(L"PronunciationRules", 1);
+    const char *pk = newer_pack(e, pack, sizeof pack);
+    if ((!own && !pk) || !e->build[0]) return;
+    const CvRules *rules = cv_rules_for_voice_pack(e->voices, e->downloads, e->key, e->language, own, pk);
     if (!rules) return;
     int32_t *map = NULL;
     char *s = cv_rules_apply_mapped(rules, t->s, (const int32_t *)t->src, &map);
@@ -402,12 +525,16 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
     Engine *e = (Engine *)This;
     if (!site) return E_INVALIDARG;
     if (!e->key[0] || !ensure_stream(e)) return E_FAIL;
+    set_pack(e);
     Run r = {e, site, 0, now_ms(), 0};
     int fallback = (int)user_setting(L"PitchFallback", 1);  // the compact voice speaks pitch changes
     long rate = 0;
     USHORT volume = 100;
     site->lpVtbl->GetRate(site, &rate);
     site->lpVtbl->GetVolume(site, &volume);
+    const SPVTEXTFRAG *last = NULL;  // the last fragment with text
+    for (const SPVTEXTFRAG *g = frags; g; g = g->pNext)
+        if (is_text(g->State.eAction)) last = g;
     const SPVTEXTFRAG *f = frags;
     while (f) {
         DWORD actions = site->lpVtbl->GetActions(site);
@@ -420,27 +547,73 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         }
         if (actions & SPVES_RATE) site->lpVtbl->GetRate(site, &rate);
         if (actions & SPVES_VOLUME) site->lpVtbl->GetVolume(site, &volume);
-        if (f->State.eAction == SPVA_Bookmark) {
-            bookmark(&r, f);
+        // Silence and bookmarks before the first text and after the last are
+        // written as they come (the stream trims silence around speech).
+        if (!is_text(f->State.eAction) || !last) {
+            if (f->State.eAction == SPVA_Bookmark) {
+                WCHAR *name = frag_string(f);
+                bookmark(&r, name);
+                free(name);
+            } else if (f->State.eAction == SPVA_Silence && silence(&r, f->State.SilenceMSecs)) break;
             f = f->pNext;
             continue;
         }
-        if (f->State.eAction == SPVA_Silence) {
-            if (silence(&r, f->State.SilenceMSecs)) break;
-            f = f->pNext;
-            continue;
-        }
-        if (!is_text(f->State.eAction)) { f = f->pNext; continue; }
-        // Consecutive text with the same prosody is one engine utterance, so
-        // the engine phrases it as a whole.
+        // From here to the last text is one engine utterance, phrased as a
+        // whole: bookmarks, silence and changes of rate, pitch or volume go
+        // into it as commands.
         Text text = {0};
-        const SPVTEXTFRAG *first = f;
-        for (; f && is_text(f->State.eAction) && same_prosody(&f->State, &first->State); f = f->pNext)
-            text_fragment(&text, f);
-        if (text.len) apply_rules(e, &text);
-        int vol = (int)lround(80.0 * volume / 100.0 * first->State.Volume / 100.0);
-        int stop = text.len && speak_text(&r, &text, rate_pct(rate + first->State.RateAdj),
-                                          pitch_pct(first->State.PitchAdj.MiddleAdj), vol, fallback);
+        Marks marks = {0};
+        const SPVSTATE *st = &f->State;
+        int r0 = rate_pct(rate + st->RateAdj), p0 = pitch_pct(st->PitchAdj.MiddleAdj),
+            v0 = (int)lround(80.0 * volume / 100.0 * st->Volume / 100.0);
+        int cr = r0, cp = p0, cv = v0;
+        for (;;) {
+            char cmd[48];
+            SPVACTIONS a = f->State.eAction;
+            if (a == SPVA_Bookmark) {
+                if (marks.n == marks.cap) {
+                    marks.cap = marks.cap ? marks.cap * 2 : 16;
+                    marks.name = realloc(marks.name, marks.cap * sizeof *marks.name);
+                }
+                marks.name[marks.n] = frag_string(f);
+                snprintf(cmd, sizeof cmd, "\x1b\\mrk=%u\\", (unsigned)marks.n++);
+                text_cmd(&text, cmd, f->ulTextSrcOffset);
+            } else if (a == SPVA_Silence && f->State.SilenceMSecs) {
+                snprintf(cmd, sizeof cmd, " \x1b\\pause=%lu\\ ", (unsigned long)(f->State.SilenceMSecs > 5000 ? 5000 : f->State.SilenceMSecs));
+                text_cmd(&text, cmd, text.end);
+            } else if (is_text(a)) {
+                st = &f->State;
+                char *ph = NULL;
+                if (a == SPVA_Pronounce) {  // its phonemes, said as the voice can (else its text)
+                    char *ipa = sapi_ipa(e, f->State.pPhoneIds);
+                    int joined = text.len && text.s[text.len - 1] != ' ' && f->ulTextSrcOffset == text.end;
+                    if (ipa) ph = vx_phoneme_text(e->voices, e->downloads, e->key, e->language, ipa, joined);
+                    logf_("pron %s: %s", ipa ? ipa : "(phones not American English)", ph ? "phonemes" : "its text");
+                    free(ipa);
+                }
+                int rv = rate_pct(rate + st->RateAdj), pv = pitch_pct(st->PitchAdj.MiddleAdj),
+                    vv = (int)lround(80.0 * volume / 100.0 * st->Volume / 100.0);
+                if (rv != cr) { snprintf(cmd, sizeof cmd, "\x1b\\rate=%d\\", rv); text_cmd(&text, cmd, f->ulTextSrcOffset); cr = rv; }
+                if (vv != cv) { snprintf(cmd, sizeof cmd, "\x1b\\vol=%d\\", vv); text_cmd(&text, cmd, f->ulTextSrcOffset); cv = vv; }
+                if (pv != cp) {
+                    snprintf(cmd, sizeof cmd, "\x1b\\pitch=%d\\", vxs_engine_pitch(pv));
+                    text_cmd(&text, cmd, f->ulTextSrcOffset);
+                    cp = pv;
+                }
+                if (ph) {
+                    if (text.len && f->ulTextSrcOffset != text.end) text_put(&text, ' ', f->ulTextSrcOffset);
+                    text_cmd(&text, ph, f->ulTextSrcOffset);
+                    text.end = f->ulTextSrcOffset + f->ulTextLen;
+                    free(ph);
+                } else text_fragment(e, &text, f);
+            }
+            int at_last = f == last;
+            f = f->pNext;
+            if (at_last || !f) break;
+        }
+        int stop = text.len && speak_text(&r, &text, &marks, r0, p0, v0, fallback);
+        for (size_t i = 0; i < marks.n; i++) free(marks.name[i]);
+        free(marks.name);
         free(text.s);
         free(text.src);
         if (stop) break;
@@ -501,7 +674,10 @@ static HRESULT STDMETHODCALLTYPE tok_SetObjectToken(ISpObjectWithToken *This, IS
     token_string(token, L"CVLanguage", e->language, sizeof e->language);
     if (!e->key[0]) return E_INVALIDARG;
     // Programs pick the voice well before they speak: load it now.
-    if (ensure_stream(e)) vxs_preload(e->vxs, e->key);
+    if (ensure_stream(e)) {
+        set_pack(e);
+        vxs_preload(e->vxs, e->key);
+    }
     return S_OK;
 }
 

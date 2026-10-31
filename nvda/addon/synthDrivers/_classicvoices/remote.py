@@ -19,12 +19,14 @@ FIRMWARE = {  # build key: (build, URL, size)
     "ios4": ("8L1", "https://secure-appldnld.apple.com/iPhone4/041-1965.20110721.gxUB5/iPhone2,1_4.3.5_8L1_Restore.ipsw", 440577895),
     "ios5": ("9B206", "https://secure-appldnld.apple.com/iOS5.1.1/041-4347.20120427.o2yov/iPhone2,1_5.1.1_9B206_Restore.ipsw", 720391327),
     "ios6": ("10B500", "https://secure-appldnld.apple.com/iOS6.1/091-3457.20140221.Btt3e/iPhone2,1_6.1.6_10B500_Restore.ipsw", 822970962),
+    "ios70": ("11B651", "https://secure-appldnld.apple.com/iOS7/031-3020.20140221.8j5GW/iPhone3,1_7.0.6_11B651_Restore.ipsw", 1201645522),
     "ios7": ("11D257", "https://secure-appldnld.apple.com/iOS7.1/031-4812.20140627.cq6y8/iPhone3,1_7.1.2_11D257_Restore.ipsw", 1204958925),
     "ios10": ("14G61", "https://updates.cdn-apple.com/2019/ios/091-25277-20190722-0C1B94DE-992C-11E9-A2EE-E2C9A77C2E40/iPhone_4.0_32bit_10.3.4_14G61_Restore.ipsw", 2000796302),
 }
 PURPOSE = {
     "ios3": "the iOS 3 voices", "ios4": "the iOS 4 voices", "ios5": "the iOS 5 voices and their enhanced versions",
     "ios6": "the iOS 6 voices and their enhanced versions; also the Lion and Mountain Lion voices",
+    "ios70": "the iOS 7 voices and their enhanced versions",
     "ios7": "engine only: Mavericks compact voices", "ios10": "engine only: Mavericks premium voices",
 }
 
@@ -113,7 +115,7 @@ def stream_rootfs(url, dest, progress):
 
 
 def import_from_apple(key, voices_root, progress):
-    """Stream firmware `key` (ios3 ... ios10) from Apple and import it."""
+    """Stream firmware `key` (ios3 ... ios10, ios70) from Apple and import it."""
     build, url, _size = FIRMWARE[key]
     progress("Streaming %s from Apple" % firmware.SUPPORTED[build][2], None)
     os.makedirs(voices_root, exist_ok=True)

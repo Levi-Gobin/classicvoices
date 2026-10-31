@@ -12,14 +12,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * Apple's own text rules for the Vocalizer voices (the iOS app's
- * PronunciationRules.swift): iOS 5 and 6 shipped
- * TTSResources/<language>/user_rules.txt, regular expressions VoiceServices
- * ran over the text before the engine saw it ("iOS" -> "I O S", "OS X" ->
- * "OS ten", St -> Street ...). The engine never reads the file itself.
+ * PronunciationRules.swift): each iOS release shipped
+ * TTSResources/<language>/user_rules.txt and each Mac OS X voice its own
+ * user_rules.dat: regular expressions run over the text before the engine
+ * saw it ("iOS" -> "I O S", "OS X" -> "OS ten", St -> Street ...).
  *
  * One rule per line: /pattern/flags --> "replacement", with $1 groups,
  * \xHH and \\ escapes, and the flags i and m.
@@ -27,14 +26,31 @@ import java.util.regex.PatternSyntaxException;
 final class Rules {
     private static final Map<String, Rules> CACHE = new HashMap<>();
 
-    private final List<Pattern> patterns = new ArrayList<>();
+    // One entry per rule, in order. Patterns are compiled the first time the
+    // pre-check says a rule could match (thousands of rules per language).
+    private final List<String> sources = new ArrayList<>();
+    private final List<Integer> flags = new ArrayList<>();
     private final List<String> replacements = new ArrayList<>();
+    private Pattern[] compiled;
+    private boolean[] broken;  // patterns Java can't compile: skipped
+    private long index;        // core/vxrules.c pre-check, built on first use; 0: none
 
     String apply(String text) {
+        int n = sources.size();
+        if (n == 0 || text.isEmpty()) return text;
+        byte[] marks = new byte[n];
+        mark(text, marks);
         String s = text;
-        for (int i = 0; i < patterns.size(); i++) {
+        for (int i = 0; i < n; i++) {
+            if (marks[i] == 0) continue;
+            Pattern p = pattern(i);
+            if (p == null) continue;
             try {
-                s = patterns.get(i).matcher(s).replaceAll(replacements.get(i));
+                String t = p.matcher(s).replaceAll(replacements.get(i));
+                if (!t.equals(s)) {
+                    s = t;
+                    mark(s, marks);  // rules later on may match the new text
+                }
             } catch (RuntimeException e) {
                 // a group the pattern doesn't have: skip the rule
             }
@@ -42,8 +58,98 @@ final class Rules {
         return s;
     }
 
+    /** Sets marks[i] for the rules that could match text (all of them without the pre-check). */
+    private synchronized void mark(String text, byte[] marks) {
+        if (index == 0) {
+            try {
+                index = Native.newRuleIndex();
+                for (int i = 0; i < sources.size(); i++)
+                    Native.ruleIndexAdd(index, i, utf8(sources.get(i)), (flags.get(i) & Pattern.CASE_INSENSITIVE) != 0);
+            } catch (UnsatisfiedLinkError e) {
+                index = -1;
+            }
+        }
+        if (index > 0) Native.ruleIndexMark(index, utf8(text), marks);
+        else java.util.Arrays.fill(marks, (byte) 1);
+    }
+
+    private synchronized Pattern pattern(int i) {
+        if (compiled == null) {
+            compiled = new Pattern[sources.size()];
+            broken = new boolean[sources.size()];
+        }
+        if (compiled[i] != null || broken[i]) return compiled[i];
+        String src = posixClasses(sources.get(i));
+        int f = flags.get(i);
+        try {
+            compiled[i] = Pattern.compile(src, f | Pattern.UNICODE_CHARACTER_CLASS);
+        } catch (IllegalArgumentException e) {  // PatternSyntaxException, or a runtime without the flag
+            try {
+                compiled[i] = Pattern.compile(src, f);
+            } catch (IllegalArgumentException e2) {
+                broken[i] = true;
+            }
+        }
+        return compiled[i];
+    }
+
+    private static byte[] utf8(String s) {
+        try {
+            return s.getBytes("UTF-8");
+        } catch (java.io.UnsupportedEncodingException e) {
+            return new byte[0];
+        }
+    }
+
+    private static final String[][] POSIX = {
+            {"alpha", "\\p{Alpha}"}, {"digit", "\\p{Digit}"}, {"alnum", "\\p{Alnum}"}, {"upper", "\\p{Upper}"},
+            {"lower", "\\p{Lower}"}, {"punct", "\\p{Punct}"}, {"space", "\\s"}, {"xdigit", "\\p{XDigit}"},
+            {"cntrl", "\\p{Cntrl}"}, {"print", "\\p{Print}"}, {"graph", "\\p{Graph}"}, {"blank", "\\p{Blank}"},
+            {"word", "\\w"}};
+
+    /** PCRE's [:punct:] and friends inside a character class, as Java writes them. */
+    static String posixClasses(String p) {
+        if (!p.contains("[:")) return p;
+        StringBuilder out = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < p.length(); i++) {
+            char c = p.charAt(i);
+            if (c == '\\' && i + 1 < p.length()) {
+                out.append(c).append(p.charAt(++i));
+                continue;
+            }
+            if (depth > 0 && c == '[' && p.startsWith("[:", i)) {
+                int end = p.indexOf(":]", i + 2);
+                String name = end > 0 ? p.substring(i + 2, end) : null;
+                String repl = null;
+                if (name != null) for (String[] m : POSIX) if (m[0].equals(name)) repl = m[1];
+                if (repl != null) {
+                    out.append(repl);
+                    i = end + 1;
+                    continue;
+                }
+            }
+            if (c == '[') {
+                depth++;
+                out.append(c);
+                // a ] right after [ or [^ is a literal
+                if (i + 1 < p.length() && p.charAt(i + 1) == '^') out.append(p.charAt(++i));
+                if (i + 1 < p.length() && p.charAt(i + 1) == ']') out.append(p.charAt(++i));
+                continue;
+            }
+            if (c == ']' && depth > 0) depth--;
+            out.append(c);
+        }
+        return out.toString();
+    }
+
     static Rules parse(String text) {
         Rules r = new Rules();
+        r.add(text);
+        return r;
+    }
+
+    private void add(String text) {
         for (String raw : text.split("\r?\n|\r")) {
             String line = raw.trim();
             int arrow = line.indexOf("-->");
@@ -55,18 +161,14 @@ final class Rules {
             int close = left.lastIndexOf('/');
             if (close <= 0 || !right.startsWith("\"") || !right.endsWith("\"") || right.length() < 2) continue;
             String pattern = left.substring(1, close);
-            String flags = left.substring(close + 1);
+            String fl = left.substring(close + 1);
             int opts = 0;
-            if (flags.contains("i")) opts |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
-            if (flags.contains("m")) opts |= Pattern.MULTILINE;
-            try {
-                r.patterns.add(Pattern.compile(pattern, opts));
-            } catch (PatternSyntaxException e) {
-                continue;
-            }
-            r.replacements.add(template(unescape(right.substring(1, right.length() - 1))));
+            if (fl.contains("i")) opts |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+            if (fl.contains("m")) opts |= Pattern.MULTILINE;
+            sources.add(pattern);
+            flags.add(opts);
+            replacements.add(template(unescape(right.substring(1, right.length() - 1))));
         }
-        return r;
     }
 
     /** C-style escapes in the file's replacement strings. */
@@ -117,30 +219,63 @@ final class Rules {
     }
 
     /**
-     * The rules for a voice's language: iOS 6's file (the most complete set),
-     * else the voice's own firmware's, else iOS 5's. null when none has rules.
+     * The rules a voice had in its own release: an iOS voice's firmware's
+     * TTSResources/<language>/user_rules.txt (an enhanced voice uses its
+     * firmware's), a Mac OS X voice's own user_rules.dat in its folder (same
+     * format). null when it had none.
      */
-    static Rules forVoice(Context c, VoiceInfo v) {
-        String lang = v.language;
-        String[] builds = {"ios6", v.build(), "ios5"};
-        for (String b : builds) {
-            File f = new File(new File(new File(new File(Data.voicesDir(c), b), "TTSResources"), lang), "user_rules.txt");
-            String key = f.getAbsolutePath();
-            synchronized (CACHE) {
-                if (CACHE.containsKey(key)) return CACHE.get(key);
-            }
-            if (!f.isFile()) continue;
-            try {
-                Rules r = parse(readUtf8(f));
-                synchronized (CACHE) {
-                    CACHE.put(key, r);
-                }
-                return r;
-            } catch (IOException e) {
-                // unreadable: try the next build
+    static File ownFile(Context c, VoiceInfo v) {
+        int slash = v.key.indexOf('/');
+        if (slash < 0) return null;
+        String build = v.key.substring(0, slash);
+        File f;
+        if (build.startsWith("mac")) {
+            f = new File(new File(Data.downloadsDir(c), v.key), "user_rules.dat");
+            if (!f.isFile()) f = new File(new File(Data.voicesDir(c), v.key), "user_rules.dat");
+        } else {
+            if (build.endsWith("e")) build = build.substring(0, build.length() - 1);
+            f = new File(new File(new File(new File(Data.voicesDir(c), build), "TTSResources"), v.language), "user_rules.txt");
+        }
+        return f.isFile() ? f : null;
+    }
+
+    /**
+     * What runs over a voice's text: its own release's rules (own), then
+     * Apple's later pack for its language (pack: a Pronunciation/<language>
+     * folder; its dictionary goes into the engine, its rules run here). The
+     * pack's override rules go before its user rules: they were loaded last
+     * on iOS 12, which gave them precedence, and they're written to get in
+     * first ("so that a broken rule ... is skipped"). null when there's
+     * nothing to run.
+     */
+    static Rules forVoice(Context c, VoiceInfo v, boolean own, String pack) {
+        List<File> files = new ArrayList<>();
+        File f = own ? ownFile(c, v) : null;
+        if (f != null) files.add(f);
+        if (pack != null) {
+            for (String name : new String[]{"vocalizer-override-rules.txt", "vocalizer-user-rules.txt"}) {
+                File p = new File(pack, name);
+                if (p.isFile()) files.add(p);
             }
         }
-        return null;
+        if (files.isEmpty()) return null;
+        StringBuilder key = new StringBuilder();
+        for (File x : files) key.append(x.getAbsolutePath()).append('\n');
+        synchronized (CACHE) {
+            if (CACHE.containsKey(key.toString())) return CACHE.get(key.toString());
+        }
+        Rules r = new Rules();
+        for (File x : files) {
+            try {
+                r.add(readUtf8(x));
+            } catch (IOException e) {
+                // unreadable: the others still run
+            }
+        }
+        synchronized (CACHE) {
+            CACHE.put(key.toString(), r);
+        }
+        return r;
     }
 
     static String readUtf8(File f) throws IOException {

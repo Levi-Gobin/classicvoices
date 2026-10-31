@@ -8,7 +8,7 @@
 static const char *pairs[][2] = {
     {"ios6e/en-US", "ios6/en-US"}, {"ios5e/en-US", "ios5/en-US"}, {"mac107/Karen", "mac107/KarenCompact"},
     {"mac108/Karen", "mac108/KarenCompact"}, {"mac109/Karen", NULL}, {"ios6/en-US", NULL}, {"ios3/en-US", NULL},
-    {"mac109/KarenCompact", NULL},
+    {"mac109/KarenCompact", NULL}, {"ios70/en-US", NULL}, {"ios70e/en-US", NULL},
 };
 static const char *texts[] = {
     "Hello there, how are you today.",

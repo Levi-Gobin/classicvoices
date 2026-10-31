@@ -36,7 +36,7 @@ enum Diagnostics {
 
         // Each engine, run here in the app as Try It does.
         if let root = VoiceCatalog.root {
-            for key in ["ios3/en-US", "ios4/en-US", "ios5/en-US", "ios6/en-US"] {
+            for key in ["ios3/en-US", "ios4/en-US", "ios5/en-US", "ios6/en-US", "ios70/en-US"] {
                 var open = 0.0, first = 0.0, total = 0.0, audio = 0.0
                 let rc = vxs_benchmark(root.path, VoiceCatalog.enhancedRoot?.path, key, "Settings. Button.", 100,
                                        &open, &first, &total, &audio)

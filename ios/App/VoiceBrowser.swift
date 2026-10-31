@@ -21,6 +21,7 @@ struct VoiceVersion: Identifiable, Hashable {
         .init(id: "ios4", platform: .iOS, name: "iOS 4", number: "4.3.5", builds: ["ios4"]),
         .init(id: "ios5", platform: .iOS, name: "iOS 5", number: "5.1.1", builds: ["ios5"]),
         .init(id: "ios6", platform: .iOS, name: "iOS 6", number: "6.1.6", builds: ["ios6"]),
+        .init(id: "ios7", platform: .iOS, name: "iOS 7", number: "7.0.6", builds: ["ios70"]),
         .init(id: "tiger", platform: .macOS, name: "Tiger", number: "10.4", builds: ["mt104"]),
         .init(id: "leopard", platform: .macOS, name: "Leopard", number: "10.5", builds: ["mt105"]),
         .init(id: "snowleopard", platform: .macOS, name: "Snow Leopard", number: "10.6", builds: ["mt106"]),
@@ -80,6 +81,7 @@ final class VoiceLibrary {
     let enhanced = EnhancedDownloads()
     let mac = MacDownloads()
     let disc = DiscDownloads()
+    let pronunciation = PronunciationDownloads()
     private(set) var items: [VoiceItem] = []
     private(set) var hidden = VoiceCatalog.hiddenVoices
     private(set) var settings = SpeechSettings()
@@ -94,6 +96,8 @@ final class VoiceLibrary {
         VoiceStore.shared.onChange = { [weak self] in
             guard let self else { return }
             self.settings = VoiceStore.shared.snapshot.settings
+            self.pronunciation.refresh()
+            if self.settings.newerRulesWanted { self.pronunciation.ensure() }
             self.enhanced.refresh()
             self.mac.refresh()
             self.rebuild()
@@ -175,12 +179,22 @@ final class VoiceLibrary {
         guard s != settings else { return }
         settings = s
         Task.detached { VoiceStore.shared.saveSettings(s) }
+        // The newer rules need their packs: fetched the first time any voice uses them.
+        if s.newerRulesWanted { pronunciation.ensure() }
     }
 
-    /// Apple's text rules for a voice, when they're on for it.
+    /// Apple's text rules for a voice: its own and the newer ones, as its switches say.
     func rules(for item: VoiceItem) -> PronunciationRules? {
-        guard let entry = item.entry, settings.rulesEnabled(item.id) else { return nil }
-        return PronunciationRules.rules(forVoiceKey: entry.key)
+        guard let entry = item.entry else { return nil }
+        return PronunciationRules.rules(forVoiceKey: entry.key, identifier: item.id, language: entry.language,
+                                        settings: settings)
+    }
+
+    /// Apple's later pronunciation pack for a voice, when it's on for it and downloaded.
+    func rulesPack(for item: VoiceItem) -> String? {
+        guard let entry = item.entry else { return nil }
+        return PronunciationRules.newerPack(forVoiceKey: entry.key, identifier: item.id, language: entry.language,
+                                            settings: settings)
     }
 
     /// The compact voice an enhanced or premium voice's pitch changes would use.
@@ -585,7 +599,8 @@ private struct VoiceRow: View {
         .accessibilityActions {
             if state.isAvailable, let entry = item.entry {
                 Button("Play sample") {
-                    DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item), settings: library.settings)
+                    DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item),
+                                              rulesPack: library.rulesPack(for: item), settings: library.settings)
                 }
             }
         }
@@ -681,10 +696,11 @@ struct VoiceDetail: View {
                         Slider(value: $rate, in: 50...400, step: 10) { Text("Rate") }
                     }
                     HStack {
-                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item), settings: library.settings) } label: {
+                        Button { player.speak(text, voiceKey: entry.key, rate: Int(rate), rules: library.rules(for: item),
+                                     rulesPack: library.rulesPack(for: item), settings: library.settings) } label: {
                             Label("Speak", systemImage: "speaker.wave.2.fill")
                         }
-                        Button { VoiceEngine.shared.cancel() } label: {
+                        Button { player.stop() } label: {
                             Label("Stop", systemImage: "stop.fill")
                         }
                     }
@@ -707,6 +723,14 @@ struct VoiceDetail: View {
                     OverridePicker("Pronunciation rules", general: library.settings.rules,
                                    value: library.settings.rulesOverride[item.id]) { v in
                         library.updateSettings { $0.rulesOverride[item.id] = v }
+                    }
+                    if item.kind != .macinTalk {
+                        OverridePicker("Newer pronunciation rules", general: library.settings.newerRules,
+                                       value: library.settings.newerRulesOverride[item.id]) { v in
+                            library.updateSettings { $0.newerRulesOverride[item.id] = v }
+                        }
+                        Text(PronunciationDownloadsView.explanation).font(.footnote).foregroundStyle(.secondary)
+                        if library.settings.newerRulesEnabled(item.id) { PronunciationDownloadsView() }
                     }
                     if let compact = library.compactCounterpart(item) {
                         OverridePicker("Compact voice for pitch changes", general: library.settings.pitchFallback,
@@ -818,6 +842,30 @@ struct OverridePicker: View {
     }
 }
 
+/// Where the newer pronunciation packs stand: downloading (with its
+/// progress as the value VoiceOver reads), failed (with Try Again), or
+/// nothing once they're here.
+struct PronunciationDownloadsView: View {
+    static let explanation = "Apple\u{2019}s later pronunciation dictionary and rules, added to the voice\u{2019}s own."
+    @Environment(VoiceLibrary.self) private var library
+
+    var body: some View {
+        let d = library.pronunciation
+        if let p = d.progress {
+            HStack {
+                ProgressView(value: p) { Text("Downloading the pronunciation rules") }
+                    .accessibilityValue("\(VoiceFormatting.size(d.bytes.written)) of \(VoiceFormatting.size(d.bytes.total))")
+                Button("Stop") { d.cancel() }
+            }
+        } else if let e = d.error {
+            Text("The pronunciation rules couldn\u{2019}t be downloaded: \(e)").foregroundStyle(.secondary)
+            Button("Try Again") { d.download() }
+        } else if !d.installed {
+            Button("Download the Pronunciation Rules") { d.download() }
+        }
+    }
+}
+
 /// The Settings tab.
 struct SettingsTab: View {
     var body: some View {
@@ -840,7 +888,15 @@ struct SpeechSettingsView: View {
                     get: { library.settings.rules },
                     set: { v in library.updateSettings { $0.rules = v } }))
             } footer: {
-                Text("The text rules iOS 5 and 6 applied before speaking, per language: \u{201c}iOS\u{201d} is spelled out, \u{201c}OS X\u{201d} is \u{201c}OS ten\u{201d}, St and Dr become Street and Drive, and so on. Each voice can override this on its own page.")
+                Text("The text rules each voice\u{2019}s own iOS release or Mac OS X voice applied before speaking: \u{201c}iOS\u{201d} is spelled out, \u{201c}OS X\u{201d} is \u{201c}OS ten\u{201d}, St and Dr become Street and Drive, and so on. Each voice can override this on its own page.")
+            }
+            Section {
+                Toggle("Newer pronunciation rules", isOn: Binding(
+                    get: { library.settings.newerRules },
+                    set: { v in library.updateSettings { $0.newerRules = v } }))
+                if library.settings.newerRulesWanted { PronunciationDownloadsView() }
+            } footer: {
+                Text(PronunciationDownloadsView.explanation + " Off, each voice speaks as its own release did. Not for MacinTalk voices. Each voice can override this on its own page.")
             }
             Section {
                 Toggle("Compact voice for pitch changes", isOn: Binding(

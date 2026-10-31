@@ -13,7 +13,7 @@ OUT=build/linux
 rm -rf "$OUT/stage"
 mkdir -p "$OUT/stage/bin" "$OUT/stage/libexec" "$OUT/stage/lib/classicvoices"
 CFLAGS="-O2 -std=gnu11 -ffp-contract=off -fPIC -w -pthread -Icore -Iports/host -Iports/posix/compat -Ilinux/speechd -DVX_DYNAMIC_NATIVE ${EXTRA_CFLAGS}"
-CORE="core/thumb.c core/vxengine.c core/vxstream.c"
+CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c"
 HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c"
 OBJ=$OUT/obj
 mkdir -p "$OBJ"
@@ -22,7 +22,7 @@ for f in $HOST linux/speechd/module_main.c linux/speechd/module_process.c linux/
     $CC $CFLAGS -c "$f" -o "$OBJ/$(basename "$f" .c).o"
 done
 LIBS="-lm -ldl -pthread"
-COMMON="$OBJ/thumb.o $OBJ/vxengine.o $OBJ/vxstream.o $OBJ/cv_catalog.o $OBJ/cv_ssml.o $OBJ/cv_rules.o $OBJ/vx_posix.o $OBJ/vx_native_dl.o $OBJ/mt_stub.o"
+COMMON="$OBJ/thumb.o $OBJ/vxengine.o $OBJ/vxstream.o $OBJ/vxphonemes.o $OBJ/vxrules.o $OBJ/cv_catalog.o $OBJ/cv_ssml.o $OBJ/cv_rules.o $OBJ/vx_posix.o $OBJ/vx_native_dl.o $OBJ/mt_stub.o"
 $CC $CFLAGS -o "$OUT/stage/libexec/sd_classicvoices" linux/sd_classicvoices.c $COMMON \
     "$OBJ/module_main.o" "$OBJ/module_process.o" "$OBJ/module_readline.o" $LIBS
 $CC $CFLAGS -o "$OUT/stage/bin/classicvoices-say" linux/cvsay.c $COMMON $LIBS

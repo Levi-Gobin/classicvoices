@@ -3,13 +3,13 @@ import CryptoKit
 import Foundation
 import Observation
 
-/// Downloads the original iOS 5/6 enhanced voices from Apple's MobileAsset
+/// Downloads the original iOS 5/6/7 enhanced voices from Apple's MobileAsset
 /// servers (as the phone's Settings did), verifies them, and hands them to the
 /// speech extension's store (VoiceStore) so it can use them.
 @MainActor @Observable
 final class EnhancedDownloads {
     struct Asset: Codable, Hashable, Identifiable {
-        let build: String       // "ios5" / "ios6"
+        let build: String       // "ios5" / "ios6" / "ios70"
         let language: String
         let url: String
         let size: Int

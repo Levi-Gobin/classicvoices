@@ -56,7 +56,7 @@ struct ClassicVoicesApp: App {
             // `-rules ios6/en-US "iOS on OS X"`: the text after Apple's rules.
             let key = CommandLine.arguments[i + 1], text = CommandLine.arguments[i + 2]
             let r = PronunciationRules.rules(forVoiceKey: key)
-            print("RULES \(key): \(r?.rules.count ?? 0) rules; [\(text)] -> [\(r?.apply(text) ?? text)]")
+            print("RULES \(key): \(r?.count ?? 0) rules; [\(text)] -> [\(r?.apply(text) ?? text)]")
             fflush(stdout); exit(0)
         }
         if let i = CommandLine.arguments.firstIndex(of: "-speaktime"), i + 1 < CommandLine.arguments.count {
@@ -135,6 +135,7 @@ enum Diagnose {
     static func gaps(_ key: String, _ text: String, pause: Int32 = 500) -> String {
         guard let stream = VoiceEngine.shared.stream else { return "no stream" }
         var buf = [Float](repeating: 0, count: 22050 * 10)
+        vxs_set_rules_pack(stream, nil)
         vxs_start(stream, key, text, 190, 100, -1, pause)
         var n = 0; var done: Int32 = 0
         while done == 0 && n < buf.count - 512 {
@@ -440,16 +441,30 @@ final class DirectPlayer: ObservableObject {
         engine.connect(node, to: engine.mainMixerNode, format: format)
     }
 
-    func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil, settings: SpeechSettings = SpeechSettings()) {
+    func speak(_ text: String, voiceKey: String, rate: Int, rules: PronunciationRules? = nil, rulesPack: String? = nil,
+               settings: SpeechSettings = SpeechSettings()) {
         #if !os(macOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback)
         try? AVAudioSession.sharedInstance().setActive(true)
         #endif
+        if !readableHere(voiceKey), let entry = VoiceCatalog.entries.first(where: { $0.key == voiceKey }),
+           let voice = VoiceCatalog.systemVoice(for: entry) {
+            // Downloaded into the speech extension's own store, which the app
+            // can't read: the system speaks it through the extension, as
+            // VoiceOver does (with the extension's rules and settings).
+            let u = AVSpeechUtterance(string: text)
+            u.voice = voice
+            u.rate = min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * Float(rate) / 100)
+            systemSynth.stopSpeaking(at: .immediate)
+            systemSynth.speak(u)
+            stats = "Spoken through the system: this voice is kept by the speech extension."
+            return
+        }
         if !engine.isRunning { try? engine.start() }
         var job = SpeechJob()
         job.text = rules?.apply(text) ?? text
         job.rate = rate
-        VoiceEngine.shared.speak(job, voiceKey: voiceKey, resetCommands: settings.resetCommands,
+        VoiceEngine.shared.speak(job, voiceKey: voiceKey, rulesPack: rulesPack, resetCommands: settings.resetCommands,
                                  twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate)
         stats = "Speaking…"
         DispatchQueue.global().async { [weak self] in
@@ -469,5 +484,31 @@ final class DirectPlayer: ObservableObject {
                               first, audio / 1000, synth, audio / max(synth, 1)) + (err.isEmpty ? "" : "\n\(err)")
             DispatchQueue.main.async { self?.stats = text }
         }
+    }
+
+    let systemSynth = AVSpeechSynthesizer()
+
+    func stop() {
+        VoiceEngine.shared.cancel()
+        systemSynth.stopSpeaking(at: .immediate)
+    }
+
+    /// Whether this process can read the voice's files: downloaded voices
+    /// live in the extension's store, and the app sees only those the App
+    /// Group holds (voices downloaded by earlier versions).
+    private func readableHere(_ key: String) -> Bool {
+        let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return true }
+        var build = parts[0]
+        if build.hasPrefix("ios") && build.hasSuffix("e") {
+            build.removeLast()
+        } else if !build.hasPrefix("mac") {
+            return true  // built in (and MacinTalk, which has its own paths)
+        }
+        let fm = FileManager.default
+        if build.hasPrefix("mac"), let root = VoiceCatalog.root,
+           fm.fileExists(atPath: root.appendingPathComponent(key).path) { return true }
+        guard let base = VoiceCatalog.enhancedRoot else { return false }
+        return fm.fileExists(atPath: base.appendingPathComponent(build).appendingPathComponent(parts[1]).path)
     }
 }

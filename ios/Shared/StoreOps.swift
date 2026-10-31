@@ -113,6 +113,7 @@ final class StoreOps {
         case "test":
             guard let key = message["key"] as? String, let stream = VoiceEngine.shared.stream else { return fail("no engine") }
             let t0 = Date()
+            vxs_set_rules_pack(stream, nil)
             vxs_start(stream, key, message["text"] as? String ?? "Testing.", 100, 100, -1, 0)
             var buf = [Float](repeating: 0, count: 4096)
             var frames = 0

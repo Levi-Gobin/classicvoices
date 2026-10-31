@@ -37,7 +37,7 @@ final class Downloads {
     static final class Item {
         final String kind;   // "enhanced" or "mac"
         final String label;  // "Samantha, enhanced (iOS 6, en-US)"
-        final String build;  // ios5 / ios6, or the Mac era
+        final String build;  // ios5 / ios6 / ios70, or the Mac era
         final String name;   // language for enhanced, voice name for Mac
         final String locale, url, sha1;
         final long size;
@@ -95,7 +95,7 @@ final class Downloads {
                 // the compact voice of the same language names the voice
                 String voice = voiceName(new File(voices, build + "/TTSResources/" + lang + "/broker.hdr"));
                 String label = (voice != null ? voice + ", enhanced" : "Enhanced voice") + " ("
-                        + (build.equals("ios5") ? "iOS 5" : "iOS 6") + ", " + lang + ")";
+                        + (build.equals("ios5") ? "iOS 5" : build.equals("ios70") ? "iOS 7" : "iOS 6") + ", " + lang + ")";
                 out.add(new Item("enhanced", label, build, lang, lang, https(e.getString("url")), e.getLong("size"),
                         e.optString("sha1", null)));
             }

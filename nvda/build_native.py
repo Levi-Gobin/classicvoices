@@ -34,7 +34,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "nvda", "src")
 WORK = os.path.join(ROOT, "build", "native")
 
-BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios7", "ios10")
+BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10")
 STRIPPED = ("ios3", "ios4", "ios5")
 VSWHERE = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                        "Microsoft Visual Studio", "Installer", "vswhere.exe")

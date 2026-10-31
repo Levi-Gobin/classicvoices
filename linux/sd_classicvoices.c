@@ -34,6 +34,7 @@ void cv_set_native_dir(const char *dir);
 
 static int g_debug;
 static int g_rules = 1, g_fallback = 1;  // Apple's pronunciation rules; compact voice for pitch changes
+static int g_newer;  // Apple's later pronunciation packs (<data>/Pronunciation/<language>)
 static CvPaths g_paths;
 static VxStream *g_stream;
 static CvVoice *g_voices;
@@ -63,8 +64,9 @@ static pthread_t g_worker;
 //   DataPath "/path/to/classicvoices"     instead of ~/.local/share/classicvoices
 //   PronunciationRules 0                  don't apply Apple's text rules ("iOS" -> "I O S" ...)
 //   PitchFallback 0                       let enhanced/premium voices ignore pitch changes
+//   NewerPronunciation 1                  add Apple's later pronunciation dictionary and rules
 //   Debug 1                               log to Speech Dispatcher's module log
-// The Classic Voices app writes the last two to <data>/settings.conf, which wins.
+// The Classic Voices app writes the speech settings to <data>/settings.conf, which wins.
 static void read_config(const char *path) {
     FILE *f = path ? fopen(path, "r") : NULL;
     if (!f) return;
@@ -77,6 +79,7 @@ static void read_config(const char *path) {
             else if (!strcasecmp(key, "Debug")) g_debug = atoi(val) != 0;
             else if (!strcasecmp(key, "PronunciationRules")) g_rules = atoi(val) != 0;
             else if (!strcasecmp(key, "PitchFallback")) g_fallback = atoi(val) != 0;
+            else if (!strcasecmp(key, "NewerPronunciation")) g_newer = atoi(val) != 0;
         }
     }
     fclose(f);
@@ -243,10 +246,14 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
     }
     CvUtterance u;
     read_app_settings();
-    const CvRules *rules = g_rules ? cv_rules_for(g_paths.voices, cv_voice_build(v), v->language) : NULL;
-    cv_parse_ssml_rules(ssml ? ssml : text, rate, pitch, volume, rules, &u);
+    char pack[1300];
+    const char *pk = g_newer ? cv_rules_pack_dir(g_paths.root, v->key, v->language, pack, sizeof pack) : NULL;
+    const CvRules *rules = cv_rules_for_voice_pack(g_paths.voices, g_paths.downloads, v->key, v->language, g_rules, pk);
+    CvPhonemeVoice pv = {g_paths.voices, g_paths.downloads, v->key, v->language};
+    cv_parse_ssml_ex(ssml ? ssml : text, rate, pitch, volume, rules, cv_voice_phonemes, &pv, &u);
     free(ssml);
     const char *fallback = g_fallback && v->fallback[0] ? v->fallback : NULL;
+    vxs_set_rules_pack(g_stream, pk);
     DBG("speak %s (%zu segments) %s", v->key, u.n, text);
 
     float buf[2205];
@@ -257,11 +264,16 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
         if (g->text[0] || g->trailing_pause_ms) {
             vxs_start_with_fallback(g_stream, v->key, fallback, g->text, g->rate, g->pitch, g->volume,
                                     g->trailing_pause_ms);
+            // Each index mark goes out once the audio before it has: the
+            // bookmark is known before its audio is read.
+            VxsMark mk[64];
+            size_t nmk = 0, sent = 0;  // marks waiting; frames of this segment sent
             int done = 0, idle = 0;
             while (!done) {
                 if (atomic_load(&g_gen) != gen) { stopped = 1; break; }
                 size_t n = vxs_read(g_stream, buf, 2205, &done);
-                if (!n) {
+                nmk += vxs_read_marks(g_stream, mk + nmk, 64 - nmk);
+                if (!n && !done) {
                     if (++idle > 15000) { DBG("engine stalled: %s", vxs_last_error(g_stream)); break; }
                     usleep(1000);
                     continue;
@@ -271,10 +283,22 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
                     float x = buf[k] * 32767.0f;
                     pcm[k] = (int16_t)(x > 32767 ? 32767 : x < -32768 ? -32768 : x);
                 }
-                send_audio(pcm, n);
+                size_t at = 0;
+                while (nmk && (mk[0].frame < sent + n || done)) {
+                    size_t cut = mk[0].frame > sent + at ? mk[0].frame - sent : at;
+                    if (cut > n) cut = n;
+                    if (cut > at) send_audio(pcm + at, cut - at);
+                    at = cut;
+                    if (mk[0].id < u.nmarks) module_report_index_mark(u.marks[mk[0].id]);
+                    memmove(mk, mk + 1, --nmk * sizeof mk[0]);
+                }
+                if (n > at) send_audio(pcm + at, n - at);
+                sent += n;
             }
+            while (!stopped && (nmk = vxs_read_marks(g_stream, mk, 64)))  // more than fit in mk
+                for (size_t j = 0; j < nmk; j++)
+                    if (mk[j].id < u.nmarks) module_report_index_mark(u.marks[mk[j].id]);
         }
-        if (!stopped && g->mark) module_report_index_mark(g->mark);
     }
     cv_free_utterance(&u);
     if (stopped) {
@@ -343,7 +367,12 @@ int module_set(const char *var, const char *val) {
     else if (!strcmp(var, "synthesis_voice")) {
         snprintf(g_set.synthesis_voice, sizeof g_set.synthesis_voice, "%s", val);
         const CvVoice *v = strcmp(val, "NULL") ? cv_find_voice(g_voices, g_nvoices, val) : NULL;
-        if (v) vxs_preload(g_stream, v->key);  // warm it up before the first message
+        if (v) {  // warm it up before the first message
+            char pack[1300];
+            read_app_settings();
+            vxs_set_rules_pack(g_stream, g_newer ? cv_rules_pack_dir(g_paths.root, v->key, v->language, pack, sizeof pack) : NULL);
+            vxs_preload(g_stream, v->key);
+        }
     } else if (!strcmp(var, "cap_let_recogn")) snprintf(g_set.cap_let, sizeof g_set.cap_let, "%s", val);
     else if (!strcmp(var, "spelling_mode")) snprintf(g_set.spelling, sizeof g_set.spelling, "%s", val);
     else if (!strcmp(var, "punctuation_mode") || !strcmp(var, "pitch_range") || !strcmp(var, "punctuation_some") ||

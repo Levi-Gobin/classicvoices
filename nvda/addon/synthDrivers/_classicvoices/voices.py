@@ -5,8 +5,10 @@ import json
 import os
 import re
 
-IOS_BUILDS = (("ios3", "iOS 3"), ("ios4", "iOS 4"), ("ios5", "iOS 5"), ("ios6", "iOS 6"))
-ENHANCED_BUILDS = (("ios5", "iOS 5"), ("ios6", "iOS 6"))
+# "ios70" is iOS 7.0.6 (its own engine); "ios7" is 7.1.2, only the engine
+# for the Mavericks compacts.
+IOS_BUILDS = (("ios3", "iOS 3"), ("ios4", "iOS 4"), ("ios5", "iOS 5"), ("ios6", "iOS 6"), ("ios70", "iOS 7"))
+ENHANCED_BUILDS = (("ios5", "iOS 5"), ("ios6", "iOS 6"), ("ios70", "iOS 7"))
 MAC_ERAS = (("mac107", "Lion"), ("mac108", "Mountain Lion"), ("mac109", "Mavericks"))
 # Engine firmware needed per Mac era (and for Mavericks, premium vs compact).
 MAC_ENGINES = {"mac107": ("ios6",), "mac108": ("ios6",), "mac109": ("ios7", "ios10")}

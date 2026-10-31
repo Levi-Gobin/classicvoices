@@ -29,7 +29,7 @@ NVDA = os.path.join(ROOT, "nvda")
 SRC = os.path.join(NVDA, "src")
 OUT = os.path.join(ROOT, "build", "nvda")
 
-CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c")]
+CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c")]
 SHIM = [os.path.join(SRC, f) for f in ("vx_win.c", "mt_stub.c", "cvnvda.c", "vx_native_load.c")]
 # Apple's pronunciation rules, with PCRE2 built in (tools/pcre2_build.py fetches it)
 HOST = [os.path.join(ROOT, "ports", "host", f) for f in ("cv_catalog.c", "cv_rules.c")]
@@ -101,7 +101,12 @@ def build_dlls(cc64, cc86):
 
 def addon_version():
     manifest = open(os.path.join(NVDA, "addon", "manifest.ini"), encoding="utf-8").read()
-    return re.search(r"^version\s*=\s*(\S+)", manifest, re.M).group(1)
+    version = re.search(r"^version\s*=\s*(\S+)", manifest, re.M).group(1)
+    # the update check compares GitHub's releases with this number
+    update = open(os.path.join(NVDA, "addon", "synthDrivers", "_classicvoices", "update.py"), encoding="utf-8").read()
+    if re.search(r'^VERSION = "([^"]+)"', update, re.M).group(1) != version:
+        sys.exit("manifest.ini says %s but _classicvoices/update.py VERSION differs" % version)
+    return version
 
 
 def package():
@@ -126,7 +131,7 @@ def package():
         # semantics its C includes, and the glue
         rc = "synthDrivers/_classicvoices/recompiler/"
         z.write(os.path.join(ROOT, "tools", "recomp.py"), rc + "recomp.py")
-        for b in ("ios3", "ios4", "ios5", "ios6", "ios7", "ios10"):
+        for b in ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10"):
             z.write(os.path.join(ROOT, "tools", "profiles", b + ".txt"), rc + "profiles/%s.txt" % b)
         for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
             z.write(os.path.join(ROOT, "core", h), rc + h)

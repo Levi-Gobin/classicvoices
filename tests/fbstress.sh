@@ -13,7 +13,7 @@ mkdir -p build/fbstress
 [ -f build/fbstress/mt_glint.o ] || clang++ -O2 -g -Icore -Icore/mt -w -std=c++17 -c core/mt/mt_glint.cpp -o build/fbstress/mt_glint.o
 SRC=(core/*.c core/mt/*.c core/x86/*.c)
 SRC=(${SRC:#*/(vxcli|mtcli|mtimports|mtsay|mtswitch).c})
-OBJ=(build/obj/ios*.o build/obj3/ios*.o build/obj4/ios*.o build/obj5/ios*.o build/obj7/ios*.o build/obj10/ios*.o)
+OBJ=(build/obj/ios*.o build/obj3/ios*.o build/obj4/ios*.o build/obj5/ios*.o build/obj7/ios*.o build/obj70/ios*.o build/obj10/ios*.o)
 clang -O1 -g -fsanitize=address -fno-omit-frame-pointer "$@" -Icore -Icore/mt -Icore/x86 -w \
     -o build/fbstress/fbstress_asan tests/fbstress.c $SRC $OBJ build/fbstress/glint.o build/fbstress/mt_glint.o \
     -lc++ -lz -lsqlite3 -lbz2 -framework CoreFoundation -framework AudioToolbox -framework Accelerate

@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 
 static const struct { const char *build, *label; } kIos[] = {
-    {"ios3", "iOS 3"}, {"ios4", "iOS 4"}, {"ios5", "iOS 5"}, {"ios6", "iOS 6"}};
+    {"ios3", "iOS 3"}, {"ios4", "iOS 4"}, {"ios5", "iOS 5"}, {"ios6", "iOS 6"}, {"ios70", "iOS 7"}};
 static const struct { const char *era, *label, *compact_engine, *premium_engine; } kMac[] = {
     {"mac107", "Lion", "ios6", "ios6"},
     {"mac108", "Mountain Lion", "ios6", "ios6"},
@@ -197,8 +197,8 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
         }
         free_dirs(langs, nl);
     }
-    // enhanced iOS 5 / 6 voices
-    for (size_t b = 2; b < 4; b++) {
+    // enhanced iOS 5 / 6 / 7 voices
+    for (size_t b = 2; b < sizeof kIos / sizeof kIos[0]; b++) {
         if (!has_engine(voices_root, kIos[b].build) || !downloads_root) continue;
         snprintf(p, sizeof p, "%s/%s", downloads_root, kIos[b].build);
         char **langs;
@@ -214,7 +214,9 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
             snprintf(v->language, sizeof v->language, "%s", langs[i]);
             v->quality = 2;
             v->female = female_name(name);
-            // enhanced voices can't change pitch: their compact voice speaks pitched text
+            // iOS 5 and 6 enhanced voices can't change pitch: their compact
+            // voice speaks pitched text (iOS 7's engine changes it itself)
+            if (!strcmp(kIos[b].build, "ios70")) continue;
             char compact[1300];
             snprintf(compact, sizeof compact, "%s/%s/TTSResources/%s/broker.hdr", voices_root, kIos[b].build, langs[i]);
             if (is_file(compact)) snprintf(v->fallback, sizeof v->fallback, "%s/%s", kIos[b].build, langs[i]);
@@ -317,7 +319,7 @@ const CvVoice *cv_find_voice(const CvVoice *v, size_t n, const char *name_or_key
 }
 
 const char *cv_voice_build(const CvVoice *v) {
-    static const char *builds[] = {"ios3", "ios4", "ios5", "ios6", "ios7", "ios10"};
+    static const char *builds[] = {"ios3", "ios4", "ios5", "ios6", "ios7", "ios70", "ios10"};
     const char *k = v->key;
     if (!strncmp(k, "mac109/", 7)) {
         size_t n = strlen(k);

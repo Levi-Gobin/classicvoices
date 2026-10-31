@@ -28,12 +28,13 @@ targetTemplates:
     type: library.static
     sources:
       - path: ../core
-        includes: ["thumb.c", "vxengine.c", "vxstream.c"]
+        includes: ["thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c"]
       - path: ../build/gen
       - path: ../build/gen3
       - path: ../build/gen4
       - path: ../build/gen5
       - path: ../build/gen7
+      - path: ../build/gen70
       - path: ../build/gen10
       # recompiled MacinTalk (tools/build_mt_native.sh); only the generations
       # whose engines the build had
@@ -71,8 +72,8 @@ targetTemplates:
         # all of it: the recompiled MacinTalk registers itself from a
         # constructor nothing refers to
         OTHER_LDFLAGS: ["$(inherited)", "-Wl,-force_load,$(BUILT_PRODUCTS_DIR)/libEngineCode.a", "-lc++"]
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "2"
+        MARKETING_VERSION: "0.4.0"
+        CURRENT_PROJECT_VERSION: "4"
   App:
     templates: [Engine]
     type: application
@@ -103,7 +104,7 @@ targetTemplates:
       - name: Bundle firmware voices
         script: |
           set -e
-          for B in ios7 ios6 ios5 ios4 ios3; do
+          for B in ios70 ios7 ios6 ios5 ios4 ios3; do
             SRC="$SRCROOT/../extracted/$B/VoiceServices.framework"
             DST="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/Voices/$B"
             mkdir -p "$DST"

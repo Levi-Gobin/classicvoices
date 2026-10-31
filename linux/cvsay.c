@@ -2,12 +2,14 @@
 // stdout, list voices, and time the engine. Linux (and macOS, for testing).
 //
 //   classicvoices-say -l
-//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-o out.wav] TEXT...
+//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-o out.wav] TEXT...
 //
 // RATE and PITCH are percent of normal (100). VOICE is a name from -l
 // ("Samantha (iOS 6)"), a key ("ios6/en-US") or just "Samantha". TEXT may be
-// SSML. -n leaves out Apple's pronunciation rules. Without -o the WAV goes to stdout. Data: $CLASSICVOICES_DATA, else
-// $XDG_DATA_HOME/classicvoices (~/.local/share/classicvoices).
+// SSML. -n leaves out Apple's pronunciation rules; -N adds the newer ones
+// (classicvoices-data pronunciation). Without -o the WAV goes to stdout.
+// Data: $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
+// (~/.local/share/classicvoices).
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,8 +35,8 @@ static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] 
 
 int main(int argc, char **argv) {
     const char *voice = NULL, *lang = NULL, *outp = NULL;
-    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qn")) != -1) {
+    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, opt;
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnN")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -44,8 +46,9 @@ int main(int argc, char **argv) {
         case 'o': outp = optarg; break;
         case 'q': quiet = 1; break;
         case 'n': norules = 1; break;
+        case 'N': newer = 1; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] TEXT...\n", argv[0]);
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] TEXT...\n", argv[0]);
             return 2;
         }
     }
@@ -72,7 +75,11 @@ int main(int argc, char **argv) {
     VxStream *s = vxs_create(paths.voices);
     vxs_set_asset_root(s, paths.downloads);
     CvUtterance u;
-    cv_parse_ssml_rules(text, rate, pitch, -1, norules ? NULL : cv_rules_for(paths.voices, cv_voice_build(v), v->language), &u);
+    CvPhonemeVoice pv = {paths.voices, paths.downloads, v->key, v->language};
+    char pack[1300];
+    const char *pk = newer ? cv_rules_pack_dir(paths.root, v->key, v->language, pack, sizeof pack) : NULL;
+    cv_parse_ssml_ex(text, rate, pitch, -1, cv_rules_for_voice_pack(paths.voices, paths.downloads, v->key, v->language, !norules, pk),
+                     cv_voice_phonemes, &pv, &u);
 
     FILE *out = outp ? fopen(outp, "wb") : stdout;
     if (!out) { perror(outp); return 1; }
@@ -86,13 +93,19 @@ int main(int argc, char **argv) {
     double t0 = now_ms(), first = -1;
     float buf[2048];
     int16_t pcm[2048];
+    vxs_set_rules_pack(s, pk);
     for (size_t i = 0; i < u.n; i++) {
         if (!u.seg[i].text[0] && !u.seg[i].trailing_pause_ms) continue;
         vxs_start_with_fallback(s, v->key, v->fallback[0] ? v->fallback : NULL, u.seg[i].text, u.seg[i].rate,
                                 u.seg[i].pitch, u.seg[i].volume, u.seg[i].trailing_pause_ms);
         int done = 0, idle = 0;
+        size_t start = frames;
+        VxsMark mk[64];
         while (!done && idle < 20000) {
             size_t n = vxs_read(s, buf, 2048, &done);
+            for (size_t c = vxs_read_marks(s, mk, 64), j = 0; j < c; j++)
+                if (!quiet && mk[j].id < u.nmarks)
+                    fprintf(stderr, "mark %s at %.0f ms of audio\n", u.marks[mk[j].id], (start + mk[j].frame) / 22.05);
             if (!n) { usleep(1000); idle++; continue; }
             idle = 0;
             if (first < 0) first = now_ms() - t0;
@@ -103,7 +116,6 @@ int main(int argc, char **argv) {
             fwrite(pcm, 2, n, out);
             frames += n;
         }
-        if (!quiet && u.seg[i].mark) fprintf(stderr, "mark %s at %.0f ms of audio\n", u.seg[i].mark, frames / 22.05);
     }
     double total = now_ms() - t0;
     if (outp && fseek(out, 0, SEEK_SET) == 0) {

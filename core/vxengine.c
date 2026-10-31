@@ -41,19 +41,21 @@ typedef struct {
     uint32_t stub_addr;                       // identifies the build
     uint32_t iface_heap, iface_critsec, iface_stream;
     uint32_t fn_initialize, fn_open, fn_setparams, fn_setoutdevice, fn_process;  // 0 = from symbols
+    uint32_t fn_resourceload;  // stripped builds: found by matching iOS 5's _vauto_ttsResourceLoad
     int rate_khz;
     int split_broker;  // iOS 3: common/broker.hdr + per-language broker.hdr, language from pipeline string
 } Build;
 
 static const Build kBuilds[] = {
-    {"iOS 10.3.4 (14G61)", 0x263AA4, 0x264958, 0x264968, 0x264978, 0, 0, 0, 0, 0, 22, 0},
-    {"iOS 7.1.2 (11D257)", 0x27F968, 0x281018, 0x281028, 0x281038, 0, 0, 0, 0, 0, 22, 0},
-    {"iOS 6.1.6 (10B500)", 0x206A54, 0x208B08, 0x208B18, 0x208B28, 0, 0, 0, 0, 0, 22, 0},
-    {"iOS 5.1.1 (9B206)", 0x202A7C, 0x204A34, 0x204A44, 0x204A60, 0, 0, 0, 0, 0, 22, 0},
+    {"iOS 10.3.4 (14G61)", 0x263AA4, 0x264958, 0x264968, 0x264978, 0, 0, 0, 0, 0, 0, 22, 0},
+    {"iOS 7.1.2 (11D257)", 0x27F968, 0x281018, 0x281028, 0x281038, 0, 0, 0, 0, 0, 0, 22, 0},
+    {"iOS 7.0.6 (11B651)", 0x259978, 0x25B008, 0x25B018, 0x25B028, 0, 0, 0, 0, 0, 0, 22, 0},
+    {"iOS 6.1.6 (10B500)", 0x206A54, 0x208B08, 0x208B18, 0x208B28, 0, 0, 0, 0, 0, 0, 22, 0},
+    {"iOS 5.1.1 (9B206)", 0x202A7C, 0x204A34, 0x204A44, 0x204A60, 0, 0, 0, 0, 0, 0, 22, 0},
     {"iOS 3.1.3 (7E18)", 0x18FAB0, 0x190C54, 0x190C44, 0x190C28,
-     0xC0510, 0xBF914, 0xBECE0, 0xBDBB0, 0xBF61C, 16, 1},
+     0xC0510, 0xBF914, 0xBECE0, 0xBDBB0, 0xBF61C, 0xBE438, 16, 1},
     {"iOS 4.3.5 (8L1)", 0x1C2A70, 0x1C4968, 0x1C4958, 0x1C493C,
-     0xC9618, 0xC90F0, 0xCA98C, 0xC83B0, 0xCA738, 16, 1},
+     0xC9618, 0xC90F0, 0xCA98C, 0xC83B0, 0xCA738, 0xCA85C, 16, 1},
 };
 
 #define VE_MSG_OUTBUFREQ  0x8u
@@ -101,6 +103,7 @@ struct Vx {
 
     // engine
     uint32_t fn_initialize, fn_open, fn_setparams, fn_setoutdevice, fn_process;
+    uint32_t fn_resourceload;  // 0: this build's isn't known
     const Build *build;
     uint32_t hspeech, hinst;  // guest addresses of 2-word handles
     uint32_t pcm_buf, pcm_buf_size, mark_buf;
@@ -135,6 +138,8 @@ static const char *gstr(Vx *vx, uint32_t a) {
 
 static uint32_t round_size(uint32_t n) { n = n < 16 ? 16 : n; return (n + 15) & ~15u; }
 
+static void heap_free(Vx *vx, uint32_t a);
+
 static uint32_t heap_alloc(Vx *vx, uint32_t n) {
     n = round_size(n);
     Cpu *c = &vx->cpu;
@@ -142,8 +147,11 @@ static uint32_t heap_alloc(Vx *vx, uint32_t n) {
     if (n <= HEAP_BUCKETS * 16) {
         uint32_t *head = &vx->free_small[n / 16];
         if (*head) { a = *head; *head = g32(&c->k, a); }
-    } else {
-        // best fit; a big enough remainder goes back on the list
+    }
+    if (!a && vx->free_large) {
+        // best fit from the large blocks (small requests too, once their own
+        // size has none free: rule sets grow their tables a step at a time,
+        // and each step's size is used only once)
         uint32_t prev = 0, cur = vx->free_large, best = 0, best_prev = 0, best_n = 0;
         while (cur) {
             uint32_t cn = g32(&c->k, cur - 8);
@@ -156,15 +164,14 @@ static uint32_t heap_alloc(Vx *vx, uint32_t n) {
         }
         if (best) {
             uint32_t next = g32(&c->k, best);
-            if (best_n - n > 16 + HEAP_BUCKETS * 16) {
-                uint32_t r = best + n + 16;
-                s32(&c->k, r - 8, best_n - n - 16);
-                s32(&c->k, r, next);
-                next = r;
-                s32(&c->k, best - 8, n);
-            }
             if (best_prev) s32(&c->k, best_prev, next); else vx->free_large = next;
             a = best;
+            if (best_n - n >= 32) {  // the rest becomes a free block of its own
+                s32(&c->k, a - 8, n);
+                uint32_t r = a + n + 16;
+                s32(&c->k, r - 8, best_n - n - 16);
+                heap_free(vx, r);
+            }
         }
     }
     if (!a) {
@@ -229,6 +236,15 @@ static void h_free(Vx *vx) { heap_free(vx, arg(vx, 0)); }
 static void h_malloc_size(Vx *vx) { ret(vx, heap_size(vx, arg(vx, 0))); }
 static void h_realloc(Vx *vx) {
     uint32_t old = arg(vx, 0), n = arg(vx, 1);
+    uint32_t have = old ? heap_size(vx, old) : 0;
+    if (have && round_size(n) <= have) { ret(vx, old); return; }  // it fits already
+    if (have && old + have == vx->heap_next && old + round_size(n) <= HEAP_HI) {
+        // the last block: grow it where it is
+        s32(&vx->cpu.k, old - 8, round_size(n));
+        vx->heap_next = old + round_size(n);
+        ret(vx, old);
+        return;
+    }
     uint32_t a = heap_alloc(vx, n);
     if (old) {
         uint32_t on = heap_size(vx, old);
@@ -1155,11 +1171,11 @@ static int load_macho(Vx *vx, const char *path) {
     struct { const char *name; uint32_t *dst; } want[] = {
         {"_vauto_ttsInitialize", &vx->fn_initialize}, {"_vauto_ttsOpen", &vx->fn_open},
         {"_vauto_ttsSetParamList", &vx->fn_setparams}, {"_vauto_ttsSetOutDevice", &vx->fn_setoutdevice},
-        {"_vauto_ttsProcessText2Speech", &vx->fn_process},
+        {"_vauto_ttsProcessText2Speech", &vx->fn_process}, {"_vauto_ttsResourceLoad", &vx->fn_resourceload},
         // iOS 7 calls the engine directly (same signatures)
         {"_ve_ttsInitialize", &vx->fn_initialize}, {"_ve_ttsOpen", &vx->fn_open},
         {"_ve_ttsSetParamList", &vx->fn_setparams}, {"_ve_ttsSetOutDevice", &vx->fn_setoutdevice},
-        {"_ve_ttsProcessText2Speech", &vx->fn_process},
+        {"_ve_ttsProcessText2Speech", &vx->fn_process}, {"_ve_ttsResourceLoad", &vx->fn_resourceload},
     };
     for (uint32_t i = 0; i < nsyms; i++) {
         const uint8_t *nl = d + symoff + 12 * i;
@@ -1212,6 +1228,7 @@ static int load_macho(Vx *vx, const char *path) {
         vx->fn_setparams = vx->build->fn_setparams;
         vx->fn_setoutdevice = vx->build->fn_setoutdevice;
         vx->fn_process = vx->build->fn_process;
+        vx->fn_resourceload = vx->build->fn_resourceload;
     }
     if (!vx->fn_initialize || !vx->fn_process || !stub_addr) {
         snprintf(vx->err, sizeof vx->err, "voiced is missing the Vocalizer API symbols");
@@ -1238,8 +1255,8 @@ static void outnotify(Vx *vx) {
         uint32_t n = g32(&vx->cpu.k, param + 4), p = g32(&vx->cpu.k, param + 8);
         // Markers before this buffer's audio. VE_MARKINFO is 40 bytes here:
         // {?, type, src pos, src len (bytes of the UTF-16 input), dest pos
-        // (samples into the utterance), dest len, phoneme, ...}; type 1 = sentence,
-        // 2 = word.
+        // (samples into the utterance), dest len, phoneme, bookmark id, ...};
+        // type 1 = sentence, 2 = word, 8 = bookmark.
         uint32_t mc = g32(&vx->cpu.k, param + 12), mp = g32(&vx->cpu.k, param + 16);
         if (vx->word_cb && mp && !vx->cancelled) {
             if (mc > MARK_SLOTS) mc = MARK_SLOTS;
@@ -1247,7 +1264,7 @@ static void outnotify(Vx *vx) {
             for (uint32_t i = 0; i < mc; i++) {
                 uint32_t q = mp + i * MARK_SIZE;
                 uint32_t type = g32(&vx->cpu.k, q + 4);
-                if (type == VX_MARK_SENTENCE || type == VX_MARK_WORD)
+                if (type == VX_MARK_SENTENCE || type == VX_MARK_WORD || type == VX_MARK_BOOKMARK)
                     vx->word_cb(vx->word_ctx, type, g32(&vx->cpu.k, q + 8) / 2, g32(&vx->cpu.k, q + 12) / 2,
                                 g32(&vx->cpu.k, q + 16));
             }
@@ -1522,6 +1539,26 @@ int vx_speak_utf8(Vx *vx, const char *text, VxPcmCallback cb, void *ctx) {
     int rc = vx_speak_utf16(vx, u, k, cb, ctx);
     free(u);
     return rc;
+}
+
+int vx_load_resource(Vx *vx, const char *mime, const void *data, size_t len) {
+    if (!vx->fn_resourceload) {
+        snprintf(vx->err, sizeof vx->err, "%s can't load resources", vx->build->name);
+        return -1;
+    }
+    GUARD(vx);
+    // ve_ttsResourceLoad(hInst, mime, size, data, &hResource): the engine
+    // keeps using the data, so it stays allocated for the instance's life.
+    uint32_t buf = heap_alloc(vx, (uint32_t)len + 1);
+    memcpy(vx->mem + buf, data, len);
+    vx->mem[buf + len] = 0;
+    uint32_t gmime = new_cstr(vx, mime);
+    uint32_t hres = new_zeroed(vx, 8);
+    uint32_t args[6] = {g32(&vx->cpu.k, vx->hinst), g32(&vx->cpu.k, vx->hinst + 4), gmime, (uint32_t)len, buf, hres};
+    uint32_t rc = cpu_call(&vx->cpu, vx->fn_resourceload, args, 6, NULL);
+    UNGUARD(vx);
+    if (rc) snprintf(vx->err, sizeof vx->err, "ttsResourceLoad %s failed: %#x", mime, rc);
+    return (int)rc;
 }
 
 void vx_set_word_callback(Vx *vx, VxWordCallback cb, void *ctx) {

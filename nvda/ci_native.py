@@ -24,6 +24,7 @@ VERSIONS = {  # build key -> (version for ipsw.me, device)
     "ios4": ("4.3.5", "iPhone2,1"),
     "ios5": ("5.1.1", "iPhone2,1"),
     "ios6": ("6.1.6", "iPhone2,1"),
+    "ios70": ("7.0.6", "iPhone3,1"),
     "ios7": ("7.1.2", "iPhone3,1"),
     "ios10": ("10.3.4", "iPhone5,1"),
 }

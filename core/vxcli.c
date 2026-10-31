@@ -2,8 +2,8 @@
 #include "vxengine.h"
 #ifdef VX_HAVE_NATIVE
 #include "thumb.h"
-extern const NativeEntry vx_native_ios10[], vx_native_ios7[], vx_native_ios6[], vx_native_ios5[], vx_native_ios4[], vx_native_ios3[];
-extern const size_t vx_native_ios10_count, vx_native_ios7_count, vx_native_ios6_count, vx_native_ios5_count, vx_native_ios4_count,
+extern const NativeEntry vx_native_ios10[], vx_native_ios70[], vx_native_ios7[], vx_native_ios6[], vx_native_ios5[], vx_native_ios4[], vx_native_ios3[];
+extern const size_t vx_native_ios10_count, vx_native_ios70_count, vx_native_ios7_count, vx_native_ios6_count, vx_native_ios5_count, vx_native_ios4_count,
     vx_native_ios3_count;
 #endif
 #include <stdio.h>
@@ -62,6 +62,7 @@ int main(int argc, char **argv) {
         if (strstr(b, "iOS 3")) vx_set_native(vx, vx_native_ios3, vx_native_ios3_count);
         else if (strstr(b, "iOS 4")) vx_set_native(vx, vx_native_ios4, vx_native_ios4_count);
         else if (strstr(b, "iOS 5")) vx_set_native(vx, vx_native_ios5, vx_native_ios5_count);
+        else if (strstr(b, "iOS 7.0")) vx_set_native(vx, vx_native_ios70, vx_native_ios70_count);
         else if (strstr(b, "iOS 7")) vx_set_native(vx, vx_native_ios7, vx_native_ios7_count);
         else if (strstr(b, "iOS 10")) vx_set_native(vx, vx_native_ios10, vx_native_ios10_count);
         else vx_set_native(vx, vx_native_ios6, vx_native_ios6_count);

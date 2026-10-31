@@ -45,6 +45,7 @@ struct MtEngine {
     char *seg24;         // mte_speak's respelled text
     char *segcmd;        // ... and with a leading command's bracket put back
     int modern_rate;     // rate follows today's Alex's curve, not a percent of the voice's default
+    MtMarkCallback mark_cb;  // bookmarks (ESC\mrk=N\), with mte_speak's ctx
     pthread_t dog;
     int dog_started;
 };
@@ -286,6 +287,7 @@ static void reset_channel(MtEngine *e) {
 void mte_set_reset_commands(MtEngine *e, int on) { e->reset_commands = on; }
 void mte_set_24_hour(MtEngine *e, int on) { e->spell_24h = on; }
 void mte_set_modern_rate(MtEngine *e, int on) { e->modern_rate = on; }
+void mte_set_mark_callback(MtEngine *e, MtMarkCallback cb) { e->mark_cb = cb; }
 
 // Words per minute today's Alex (macOS 26) speaks at a rate of `pct` percent
 // of normal, as the system sends it (12.5% at the slowest, 400% at the
@@ -378,9 +380,12 @@ static double pitch_ratio(int v) {
 }
 
 // Convert one segment of UTF-8 (with ESC commands) to MacRoman with
-// MacinTalk embedded commands.
+// MacinTalk embedded commands. Vocalizer's L&H+ phonemes (ESC\toi=lhp\ ...
+// ESC\toi=orth\) mean nothing to MacinTalk and are left out; its own
+// ([[inpt PHON]] ...) pass through.
 static size_t convert(MtEngine *e, const char *s, const char *end, char *out, size_t cap, double pitch_base) {
     size_t n = 0;
+    int lhp = 0;
 #define PUT(ch) do { if (n + 1 < cap) out[n++] = (char)(ch); } while (0)
     for (const char *p = s; p < end;) {
         unsigned char c = (unsigned char)*p;
@@ -390,7 +395,19 @@ static size_t convert(MtEngine *e, const char *s, const char *end, char *out, si
             char cmd[64];
             snprintf(cmd, sizeof cmd, "%.*s", (int)(q - p - 2), p + 2);
             char buf[64];
-            if (!strncmp(cmd, "pause=", 6)) snprintf(buf, sizeof buf, " [[slnc %d]] ", atoi(cmd + 6));
+            if (!strncmp(cmd, "toi=", 4)) lhp = !strcmp(cmd + 4, "lhp");
+            if (lhp || !strncmp(cmd, "toi=", 4)) buf[0] = 0;
+            else if (!strncmp(cmd, "pause=", 6)) snprintf(buf, sizeof buf, " [[slnc %d]] ", atoi(cmd + 6));
+            else if (!strncmp(cmd, "rate=", 5)) {  // percent of normal, as mte_speak's rate
+                int v = atoi(cmd + 5);
+                double wpm = e->modern_rate ? rate_for(e, modern_target(v < 10 ? 10 : v > 400 ? 400 : v))
+                                            : e->base_rate * (v < 50 ? 50 : v > 400 ? 400 : v) / 100.0;
+                snprintf(buf, sizeof buf, " [[rate %.1f]] ", wpm);
+            } else if (!strncmp(cmd, "vol=", 4)) {  // 0-100, as mte_speak's volume
+                int v = atoi(cmd + 4);
+                snprintf(buf, sizeof buf, " [[volm %.2f]] ", (v < 0 ? 0 : v > 100 ? 100 : v) / 100.0);
+            } else if (!strcmp(cmd, "tn=spell")) snprintf(buf, sizeof buf, " [[char LTRL]] ");
+            else if (!strcmp(cmd, "tn=normal")) snprintf(buf, sizeof buf, " [[char NORM]] ");
             else if (!strncmp(cmd, "pitch=", 6)) snprintf(buf, sizeof buf, " [[pbas %.2f]] ", pitch_base + 12.0 * log2(pitch_ratio(atoi(cmd + 6))));
             else if (!strncmp(cmd, "pitchpct=", 9) && atof(cmd + 9) > 0)  // percent of the voice's pitch (clamp_commands caps it)
                 snprintf(buf, sizeof buf, " [[pbas %.2f]] ", fmax(0, pitch_base + 12.0 * log2(atof(cmd + 9) / 100)));
@@ -399,6 +416,7 @@ static size_t convert(MtEngine *e, const char *s, const char *end, char *out, si
             p = q + 1;
             continue;
         }
+        if (lhp) { p++; continue; }
         uint32_t cp;
         int len = c < 0x80 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4;
         if (p + len > end) break;
@@ -725,8 +743,9 @@ int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pi
     if (pb != e->cur_pitch) { set_fixed(e, SO_PBAS, pb); e->cur_pitch = pb; }
     if (vol != e->cur_volume) { set_fixed(e, SO_VOLM, vol); e->cur_volume = vol; }
     // Each ESC\eos=1\ segment is its own utterance, as VoiceOver's separate
-    // announcements were.
-    static const char kEos[] = "\x1b\\eos=1\\";
+    // announcements were; so is each piece between bookmarks (ESC\mrk=N\),
+    // each reported to mark_cb once the piece before it is spoken.
+    static const char kEos[] = "\x1b\\eos=1\\", kMrk[] = "\x1b\\mrk=";
     free(e->seg24);
     e->seg24 = NULL;
     free(e->segcmd);
@@ -739,7 +758,9 @@ int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pi
     char *seg = e->seg = malloc(cap + ccap), *clamped = seg + cap;
     int rc = 0;
     while (p < end) {
-        const char *q = strstr(p, kEos);
+        const char *q = strstr(p, kEos), *mk = strstr(p, kMrk);
+        if (mk && (!q || mk < q)) q = mk;
+        else mk = NULL;
         const char *segend = q ? q : end;
         size_t n = convert(e, p, segend, seg, cap, pb);
         int blank = 1;
@@ -754,7 +775,11 @@ int mte_speak(MtEngine *e, const char *voice, const char *utf8, int rate, int pi
             rc = speak_one(e, text, n, cb, ctx);
             if (rc) break;
         }
-        p = q ? q + sizeof kEos - 1 : end;
+        if (mk) {
+            const char *num = mk + sizeof kMrk - 1, *close = strchr(num, '\\');
+            if (e->mark_cb) e->mark_cb(ctx, (unsigned)strtoul(num, NULL, 10));
+            p = close ? close + 1 : end;
+        } else p = q ? q + sizeof kEos - 1 : end;
     }
     free(seg);
     e->seg = NULL;

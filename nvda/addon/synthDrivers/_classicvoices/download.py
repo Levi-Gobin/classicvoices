@@ -2,7 +2,7 @@
 # is in place:
 #  - enhanced iOS voices: MobileAsset zips on appldnld.apple.com
 #    (EnhancedCatalog.json carries the URLs and SHA-1s; format 3 = iOS 5,
-#    format 4 = iOS 6)
+#    format 4 = iOS 6, format 5 = iOS 7)
 #  - Mac OS X Lion / Mountain Lion / Mavericks voices: flat packages on
 #    swcdn.apple.com (MacVoiceCatalog.json, built by tools/mac_catalog.py).
 #    A package is xar -> Payload (gzip) -> cpio -> <Name>.SpeechVoice whose

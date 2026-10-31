@@ -3,7 +3,7 @@
 //
 //   <data>/Voices/<build>/voiced, TTSResources/<lang>/broker.hdr   firmware
 //   <data>/Voices/mac10x/common/                                   Mac common files
-//   <data>/Downloads/<build>/<lang>/broker.hdr.asset               enhanced iOS 5/6
+//   <data>/Downloads/<build>/<lang>/broker.hdr.asset               enhanced iOS 5/6/7
 //   <data>/Downloads/mac10x/<Voice>[Compact]/broker.hdr            Mac OS X voices
 //   <data>/Native/<abi>/cvnative_<build>.so                        optional fast code
 //

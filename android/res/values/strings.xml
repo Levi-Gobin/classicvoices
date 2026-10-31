@@ -106,7 +106,14 @@
     <!-- settings -->
     <string name="speech">Speech</string>
     <string name="setting_rules">Apple\'s pronunciation rules</string>
-    <string name="setting_rules_explained">The text rules iOS 5 and 6 applied before speaking, per language: “iOS” is spelled out, “OS X” is “OS ten”, St and Dr become Street and Drive, and so on.</string>
+    <string name="setting_rules_explained">The text rules each voice\'s own iOS or Mac OS X release applied before speaking: “iOS” is spelled out, “OS X” is “OS ten”, St and Dr become Street and Drive, and so on.</string>
+    <string name="setting_newer_rules">Newer pronunciation rules</string>
+    <string name="setting_newer_rules_explained">Apple\'s later pronunciation dictionary and rules, added to the voice\'s own. Turning this on downloads them from Apple for every language (about 5 MB).</string>
+    <string name="newer_rules_job">Newer pronunciation rules</string>
+    <string name="newer_rules_catalog">Finding the pronunciation rules</string>
+    <string name="newer_rules_bad_catalog">Apple\'s list of pronunciation rules couldn\'t be read</string>
+    <string name="newer_rules_downloading">Downloading the pronunciation rules for %1$s</string>
+    <string name="newer_rules_done">Pronunciation rules downloaded</string>
     <string name="setting_fallback">Compact voice for pitch changes</string>
     <string name="setting_fallback_explained">Enhanced and premium voices can\'t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch uses the voice\'s compact version. Voices without a compact version here are unaffected.</string>
     <string name="tts_heading">Text-to-speech</string>
@@ -133,4 +140,7 @@
     <string name="the_ipsw">The firmware file</string>
     <string name="the_pack">The data pack</string>
     <string name="no_file_picker">This phone has no file picker</string>
+    <string name="update_available">Classic Voices %1$s is available. Open its download page?</string>
+    <string name="update_open">Open</string>
+    <string name="update_later">Not now</string>
 </resources>

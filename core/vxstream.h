@@ -49,9 +49,31 @@ typedef struct {
 } VxsWord;
 size_t vxs_read_words(VxStream *s, VxsWord *out, size_t max);
 
+// Bookmarks: ESC\mrk=N\ in the text (N 0-4294967295) is reached at `frame`,
+// counted as for words, without breaking the sentence it is in. Every one is
+// reported, in the order written, once the audio before it is known: where
+// the engine itself loses one, it is placed with the next word. They come
+// before the audio they belong to, as words do; read them as the audio
+// arrives. MacinTalk voices: the text is split at each one (MacinTalk can't
+// report a place inside an utterance). Each vxs_start begins a new list.
+typedef struct {
+    uint32_t frame;
+    uint32_t id;
+} VxsMark;
+size_t vxs_read_marks(VxStream *s, VxsMark *out, size_t max);
+
 // Engine pitch value (1-100, 50 = normal) for a pitch in percent of normal;
 // also the value for an inline ESC\\pitch=N\\ command.
 int vxs_engine_pitch(int percent);
+
+// Apple's later pronunciation pack for the next utterances' voice (and its
+// compact fallback): the folder holding vocalizer-user-dict.dat for the
+// voice's language, which goes into the engine as iOS 12 loaded it. (The
+// pack's rule files are the caller's to apply to the text, with the voice's
+// own rules.) NULL or "": none. Takes
+// effect from the next vxs_start or vxs_preload; an engine opened with a
+// different pack starts again. Vocalizer voices only.
+void vxs_set_rules_pack(VxStream *s, const char *dir);
 
 // Warm up a language's engine on the worker thread so the first utterance is fast.
 void vxs_preload(VxStream *s, const char *voice_key);

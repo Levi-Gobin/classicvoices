@@ -40,7 +40,7 @@ public class ImportService extends Service {
     }
 
     static final class Job {
-        final String kind;   // "firmware", "ipsw", "download", "pack", "fast"
+        final String kind;   // "firmware", "ipsw", "download", "pack", "fast", "pronunciation"
         final String arg;    // build key, download id, or content Uri
         final String label;
 
@@ -288,6 +288,9 @@ public class ImportService extends Service {
                 break;
             case FastCode.JOB:
                 FastCode.build(this, p, j.arg.equals(FastCode.AGAIN));
+                break;
+            case Pronunciation.JOB:
+                Pronunciation.download(this, p);
                 break;
             default:
                 throw new IOException("unknown job " + j.kind);

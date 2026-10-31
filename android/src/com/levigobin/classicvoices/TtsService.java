@@ -2,6 +2,8 @@ package com.levigobin.classicvoices;
 
 import android.media.AudioFormat;
 import android.os.Build;
+import android.text.Spanned;
+import android.text.style.TtsSpan;
 import android.speech.tts.SynthesisCallback;
 import android.speech.tts.SynthesisRequest;
 import android.speech.tts.TextToSpeech;
@@ -58,6 +60,7 @@ public class TtsService extends TextToSpeechService {
             VoiceInfo v = Data.defaultFor(this, lang, country);
             if (v != null) {
                 current = v;
+                Native.setRulesPack(Pronunciation.packFor(this, v));
                 Native.preload(v.key);
             }
         }
@@ -91,6 +94,7 @@ public class TtsService extends TextToSpeechService {
         VoiceInfo v = Data.byAndroidName(this, name);
         if (v == null) return TextToSpeech.ERROR;
         current = v;
+        Native.setRulesPack(Pronunciation.packFor(this, v));
         Native.preload(v.key);
         return TextToSpeech.SUCCESS;
     }
@@ -126,14 +130,49 @@ public class TtsService extends TextToSpeechService {
         if (text == null) text = "";
         // test builds log what they're asked to say (adb logcat -s CVSPEAK), to check TalkBack's wording
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) Log.d("CVSPEAK", text);
-        speak(this, v, text, request.getSpeechRate(), request.getPitch(), cb);
+        speak(this, v, text, cs instanceof Spanned ? (Spanned) cs : null, request.getSpeechRate(), request.getPitch(), cb);
     }
 
-    private void speak(TtsService s, VoiceInfo v, String text, int rate, int pitch, SynthesisCallback cb) {
-        if (Data.rulesEnabled(s)) {
-            Rules r = Rules.forVoice(s, v);
-            if (r != null) text = r.apply(text);
+    // The text as SSML when it has verbatim spans (said letter by letter),
+    // with Apple's rules applied to the rest; null when it has none.
+    private static String spelledSsml(Spanned sp, Rules rules) {
+        if (Build.VERSION.SDK_INT < 21) return null;
+        TtsSpan[] spans = sp.getSpans(0, sp.length(), TtsSpan.class);
+        List<int[]> spell = new ArrayList<>();
+        for (TtsSpan t : spans)
+            if (TtsSpan.TYPE_VERBATIM.equals(t.getType())) spell.add(new int[] {sp.getSpanStart(t), sp.getSpanEnd(t)});
+        if (spell.isEmpty()) return null;
+        java.util.Collections.sort(spell, new java.util.Comparator<int[]>() {
+            @Override
+            public int compare(int[] a, int[] b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }
+        });
+        String text = sp.toString();
+        StringBuilder out = new StringBuilder("<speak>");
+        int at = 0;
+        for (int[] r : spell) {
+            if (r[0] < at) continue;  // overlapping
+            String plain = text.substring(at, r[0]);
+            out.append(xml(rules != null ? rules.apply(plain) : plain));
+            out.append("<say-as interpret-as=\"characters\">").append(xml(text.substring(r[0], r[1]))).append("</say-as>");
+            at = r[1];
         }
+        String plain = text.substring(at);
+        out.append(xml(rules != null ? rules.apply(plain) : plain)).append("</speak>");
+        return out.toString();
+    }
+
+    private static String xml(String s) {
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+    }
+
+    private void speak(TtsService s, VoiceInfo v, String text, Spanned spans, int rate, int pitch, SynthesisCallback cb) {
+        // Two independent switches: the voice's own release's rules, and
+        // Apple's later pack (its dictionary goes into the engine, its rules run here).
+        String pack = Pronunciation.packFor(s, v);
+        Rules rules = Rules.forVoice(s, v, Data.rulesEnabled(s), pack);
+        String ssml = spans != null ? spelledSsml(spans, rules) : null;
+        if (ssml != null) text = ssml;
+        else if (rules != null) text = rules.apply(text);
         String fallback = Data.fallbackEnabled(s) ? v.fallback : "";
         byte[] utf8;
         try {
@@ -146,7 +185,8 @@ public class TtsService extends TextToSpeechService {
         int r = Math.max(50, Math.min(400, rate));
         int p = Math.max(50, Math.min(200, pitch));
         if (cb.start(Native.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
-        if (Native.begin(v.key, fallback, utf8, false, r, p, -1) < 0) {
+        Native.setRulesPack(pack);
+        if (Native.begin(v.key, fallback, utf8, ssml != null, r, p, -1) < 0) {
             Log.w(TAG, "engine not ready: " + Native.lastError());
             cb.error();
             return;
