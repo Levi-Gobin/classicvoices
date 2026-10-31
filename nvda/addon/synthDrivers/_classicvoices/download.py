@@ -43,32 +43,52 @@ def mac_catalog():
     return _catalog("MacVoiceCatalog.json")["voices"]
 
 
-def available(voices_root, downloads_root):
-    """Downloads whose engine firmware is present and that aren't installed
-    yet: [(kind, entry, label, size)]."""
+# The firmware a Mac era's voices need before they can be downloaded: the
+# engine, and the firmware their common files come from (firmware.MAC_COMMON).
+MAC_FIRMWARE = {"mac107": ("ios5", "ios6"), "mac108": ("ios6", cv_voices.IOS7), "mac109": (cv_voices.IOS7,)}
+
+
+def suggested(f):
+    """The firmware to get for a requirement: of the two iOS 7 ones, 7.0.6,
+    which also has the iOS 7 voices."""
+    return "ios70" if f == cv_voices.IOS7 else f
+
+
+def _listing(voices_root, downloads_root):
+    """[(kind, entry, label, size, firmware keys still to get)] of everything
+    not installed yet."""
     out = []
     for e in enhanced_catalog():
         build, lang = e["build"], e["language"]
-        if not cv_voices.has_engine(voices_root, build):
-            continue
         dest = os.path.join(downloads_root, build, lang)
         if os.path.isfile(os.path.join(dest, "broker.hdr.asset")):
             continue
+        needs = [] if cv_voices.has_engine(voices_root, build) else [build]
         label = "Enhanced %s (%s)" % (lang, dict(cv_voices.IOS_BUILDS)[build])
-        out.append(("enhanced", e, label, e["size"]))
+        out.append(("enhanced", e, label, e["size"], needs))
     for v in mac_catalog():
         era = v["era"]
-        engines = cv_voices.MAC_ENGINES[era]
-        era_label = dict(cv_voices.MAC_ERAS)[era]
-        if not all(cv_voices.has_engine(voices_root, b) for b in engines[:1]):
-            continue
-        if not os.path.isdir(os.path.join(voices_root, era, "common")):
-            continue
         if os.path.isfile(os.path.join(downloads_root, era, v["name"], "broker.hdr")):
             continue
+        needs = [suggested(f) for f in MAC_FIRMWARE[era] if not cv_voices.has_engine(voices_root, f)]
+        if not needs and not os.path.isdir(os.path.join(voices_root, era, "common")):
+            continue  # an import assembles the common files
+        era_label = dict(cv_voices.MAC_ERAS)[era]
         label = "%s (%s, Mac OS X %s)" % (v["name"], v["locale"], era_label)
-        out.append(("mac", v, label, v["size"]))
+        out.append(("mac", v, label, v["size"], needs))
     return out
+
+
+def available(voices_root, downloads_root):
+    """Downloads whose engine firmware is present and that aren't installed
+    yet: [(kind, entry, label, size)]."""
+    return [x[:4] for x in _listing(voices_root, downloads_root) if not x[4]]
+
+
+def needing(voices_root, downloads_root):
+    """Downloads that wait for firmware: [(kind, entry, label, size, firmware
+    keys to get first)]."""
+    return [x for x in _listing(voices_root, downloads_root) if x[4]]
 
 
 def _fetch(url, dest, size_hint, progress, sha1=None):

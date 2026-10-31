@@ -34,12 +34,15 @@ SUPPORTED = {
 }
 
 # Mac OS X voice eras: common synthesis files assembled from firmware files
-# (same table as tools/fetch_firmware.sh).
+# (same table as tools/fetch_firmware.sh). A tuple: the first of those
+# firmwares that was imported (7.0.6's and 7.1.2's synth files are identical;
+# their lid.dat differs but doesn't change the speech).
+IOS7 = ("ios7", "ios70")
 MAC_COMMON = {
     "mac107": (("ios5", "lid.dat"), ("ios6", "synth_med_fxd_bet2f22.dat")),
     "mac108": (("ios6", "lid.dat"), ("ios6", "synth_med_fxd_bet2f22.dat"),
-               ("ios7", "synth_med_fxd_bet3f22.dat")),
-    "mac109": (("ios7", "lid.dat"), ("ios7", "synth_med_fxd_bet3f22.dat")),
+               (IOS7, "synth_med_fxd_bet3f22.dat")),
+    "mac109": ((IOS7, "lid.dat"), (IOS7, "synth_med_fxd_bet3f22.dat")),
 }
 
 
@@ -317,9 +320,13 @@ def assemble_mac_common(voices_root):
     """Create Voices/mac10x/common from firmware files, where present
     (tools/fetch_firmware.sh does the same on the Mac)."""
     for era, wants in MAC_COMMON.items():
-        srcs = [(os.path.join(voices_root, b, "TTSResources", "common", f), f)
-                for b, f in wants]
-        if not all(os.path.isfile(p) for p, _f in srcs):
+        srcs = []
+        for builds, f in wants:
+            found = [p for p in (os.path.join(voices_root, b, "TTSResources", "common", f)
+                                 for b in (builds if isinstance(builds, tuple) else (builds,)))
+                     if os.path.isfile(p)]
+            srcs.append((found[0] if found else None, f))
+        if not all(p for p, _f in srcs):
             continue
         out = os.path.join(voices_root, era, "common")
         os.makedirs(out, exist_ok=True)

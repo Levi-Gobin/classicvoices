@@ -58,10 +58,10 @@ final class Firmware {
                 305122343L, "The iOS 3 voices, as VoiceOver first spoke on the iPhone."),
         new Build("ios70", "11B651", "iPhone3,1", "iOS 7.0.6",
                 "https://secure-appldnld.apple.com/iOS7/031-3020.20140221.8j5GW/iPhone3,1_7.0.6_11B651_Restore.ipsw",
-                1201645522L, "The iOS 7 voices, and the engine for the enhanced iOS 7 voices."),
+                1201645522L, "The iOS 7 voices, the engine for the enhanced iOS 7 voices, and for the Mac OS X Mavericks compact voices."),
         new Build("ios7", "11D257", "iPhone3,1", "iOS 7.1.2",
                 "https://secure-appldnld.apple.com/iOS7.1/031-4812.20140627.cq6y8/iPhone3,1_7.1.2_11D257_Restore.ipsw",
-                1204958925L, "Engine only, for the Mac OS X Mavericks compact voices."),
+                1204958925L, "Engine only, for the Mac OS X Mavericks compact voices (iOS 7.0.6 runs them too)."),
         new Build("ios10", "14G61", "iPhone5,1", "iOS 10.3.4",
                 "https://updates.cdn-apple.com/2019/ios/091-25277-20190722-0C1B94DE-992C-11E9-A2EE-E2C9A77C2E40/iPhone_4.0_32bit_10.3.4_14G61_Restore.ipsw",
                 2000796302L, "Engine only, for the Mac OS X Mavericks premium voices."),
@@ -77,12 +77,23 @@ final class Firmware {
         return null;
     }
 
-    // Mac OS X voice eras: common files assembled from firmware files.
+    // Mac OS X voice eras: common files assembled from firmware files; of
+    // "ios7|ios70" the first imported (their synth files are identical; lid.dat
+    // differs but doesn't change the speech).
     private static final String[][][] MAC_COMMON = {
         {{"mac107"}, {"ios5", "lid.dat"}, {"ios6", "synth_med_fxd_bet2f22.dat"}},
-        {{"mac108"}, {"ios6", "lid.dat"}, {"ios6", "synth_med_fxd_bet2f22.dat"}, {"ios7", "synth_med_fxd_bet3f22.dat"}},
-        {{"mac109"}, {"ios7", "lid.dat"}, {"ios7", "synth_med_fxd_bet3f22.dat"}},
+        {{"mac108"}, {"ios6", "lid.dat"}, {"ios6", "synth_med_fxd_bet2f22.dat"}, {Library.IOS7, "synth_med_fxd_bet3f22.dat"}},
+        {{"mac109"}, {Library.IOS7, "lid.dat"}, {Library.IOS7, "synth_med_fxd_bet3f22.dat"}},
     };
+
+    /** A common file from the first of the firmware (a key, or "a|b") that has it; null if none. */
+    private static File commonSource(File voices, String builds, String file) {
+        for (String b : builds.split("\\|")) {
+            File f = new File(voices, b + "/TTSResources/common/" + file);
+            if (f.isFile()) return f;
+        }
+        return null;
+    }
 
     // ---------------------------------------------------------------- the zip
 
@@ -374,16 +385,14 @@ final class Firmware {
     static void assembleMacCommon(File voices) throws IOException {
         for (String[][] era : MAC_COMMON) {
             boolean all = true;
-            for (int i = 1; i < era.length; i++) {
-                all &= new File(voices, era[i][0] + "/TTSResources/common/" + era[i][1]).isFile();
-            }
+            for (int i = 1; i < era.length; i++) all &= commonSource(voices, era[i][0], era[i][1]) != null;
             if (!all) continue;
             File out = new File(voices, era[0][0] + "/common");
             //noinspection ResultOfMethodCallIgnored
             out.mkdirs();
             for (int i = 1; i < era.length; i++) {
                 File dest = new File(out, era[i][1]);
-                if (!dest.isFile()) copy(new File(voices, era[i][0] + "/TTSResources/common/" + era[i][1]), dest);
+                if (!dest.isFile()) copy(commonSource(voices, era[i][0], era[i][1]), dest);
             }
         }
     }

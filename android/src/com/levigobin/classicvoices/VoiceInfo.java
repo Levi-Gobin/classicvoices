@@ -53,7 +53,7 @@ final class VoiceInfo {
 
     /** The firmware build whose engine speaks this voice. */
     String build() {
-        if (key.startsWith("mac109/")) return key.endsWith("Compact") ? "ios7" : "ios10";
+        if (key.startsWith("mac109/")) return key.endsWith("Compact") ? "ios7" : "ios10";  // "ios7": 7.1.2's or 7.0.6's engine
         if (key.startsWith("mac10")) return "ios6";
         String b = key.substring(0, key.indexOf('/'));
         return b.endsWith("e") ? b.substring(0, b.length() - 1) : b;

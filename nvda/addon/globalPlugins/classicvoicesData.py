@@ -31,6 +31,8 @@ except Exception:
 BUILDS = (("ios3", "iPhone OS 3.1.3"), ("ios4", "iOS 4.3.5"), ("ios5", "iOS 5.1.1"), ("ios6", "iOS 6.1.6"),
           ("ios70", "iOS 7.0.6"), ("ios7", "iOS 7.1.2 (engine only)"), ("ios10", "iOS 10.3.4 (engine only)"))
 
+FIRMWARE_NAMES = {v[0]: v[2] for v in cv_firmware.SUPPORTED.values()}
+
 # One job at a time, also while the dialog is closed (fast code builds on in the background).
 _work = threading.Lock()
 
@@ -96,7 +98,7 @@ class DataDialog(wx.Dialog):
         self.status = wx.ListBox(self, size=(480, 150))
         main.Add(self.status, flag=wx.EXPAND | wx.ALL, border=5)
         # Translators: label of the downloadable-voices list.
-        main.Add(wx.StaticText(self, label=_("Downloadable &voices (needs the matching firmware first):")),
+        main.Add(wx.StaticText(self, label=_("Downloadable &voices:")),
                  flag=wx.ALL, border=5)
         # CustomCheckListBox is NVDA's accessible checkbox list: check state
         # is announced properly, unlike a bare wx.CheckListBox.
@@ -158,10 +160,15 @@ class DataDialog(wx.Dialog):
 
     def refresh(self):
         self.status.Set(_status_lines())
-        self._downloads = cv_download.available(cv_paths.voices_root(),
-                                                cv_paths.downloads_root())
+        vr, dr = cv_paths.voices_root(), cv_paths.downloads_root()
+        # voices whose firmware isn't here are listed too, saying what they need
+        self._downloads = ([x + ([],) for x in cv_download.available(vr, dr)]
+                           + cv_download.needing(vr, dr))
+        # Translators: a downloadable voice: its name, size and (after a comma) the firmware it needs.
         self.dl.Set(["%s - %d MB" % (label, size >> 20)
-                     for _k, _e, label, size in self._downloads])
+                     + (_(", requires the %s firmware") % " and ".join(FIRMWARE_NAMES[f] for f in needs)
+                        if needs else "")
+                     for _k, _e, label, size, needs in self._downloads])
         self.fastBtn.Enable(not self._busy and bool(_fast_code_missing()))
 
     @staticmethod
@@ -245,7 +252,9 @@ class DataDialog(wx.Dialog):
 
     def onApple(self, evt):
         vr = cv_paths.voices_root()
-        todo = [k for k, _label in BUILDS if k in cv_remote.FIRMWARE and not cv_voices.has_engine(vr, k)]
+        # not iOS 7.1.2: iOS 7.0.6 runs the Mavericks compacts too
+        todo = [k for k, _label in BUILDS if k in cv_remote.FIRMWARE and k != "ios7"
+                and not cv_voices.has_engine(vr, k)]
         if not todo:
             # Translators: message when every firmware is imported already.
             gui.messageBox(_("Every firmware is imported already."), _("Classic Voices"), wx.OK, self)
@@ -291,8 +300,21 @@ class DataDialog(wx.Dialog):
                            _("Classic Voices"), wx.OK, self)
             return
 
+        firmware = []
+        for _k, _e, _label, _size, needs in checked:
+            firmware += [f for f in needs if f not in firmware]
+        if firmware and gui.messageBox(
+                # Translators: asks before getting the firmware checked voices need; %s names it.
+                _("The checked voices need Apple's %s firmware, which isn't here yet. Get it from Apple now "
+                  "(only its speech files are streamed, which takes a while), then download the voices?")
+                % " and ".join(FIRMWARE_NAMES[f] for f in firmware),
+                _("Classic Voices"), wx.YES_NO | wx.ICON_QUESTION, self) != wx.YES:
+            return
+
         def work():
-            for kind, entry, label, _size in checked:
+            for k in firmware:
+                cv_remote.import_from_apple(k, cv_paths.voices_root(), self._progress)
+            for kind, entry, label, _size, _needs in checked:
                 self._progress(label, None)
                 if kind == "enhanced":
                     cv_download.download_enhanced(entry, cv_paths.downloads_root(),

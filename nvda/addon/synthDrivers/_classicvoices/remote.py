@@ -26,8 +26,9 @@ FIRMWARE = {  # build key: (build, URL, size)
 PURPOSE = {
     "ios3": "the iOS 3 voices", "ios4": "the iOS 4 voices", "ios5": "the iOS 5 voices and their enhanced versions",
     "ios6": "the iOS 6 voices and their enhanced versions; also the Lion and Mountain Lion voices",
-    "ios70": "the iOS 7 voices and their enhanced versions",
-    "ios7": "engine only: Mavericks compact voices", "ios10": "engine only: Mavericks premium voices",
+    "ios70": "the iOS 7 voices and their enhanced versions; also the Mavericks compact voices",
+    "ios7": "engine only: Mavericks compact voices (iOS 7.0.6 runs them too)",
+    "ios10": "engine only: Mavericks premium voices",
 }
 
 

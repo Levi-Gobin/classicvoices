@@ -1215,3 +1215,23 @@ iOS 3, 4, 5, 6, 7.0, iOS 5/6/7 enhanced, Mountain Lion compact, Mavericks
 compact and premium. Most of what's left is the engines' own arithmetic
 (the fixed-point multiply, uselect_CascadingFlatSearch); a call still costs
 two 96-byte copies each way, which passing the Core by pointer could remove.
+
+## Mavericks compacts on iOS 7.0.6; voices that need firmware are listed (2026-10-31)
+
+- The Mavericks compacts run on iOS 7.1.2's engine when it was imported (the
+  only one before 0.4.1), else on 7.0.6's (vxstream.c open_engine), so 7.0.6
+  alone gives the iOS 7 voices and the Mavericks compacts. Of the 37 compacts,
+  34 give byte-identical audio on both engines (3 sentences each, sample text
+  in the voice's language plus numbers/dates); Mei-Jia, Sin-Ji and Milena keep
+  the same timing but pick some different units on 7.1.2 (7.1 added the
+  Chinese DAG segmenter and maxent homographs). lid.dat makes no difference
+  (7.0.6's engine with 7.1.2's lid.dat = with its own).
+- Common data: the mac108 bet3 synth file and mac109's lid/synth come from
+  whichever iOS 7 is there (the synth files are identical). Same rule in
+  tools/fetch_firmware.sh, firmware.py MAC_COMMON, Firmware.java,
+  cv_catalog.c has_engine, voices.py IOS7, Library.IOS7 (Android).
+- Downloads whose firmware isn't imported are listed anyway, saying "requires
+  the iOS 5.1.1 and iOS 6.1.6 firmware"; choosing one offers to get the
+  firmware from Apple and then the voice (desktop app, NVDA data dialog,
+  Android; `classicvoices-data voices` lists them). Of the two iOS 7s, 7.0.6
+  is the one suggested; 7.1.2 is still offered once imported.

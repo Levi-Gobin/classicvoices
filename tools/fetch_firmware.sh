@@ -71,9 +71,13 @@ mac_common() {
     out=$ROOT/extracted/$era/common
     mkdir -p "$out"
     for pair in "$@"; do
-        b=${pair%%:*} f=${pair#*:}
-        src=$ROOT/extracted/$b/VoiceServices.framework/TTSResources/common/$f
-        [ -f "$src" ] || return 0
+        bs=${pair%%:*} f=${pair#*:} src=
+        # "ios7|ios70": the first of them that was fetched
+        for b in $(echo "$bs" | tr '|' ' '); do
+            c=$ROOT/extracted/$b/VoiceServices.framework/TTSResources/common/$f
+            if [ -f "$c" ]; then src=$c; break; fi
+        done
+        [ -n "$src" ] || return 0
         [ -f "$out/$f" ] || cp "$src" "$out/$f"
     done
 }
@@ -81,5 +85,7 @@ mac_common() {
 builds=${*:-ios3 ios4 ios5 ios6 ios70 ios7 ios10}
 for b in $builds; do fetch "$b"; done
 mac_common mac107 ios5:lid.dat ios6:synth_med_fxd_bet2f22.dat
-mac_common mac108 ios6:lid.dat ios6:synth_med_fxd_bet2f22.dat ios7:synth_med_fxd_bet3f22.dat
-mac_common mac109 ios7:lid.dat ios7:synth_med_fxd_bet3f22.dat
+# either iOS 7 (7.0.6 and 7.1.2 have the same synth file; vxstream.c runs the
+# Mavericks compacts on 7.1.2's engine when it is there, else on 7.0.6's)
+mac_common mac108 ios6:lid.dat ios6:synth_med_fxd_bet2f22.dat 'ios7|ios70:synth_med_fxd_bet3f22.dat'
+mac_common mac109 'ios7|ios70:lid.dat' 'ios7|ios70:synth_med_fxd_bet3f22.dat'

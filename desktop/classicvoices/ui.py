@@ -140,6 +140,8 @@ def voice_label(lib, item):
         return "Stop downloading %s, %s" % (item.title, L.size_text(job.size))
     if item.state == "available":
         return "Download %s, %s" % (item.title, L.size_text(item.size))
+    if item.state == "needs":
+        return "%s, requires the %s firmware" % (item.title, L.names_text(item.needs))
     extra = []
     if item.state == "installed":
         extra.append("using %s" % L.size_text(item.size))
@@ -324,9 +326,9 @@ class Browser(wx.Panel):
         if missing:
             p.section("Get the voices")
             for v in missing:
-                need = [L.FIRMWARE_NAMES[f] for f in v.firmware if not lib.firmware_imported(f)]
                 p.text("%s voices need Apple's %s firmware, which Classic Voices takes them from."
-                       % (v.name + ("'" if v.name.endswith("s") else "'s"), " and ".join(need) or "files"))
+                       % (v.name + ("'" if v.name.endswith("s") else "'s"),
+                          L.names_text(lib.firmware_missing(v)) or "files"))
             p.button("Get the firmware…", lambda: self.open(("firmware",)))
         items = lib.visible(self.platform, None if self.version == "all" else self.version)
         failed = [(a, b) for a, b in lib.errors]
@@ -381,6 +383,8 @@ class Browser(wx.Panel):
     def _press(self, item):
         if item.state in ("builtin", "installed"):
             self.open(("voice", item.id))
+        elif item.state == "needs":
+            self.frame.offer_firmware(item)
         else:
             self.lib.toggle_download(item)
 
@@ -420,8 +424,10 @@ class Browser(wx.Panel):
         needed = []
         for v in lib.versions(self.platform):
             for f in v.firmware:
-                if f not in needed:
-                    needed.append(f)
+                # either iOS 7 firmware: 7.0.6 is offered, and 7.1.2 once imported
+                for k in [L.suggested(f)] + (["ios7"] if f == L.IOS7 and lib.firmware_imported("ios7") else []):
+                    if k not in needed:
+                        needed.append(k)
         p.text("Classic Voices takes the voices out of Apple's iPhone firmware: each firmware only for its "
                "speech files. It can stream them from Apple, or read a firmware (.ipsw) file you have.")
         p.section("From Apple")
@@ -647,6 +653,16 @@ class Frame(wx.Frame):
         if system.IS_WIN:
             self.update_system()
         self.changed()
+
+    def offer_firmware(self, item):
+        """A voice whose firmware isn't here: offer to get it, then the voice."""
+        from _classicvoices import remote
+        size = sum(remote.FIRMWARE[k][2] for k in item.needs)
+        if wx.MessageBox("%s needs Apple's %s firmware, which isn't here yet. Get it from Apple now (streams "
+                         "about %s), then download %s (%s)?"
+                         % (item.title, L.names_text(item.needs), L.size_text(size), item.name,
+                            L.size_text(item.size)), APP, wx.YES_NO | wx.ICON_QUESTION, self) == wx.YES:
+            self.lib.get_with_firmware(item)
 
     def remove(self, item):
         if wx.MessageBox("Remove %s? You can download it again later." % item.title, APP,

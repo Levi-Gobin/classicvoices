@@ -397,7 +397,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             section(getString(R.string.get_the_voices));
             for (Library.Version v : missing) {
                 List<String> need = new ArrayList<>();
-                for (String f : v.firmware) if (!Library.firmwareImported(this, f)) need.add(Firmware.byKey(f).nice);
+                for (String f : Library.missing(this, v)) need.add(Firmware.byKey(f).nice);
                 text(need.isEmpty() ? getString(R.string.needs_reimport, v.name)
                         : getString(R.string.needs_firmware, v.name, join(need, getString(R.string.and))));
             }
@@ -504,6 +504,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             boolean pending = arg != null && ImportService.pending("download", arg);
             String label;
             if (pending) label = getString(R.string.stop_downloading, it.title(), Library.size(it.size));
+            else if (!it.needs().isEmpty()) label = getString(R.string.requires_firmware, it.title(), firmwareNames(it.needs()));
             else if (!it.here()) label = getString(R.string.download_voice, it.title(), Library.size(it.size));
             else {
                 label = it.title();
@@ -515,12 +516,44 @@ public class MainActivity extends Activity implements ImportService.Listener {
                 public void onClick(View b) {
                     if (it.here()) open("voice", it.id);
                     else if (ImportService.pending("download", arg)) ImportService.cancel("download", arg);
+                    else if (!it.needs().isEmpty()) offerFirmware(it);
                     else ImportService.enqueue(MainActivity.this, new ImportService.Job("download", arg, it.title()));
                     if (!it.here()) refreshPage();
                 }
             });
             if (pending) jobBar("download", arg, getString(R.string.downloading, it.title()));
         }
+    }
+
+    private String firmwareNames(List<String> keys) {
+        List<String> names = new ArrayList<>();
+        for (String k : keys) names.add(Firmware.byKey(k).nice);
+        return join(names, getString(R.string.and));
+    }
+
+    /** A voice whose firmware isn't here: offer to get it from Apple, then the voice. */
+    private void offerFirmware(final Library.Item it) {
+        long size = 0;
+        for (String k : it.needs()) size += Firmware.byKey(k).size;
+        new AlertDialog.Builder(this)
+                .setMessage(getString(R.string.get_firmware_for_voice, it.title(), firmwareNames(it.needs()),
+                        Library.size(size), it.name, Library.size(it.size)))
+                .setPositiveButton(R.string.get_firmware_for_voice_yes, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface d, int w) {
+                        for (String k : it.needs()) {
+                            Firmware.Build b = Firmware.byKey(k);
+                            if (!ImportService.pending("firmware", k)) {
+                                ImportService.enqueue(MainActivity.this, new ImportService.Job("firmware", k, b.nice));
+                            }
+                        }
+                        // the jobs run in turn: the voice once its firmware is in
+                        ImportService.enqueue(MainActivity.this, new ImportService.Job("download", it.jobArg(), it.title()));
+                        refreshPage();
+                    }
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
     }
 
     private Library.Item item(String id) {
@@ -650,7 +683,14 @@ public class MainActivity extends Activity implements ImportService.Listener {
         section(getString(R.string.from_apple));
         List<String> needed = new ArrayList<>();
         for (Library.Version v : Library.versions(mac())) {
-            for (String f : v.firmware) if (!needed.contains(f)) needed.add(f);
+            for (String f : v.firmware) {
+                // either iOS 7 firmware: 7.0.6 is offered, and 7.1.2 once imported
+                String k = Library.suggested(f);
+                if (!needed.contains(k)) needed.add(k);
+                if (f.equals(Library.IOS7) && Library.firmwareImported(this, "ios7") && !needed.contains("ios7")) {
+                    needed.add("ios7");
+                }
+            }
         }
         for (String key : needed) {
             final Firmware.Build b = Firmware.byKey(key);

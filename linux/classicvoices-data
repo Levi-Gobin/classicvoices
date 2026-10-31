@@ -165,14 +165,24 @@ def _available():
     return download.available(VOICES, DOWNLOADS)
 
 
+def _firmware_names(keys):
+    return " and ".join("%s (%s)" % (firmware.SUPPORTED[FIRMWARE[k][0]][2], k) for k in keys)
+
+
 def cmd_voices(_args):
     av = _available()
-    if not av:
-        print("Nothing to download: import firmware first (classicvoices-data import ios6), or everything is installed.")
+    later = download.needing(VOICES, DOWNLOADS)
+    if not av and not later:
+        print("Nothing to download: everything is installed.")
         return
     for kind, entry, label, size in av:
         print("%-60s %5d MB" % (label, size >> 20))
-    print("\nDownload with: classicvoices-data download \"<name or language>\" ... (or all-enhanced, all-mac)")
+    if av:
+        print("\nDownload with: classicvoices-data download \"<name or language>\" ... (or all-enhanced, all-mac)")
+    if later:
+        print("\nThese need firmware first (classicvoices-data import <build>):")
+        for kind, entry, label, size, needs in later:
+            print("%-60s %5d MB, requires %s" % (label, size >> 20, _firmware_names(needs)))
 
 
 def cmd_download(args):
@@ -188,7 +198,13 @@ def cmd_download(args):
             continue
         hits = [x for x in av if al == x[2].lower() or al in x[2].lower()]
         if not hits:
-            print("no downloadable voice matches %r (see: classicvoices-data voices)" % a)
+            later = [x for x in download.needing(VOICES, DOWNLOADS) if al in x[2].lower()]
+            if later:
+                for x in later:
+                    print("%s requires %s first: classicvoices-data import %s"
+                          % (x[2], _firmware_names(x[4]), " ".join(x[4])))
+            else:
+                print("no downloadable voice matches %r (see: classicvoices-data voices)" % a)
         want += hits
     seen = set()
     for kind, entry, label, size in want:

@@ -41,6 +41,7 @@ final class Downloads {
         final String name;   // language for enhanced, voice name for Mac
         final String locale, url, sha1;
         final long size;
+        final List<String> needs = new ArrayList<>();  // firmware keys to get before it can be downloaded
 
         Item(String kind, String label, String build, String name, String locale, String url, long size, String sha1) {
             this.kind = kind;
@@ -78,11 +79,26 @@ final class Downloads {
         return new String(b.toByteArray(), "UTF-8");
     }
 
-    private static final String[][] ERAS = {{"mac107", "Lion", "ios6"}, {"mac108", "Mountain Lion", "ios6"},
-            {"mac109", "Mavericks", "ios7"}};
+    // era, name, and the firmware its voices need: the engine, and the
+    // firmware their common files come from (Firmware.MAC_COMMON)
+    private static final String[][] ERAS = {{"mac107", "Lion", "ios5", "ios6"},
+            {"mac108", "Mountain Lion", "ios6", Library.IOS7}, {"mac109", "Mavericks", Library.IOS7}};
 
     /** What can be downloaded now (engine present, not installed yet). */
     static List<Item> available(Context c) throws IOException {
+        List<Item> out = new ArrayList<>();
+        for (Item i : listing(c)) if (i.needs.isEmpty()) out.add(i);
+        return out;
+    }
+
+    /** What can be downloaded once the firmware in its needs is imported. */
+    static List<Item> needing(Context c) throws IOException {
+        List<Item> out = new ArrayList<>();
+        for (Item i : listing(c)) if (!i.needs.isEmpty()) out.add(i);
+        return out;
+    }
+
+    private static List<Item> listing(Context c) throws IOException {
         load(c);
         List<Item> out = new ArrayList<>();
         File dl = Data.downloadsDir(c), voices = Data.voicesDir(c);
@@ -90,26 +106,32 @@ final class Downloads {
             for (int i = 0; i < enhanced.length(); i++) {
                 JSONObject e = enhanced.getJSONObject(i);
                 String build = e.getString("build"), lang = e.getString("language");
-                if (!Data.hasEngine(c, build)) continue;
                 if (new File(dl, build + "/" + lang + "/broker.hdr.asset").isFile()) continue;
                 // the compact voice of the same language names the voice
                 String voice = voiceName(new File(voices, build + "/TTSResources/" + lang + "/broker.hdr"));
                 String label = (voice != null ? voice + ", enhanced" : "Enhanced voice") + " ("
                         + (build.equals("ios5") ? "iOS 5" : build.equals("ios70") ? "iOS 7" : "iOS 6") + ", " + lang + ")";
-                out.add(new Item("enhanced", label, build, lang, lang, https(e.getString("url")), e.getLong("size"),
-                        e.optString("sha1", null)));
+                Item it = new Item("enhanced", label, build, lang, lang, https(e.getString("url")), e.getLong("size"),
+                        e.optString("sha1", null));
+                if (!Data.hasEngine(c, build)) it.needs.add(build);
+                out.add(it);
             }
             for (int i = 0; i < mac.length(); i++) {
                 JSONObject v = mac.getJSONObject(i);
                 String era = v.getString("era");
                 String[] info = null;
                 for (String[] x : ERAS) if (x[0].equals(era)) info = x;
-                if (info == null || !Data.hasEngine(c, info[2])) continue;
-                if (!new File(voices, era + "/common").isDirectory()) continue;
+                if (info == null) continue;
                 if (new File(dl, era + "/" + v.getString("name") + "/broker.hdr").isFile()) continue;
                 String label = v.getString("name") + " (Mac OS X " + info[1] + ", " + v.optString("locale") + ")";
-                out.add(new Item("mac", label, era, v.getString("name"), v.optString("locale"), v.getString("url"),
-                        v.getLong("size"), null));
+                Item it = new Item("mac", label, era, v.getString("name"), v.optString("locale"), v.getString("url"),
+                        v.getLong("size"), null);
+                for (int f = 2; f < info.length; f++) {
+                    if (!Library.firmwareImported(c, info[f])) it.needs.add(Library.suggested(info[f]));
+                }
+                // firmware here but not the common files: an import assembles them
+                if (it.needs.isEmpty() && !new File(voices, era + "/common").isDirectory()) continue;
+                out.add(it);
             }
         } catch (JSONException e) {
             throw new IOException("bad catalogue: " + e.getMessage());

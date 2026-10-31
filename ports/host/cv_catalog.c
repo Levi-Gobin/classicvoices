@@ -34,7 +34,9 @@ static int is_file(const char *p) { struct stat st; return stat(p, &st) == 0 && 
 static int has_engine(const char *voices_root, const char *build) {
     char p[1100];
     snprintf(p, sizeof p, "%s/%s/voiced", voices_root, build);
-    return is_file(p);
+    if (is_file(p)) return 1;
+    // either iOS 7 engine runs the Mavericks compacts (vxstream.c open_engine)
+    return !strcmp(build, "ios7") && has_engine(voices_root, "ios70");
 }
 
 // The voice name from a broker.hdr / broker.hdr.asset: "defaultvoice:Name"
@@ -323,7 +325,7 @@ const char *cv_voice_build(const CvVoice *v) {
     const char *k = v->key;
     if (!strncmp(k, "mac109/", 7)) {
         size_t n = strlen(k);
-        return n > 7 && !strcmp(k + n - 7, "Compact") ? "ios7" : "ios10";
+        return n > 7 && !strcmp(k + n - 7, "Compact") ? "ios7" : "ios10";  // "ios7": 7.1.2's or 7.0.6's engine
     }
     if (!strncmp(k, "mac10", 5)) return "ios6";
     for (size_t i = 0; i < sizeof builds / sizeof builds[0]; i++) {

@@ -35,6 +35,9 @@
 
     <!-- voice rows: what pressing the row does comes first -->
     <string name="download_voice">Download %1$s, %2$s</string>
+    <string name="requires_firmware">%1$s, requires the %2$s firmware</string>
+    <string name="get_firmware_for_voice">%1$s needs Apple\'s %2$s firmware, which isn\'t here yet. Get it from Apple now (streams about %3$s), then download %4$s (%5$s)?</string>
+    <string name="get_firmware_for_voice_yes">Get them</string>
     <string name="stop_downloading">Stop downloading %1$s, %2$s</string>
     <string name="downloading">Downloading %1$s</string>
     <string name="using">using %1$s</string>

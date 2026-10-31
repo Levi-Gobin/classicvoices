@@ -130,7 +130,8 @@ int vxs_engine_pitch(int percent) {
 // of the same Vocalizer generation: Lion and Mountain Lion voices are 5.2.3
 // bet2 (iOS 6); Mavericks compacts are bet3 with the newer pipeline (iOS 7);
 // Mavericks premium voices also need the vssq5 decoder, which iOS 7 dropped,
-// so they run on iOS 10's engine. Writes e.g. "ios6" into out.
+// so they run on iOS 10's engine. Writes e.g. "ios6" into out ("ios7" for a
+// Mavericks compact means either iOS 7 engine: open_engine picks).
 static void engine_build(const char *key, char *out, size_t cap) {
     const char *slash = strchr(key, '/');
     size_t bl = slash ? (size_t)(slash - key) : strlen(key);
@@ -166,6 +167,13 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
         char eng[16];
         engine_build(key, eng, sizeof eng);
         snprintf(voiced, sizeof voiced, "%s/%s/voiced", root, eng);
+        // Mavericks compacts: iOS 7.1.2's engine if it was imported, else
+        // 7.0.6's (34 of 37 voices sound identical on both; Mei-Jia, Sin-Ji
+        // and Milena pick some different units on 7.1.2)
+        if (strcmp(eng, "ios7") == 0 && access(voiced, R_OK) != 0) {
+            snprintf(eng, sizeof eng, "ios70");
+            snprintf(voiced, sizeof voiced, "%s/%s/voiced", root, eng);
+        }
         snprintf(ldir, sizeof ldir, "%s/%s/%s/broker.hdr", root, build, lang);
         if (access(ldir, R_OK) == 0) snprintf(ldir, sizeof ldir, "%s/%s/%s", root, build, lang);
         else snprintf(ldir, sizeof ldir, "%s/%s/%s", asset_root, build, lang);

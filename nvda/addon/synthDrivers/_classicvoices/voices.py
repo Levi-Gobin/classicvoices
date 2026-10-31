@@ -5,13 +5,17 @@ import json
 import os
 import re
 
-# "ios70" is iOS 7.0.6 (its own engine); "ios7" is 7.1.2, only the engine
+# "ios70" is iOS 7.0.6 (its own engine); "ios7" is 7.1.2, only an engine
 # for the Mavericks compacts.
 IOS_BUILDS = (("ios3", "iOS 3"), ("ios4", "iOS 4"), ("ios5", "iOS 5"), ("ios6", "iOS 6"), ("ios70", "iOS 7"))
 ENHANCED_BUILDS = (("ios5", "iOS 5"), ("ios6", "iOS 6"), ("ios70", "iOS 7"))
 MAC_ERAS = (("mac107", "Lion"), ("mac108", "Mountain Lion"), ("mac109", "Mavericks"))
-# Engine firmware needed per Mac era (and for Mavericks, premium vs compact).
-MAC_ENGINES = {"mac107": ("ios6",), "mac108": ("ios6",), "mac109": ("ios7", "ios10")}
+# Either iOS 7 engine runs the Mavericks compacts: 7.1.2's when it was
+# imported (the only one before 0.4.1), else 7.0.6's (vxstream.c open_engine).
+IOS7 = ("ios7", "ios70")
+# Engine firmware needed per Mac era (and for Mavericks, compact vs premium);
+# a tuple is a choice of firmware.
+MAC_ENGINES = {"mac107": ("ios6",), "mac108": ("ios6",), "mac109": (IOS7, "ios10")}
 
 
 def broker_voice_name(path):
@@ -44,6 +48,9 @@ def _mac_locales():
 
 
 def has_engine(voices_root, build):
+    """build: a firmware key, or a tuple of them of which any will do."""
+    if isinstance(build, tuple):
+        return any(has_engine(voices_root, b) for b in build)
     return os.path.isfile(os.path.join(voices_root, build, "voiced"))
 
 

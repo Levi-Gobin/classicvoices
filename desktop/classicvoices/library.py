@@ -26,6 +26,9 @@ class Version:
 
 # The firmware each version needs: its own voices' (iOS), or the engine and
 # common files the Mac voices run on (firmware.MAC_COMMON, voices.MAC_ENGINES).
+# IOS7: either iOS 7 firmware; 7.0.6 is the one suggested, as it also has the
+# iOS 7 voices (7.1.2 was the only one before 0.4.1, and still works).
+IOS7 = cv_voices.IOS7
 VERSIONS = [
     Version("ios3", "iOS 3", "ios", ["ios3"], "3.1.3"),
     Version("ios4", "iOS 4", "ios", ["ios4"], "4.3.5"),
@@ -33,13 +36,26 @@ VERSIONS = [
     Version("ios6", "iOS 6", "ios", ["ios6"], "6.1.6"),
     Version("ios70", "iOS 7", "ios", ["ios70"], "7.0.6"),
     Version("mac107", "Lion", "mac", ["ios5", "ios6"], "10.7"),
-    Version("mac108", "Mountain Lion", "mac", ["ios6", "ios7"], "10.8"),
-    Version("mac109", "Mavericks", "mac", ["ios7", "ios10"], "10.9"),
+    Version("mac108", "Mountain Lion", "mac", ["ios6", IOS7], "10.8"),
+    Version("mac109", "Mavericks", "mac", [IOS7, "ios10"], "10.9"),
 ]
 VERSION = {v.id: v for v in VERSIONS}
 
 FIRMWARE_NAMES = {"ios3": "iPhone OS 3.1.3", "ios4": "iOS 4.3.5", "ios5": "iOS 5.1.1", "ios6": "iOS 6.1.6",
                   "ios70": "iOS 7.0.6", "ios7": "iOS 7.1.2", "ios10": "iOS 10.3.4"}
+
+
+def suggested(f):
+    """The firmware to get for a requirement (a key, or IOS7)."""
+    return "ios70" if f == IOS7 else f
+
+
+def firmware_name(f):
+    return FIRMWARE_NAMES[suggested(f)]
+
+
+def names_text(keys):
+    return " and ".join(FIRMWARE_NAMES[k] for k in keys)
 
 LANGUAGES = {
     "ar-SA": "Arabic (Saudi Arabia)", "cs-CZ": "Czech", "da-DK": "Danish", "de-DE": "German",
@@ -98,11 +114,13 @@ def folder_size(path):
 
 class Item:
     """One voice as the app shows it. state: "builtin" (from firmware),
-    "installed", "available" (can be downloaded), "downloading"."""
+    "installed", "available" (can be downloaded), "needs" (can be downloaded
+    once the firmware in `needs` is imported), "downloading"."""
 
-    def __init__(self, id, version, name, kind, language, state, size=0, entry=None, kind_of=None):
+    def __init__(self, id, version, name, kind, language, state, size=0, entry=None, kind_of=None, needs=()):
         self.id, self.version, self.name, self.kind, self.language = id, version, name, kind, language
         self.state, self.size, self.entry, self.kind_of = state, size, entry, kind_of
+        self.needs = list(needs)  # firmware keys to get
         self.job = None
 
     @property
@@ -184,19 +202,26 @@ class Library:
                 items.append(Item(key, VERSION[build], name, "compact" if compact else "premium", v.language,
                                   "installed", folder_size(os.path.join(dr, build, rest)),
                                   kind_of=(build, rest[:-7] if compact else rest)))
+        # voices whose firmware isn't here are listed too, saying what they need
         for e in cv_download.enhanced_catalog():
             b, lang = e["build"], e["language"]
-            if not cv_voices.has_engine(vr, b) or "%se/%s" % (b, lang) in have:
+            if "%se/%s" % (b, lang) in have:
                 continue
+            needs = [] if cv_voices.has_engine(vr, b) else [b]
             name = compact_names.get((b, lang)) or language_name(lang)
-            items.append(Item("%se/%s" % (b, lang), VERSION[b], name, "enhanced", lang, "available",
-                              e["size"], entry=("enhanced", e)))
+            items.append(Item("%se/%s" % (b, lang), VERSION[b], name, "enhanced", lang,
+                              "needs" if needs else "available", e["size"], entry=("enhanced", e), needs=needs))
         for e in cv_download.mac_catalog():
             era = e["era"]
-            if not self.firmware_ready(VERSION[era]) or "%s/%s" % (era, e["name"]) in have:
+            if "%s/%s" % (era, e["name"]) in have:
                 continue
+            ready = self.firmware_ready(VERSION[era])
+            needs = [] if ready else self.firmware_missing(VERSION[era])
+            if not ready and not needs:
+                continue  # firmware here but not its common files: an import will assemble them
             items.append(Item("%s/%s" % (era, e["name"]), VERSION[era], e["name"], "premium and compact",
-                              e.get("locale", ""), "available", e["size"], entry=("mac", e)))
+                              e.get("locale", ""), "needs" if needs else "available", e["size"],
+                              entry=("mac", e), needs=needs))
         with self._lock:
             for it in items:
                 it.job = next((j for j in self.jobs if j.key == it.id), None)
@@ -206,6 +231,10 @@ class Library:
 
     def firmware_imported(self, key):
         return cv_voices.has_engine(system.voices_root(), key)
+
+    def firmware_missing(self, version):
+        """The firmware to get (suggested keys) before a version's voices speak."""
+        return [suggested(f) for f in version.firmware if not self.firmware_imported(f)]
 
     def firmware_ready(self, version):
         if not all(self.firmware_imported(f) for f in version.firmware):
@@ -279,9 +308,22 @@ class Library:
         if self.job_for("fw:" + key):
             self.cancel("fw:" + key)
             return
+        self._queue_firmware(key)
+
+    def _queue_firmware(self, key):
         size = cv_remote.FIRMWARE[key][2]
         self._queue(Job("firmware", "fw:" + key, FIRMWARE_NAMES[key], size,
                         lambda job: cv_remote.import_from_apple(key, system.voices_root(), job.progress)))
+
+    def get_with_firmware(self, item):
+        """A voice that needs firmware: get the firmware from Apple, then the
+        voice (the jobs run one after another)."""
+        for key in item.needs:
+            if not self.job_for("fw:" + key):
+                self._queue_firmware(key)
+        if not self.job_for(item.id):
+            item.state = "available"
+            self.toggle_download(item)
 
     def import_file(self, path):
         def run(job):

@@ -34,6 +34,10 @@ final class Library {
         String menuName() { return name + " (" + number + ")"; }
     }
 
+    /** Either iOS 7 firmware: the Mavericks compacts run on 7.1.2's engine when it
+     *  was imported (the only one before 0.4.1), else on 7.0.6's (vxstream.c). */
+    static final String IOS7 = "ios7|ios70";
+
     static final Version[] VERSIONS = {
         new Version("ios3", "iOS 3", "3.1.3", false, "ios3"),
         new Version("ios4", "iOS 4", "4.3.5", false, "ios4"),
@@ -41,8 +45,8 @@ final class Library {
         new Version("ios6", "iOS 6", "6.1.6", false, "ios6"),
         new Version("ios70", "iOS 7", "7.0.6", false, "ios70"),
         new Version("mac107", "Lion", "10.7", true, "ios5", "ios6"),
-        new Version("mac108", "Mountain Lion", "10.8", true, "ios6", "ios7"),
-        new Version("mac109", "Mavericks", "10.9", true, "ios7", "ios10"),
+        new Version("mac108", "Mountain Lion", "10.8", true, "ios6", IOS7),
+        new Version("mac109", "Mavericks", "10.9", true, IOS7, "ios10"),
     };
 
     static Version version(String id) {
@@ -66,6 +70,9 @@ final class Library {
         final boolean installed;
         final long size;
         final Downloads.Item download;  // what to download, when it isn't here
+
+        /** Firmware keys to get before it can be downloaded. */
+        List<String> needs() { return download != null ? download.needs : new ArrayList<String>(); }
 
         Item(String id, Version version, String name, String kind, String language, boolean builtIn,
              boolean installed, long size, Downloads.Item download) {
@@ -111,6 +118,7 @@ final class Library {
         List<Downloads.Item> more;
         try {
             more = Downloads.available(c);
+            more.addAll(Downloads.needing(c));  // listed too, saying what they need
         } catch (IOException e) {
             more = new ArrayList<>();
         }
@@ -127,7 +135,21 @@ final class Library {
         return out;
     }
 
-    static boolean firmwareImported(Context c, String key) { return Data.hasEngine(c, key); }
+    /** key: a firmware, or IOS7. */
+    static boolean firmwareImported(Context c, String key) {
+        for (String k : key.split("\\|")) if (Data.hasEngine(c, k)) return true;
+        return false;
+    }
+
+    /** The firmware to get for a requirement: of the two iOS 7 ones 7.0.6, which also has the iOS 7 voices. */
+    static String suggested(String key) { return key.equals(IOS7) ? "ios70" : key; }
+
+    /** The firmware to get (suggested keys) before a version's voices speak. */
+    static List<String> missing(Context c, Version v) {
+        List<String> out = new ArrayList<>();
+        for (String f : v.firmware) if (!firmwareImported(c, f)) out.add(suggested(f));
+        return out;
+    }
 
     static boolean ready(Context c, Version v) {
         for (String f : v.firmware) if (!firmwareImported(c, f)) return false;
