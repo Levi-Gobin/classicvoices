@@ -269,6 +269,19 @@ final class VoiceLibrary {
         return nil
     }
 
+    /// A premium Mac OS X voice's compact, when the same download brought it.
+    func compactMate(_ item: VoiceItem) -> String? {
+        item.kind == .premium ? packageMates(item).first { $0.hasSuffix("Compact") } : nil
+    }
+
+    /// Removes a premium Mac OS X voice and keeps its compact.
+    func removePremium(_ item: VoiceItem) {
+        guard let v = item.macPackage else { return }
+        let prefix = "com.levigobin.ClassicVoices.\(v.era)."
+        guard item.id.hasPrefix(prefix) else { return }
+        mac.remove(v, folder: String(item.id.dropFirst(prefix.count)))
+    }
+
     /// The other voices that go with this one when it's deleted.
     func packageMates(_ item: VoiceItem) -> [String] {
         guard let v = item.macPackage else { return [] }
@@ -766,6 +779,15 @@ struct VoiceDetail: View {
                         Button("Cancel", role: .cancel) {}
                     } message: {
                         Text("Anything set to this voice falls back to a system voice until you download it again.")
+                    }
+                    if let mate = library.compactMate(item) {
+                        Section {
+                            Button(role: .destructive) { library.removePremium(item) } label: {
+                                Label("Remove Premium, Keep Compact", systemImage: "trash")
+                            }
+                        } footer: {
+                            Text("Frees \(VoiceFormatting.size(n)). \(mate.dropLast(7)) (compact) stays.")
+                        }
                     }
                 }
             }

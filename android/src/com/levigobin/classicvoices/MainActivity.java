@@ -731,6 +731,22 @@ public class MainActivity extends Activity implements ImportService.Listener {
                             .show();
                 }
             });
+            // a Mac OS X package brings the premium voice and its compact: keep just the compact
+            final Library.Item compact = it.version.mac && it.kind.equals("premium") ? item(it.id + "Compact") : null;
+            if (compact != null && compact.here()) {
+                button("removepremium", getString(R.string.remove_premium, compact.title(), Library.size(it.size)),
+                        new View.OnClickListener() {
+                            @Override
+                            public void onClick(View b) {
+                                if (ttsReady) tts.stop();
+                                String rest = it.id.substring(it.id.indexOf('/') + 1);
+                                Firmware.deleteTree(new java.io.File(Data.downloadsDir(MainActivity.this), it.version.id + "/" + rest));
+                                Data.refresh(MainActivity.this);
+                                reload();
+                                goBack();
+                            }
+                        });
+            }
         }
     }
 

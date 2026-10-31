@@ -415,6 +415,14 @@ class Library:
         self.refresh()
         self.on_change()
 
+    def remove_premium(self, item):
+        """A Mac OS X premium voice: delete it and keep its compact (the
+        package brought both)."""
+        era, base = item.kind_of
+        shutil.rmtree(os.path.join(system.downloads_root(), era, base), ignore_errors=True)
+        self.refresh()
+        self.on_change()
+
     def dismiss_errors(self):
         self.errors = []
         self.on_change()

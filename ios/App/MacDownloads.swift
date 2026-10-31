@@ -129,6 +129,29 @@ final class MacDownloads {
         }
     }
 
+    /// Deletes one voice of a package and keeps the rest (a premium voice
+    /// goes, the compact that came with it stays).
+    func remove(_ v: Voice, folder: String) {
+        let keep = Self.folders(of: v).filter { $0 != folder }
+        guard !keep.isEmpty, !folder.isEmpty, !folder.contains("/"), !folder.contains("..") else { return remove(v) }
+        var job = VoiceStore.Job()
+        job.deletes = ["\(v.era)/\(folder)"]
+        job.files = [.init(dest: Self.marker(v), data: Data(keep.joined(separator: "\n").utf8))]
+        Task.detached {
+            do {
+                try VoiceStore.shared.enqueue(job, payloads: [])
+                try VoiceStore.shared.refresh()
+            } catch {
+                await MainActor.run { self.errors[v.id] = error.localizedDescription }
+            }
+            await MainActor.run {
+                self.refresh()
+                self.onChange()
+                AVSpeechSynthesisProviderVoice.updateSpeechVoices()
+            }
+        }
+    }
+
     // MARK: - steps
 
     /// Unpacks the package here, then hands its voice folders to the store.

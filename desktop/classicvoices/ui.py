@@ -440,6 +440,10 @@ class Browser(wx.Panel):
                 not self.lib.is_hidden(it), lambda on: frame.set_system_voice(it, on))
         if it.removable:
             p.button("Remove this voice (%s)" % L.size_text(it.size), lambda: frame.remove(it))
+            compact = self.lib.item(it.id + "Compact") if it.version.platform == "mac" and it.kind == "premium" else None
+            if compact:
+                p.button("Remove the premium voice, keep %s (frees %s)" % (compact.title, L.size_text(it.size)),
+                         lambda: frame.remove_premium(it))
         if it.state in ("builtin", "installed") and not self.lib.is_hidden(it):
             self._language_rows(p, it)
 
@@ -747,6 +751,18 @@ class Frame(wx.Frame):
         if getattr(self, "_auto", (None, None))[0] != stamp:
             self._auto = (stamp, system.auto_voices(key))
         return self._auto[1]
+
+    def remove_premium(self, item):
+        if wx.MessageBox("Remove %s and keep the compact voice?" % item.title, APP,
+                         wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION, self) != wx.YES:
+            return
+        self.stop_speaking()
+        self.lib.remove_premium(item)
+        tab = self.book.GetCurrentPage()
+        if isinstance(tab, Browser):
+            tab.go_back()
+        if system.IS_WIN:
+            self.update_system()
 
     def remove_language(self, lang, count):
         if wx.MessageBox("Remove every %s voice (%d)? Firmware you get from now on leaves %s out; turn it back on "

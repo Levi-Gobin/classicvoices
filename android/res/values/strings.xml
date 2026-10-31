@@ -76,6 +76,7 @@
     <string name="default_for">Use for %1$s</string>
     <string name="system_explained">Off hides this voice from TalkBack and other apps; it stays downloaded. Each language speaks with the voice chosen for it, or else the iOS 6 voice.</string>
     <string name="remove_heading">Remove</string>
+    <string name="remove_premium">Remove the premium voice, keep %1$s (frees %2$s)</string>
     <string name="remove_voice">Remove this voice, frees %1$s</string>
     <string name="remove_question">Remove %1$s? You can download it again later.</string>
     <string name="remove">Remove</string>
