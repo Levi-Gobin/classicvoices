@@ -13,7 +13,7 @@ OUT=build/linux
 rm -rf "$OUT/stage"
 mkdir -p "$OUT/stage/bin" "$OUT/stage/libexec" "$OUT/stage/lib/classicvoices"
 CFLAGS="-O2 -std=gnu11 -ffp-contract=off -fPIC -w -pthread -Icore -Iports/host -Iports/posix/compat -Ilinux/speechd -DVX_DYNAMIC_NATIVE ${EXTRA_CFLAGS}"
-CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c"
+CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c core/vxlang.c"
 HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c"
 OBJ=$OUT/obj
 mkdir -p "$OBJ"

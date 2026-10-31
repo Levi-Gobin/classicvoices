@@ -29,7 +29,7 @@ NVDA = os.path.join(ROOT, "nvda")
 SRC = os.path.join(NVDA, "src")
 OUT = os.path.join(ROOT, "build", "nvda")
 
-CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c")]
+CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c", "vxlang.c")]
 SHIM = [os.path.join(SRC, f) for f in ("vx_win.c", "mt_stub.c", "cvnvda.c", "vx_native_load.c")]
 # Apple's pronunciation rules, with PCRE2 built in (tools/pcre2_build.py fetches it)
 HOST = [os.path.join(ROOT, "ports", "host", f) for f in ("cv_catalog.c", "cv_rules.c")]

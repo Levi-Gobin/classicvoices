@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CV_ABI 2
+#define CV_ABI 3
 
 int cv_abi_version(void) { return CV_ABI; }
 

@@ -9,12 +9,13 @@ import addonHandler
 import config
 import nvwave
 from logHandler import log
-from speech.commands import (BreakCommand, CharacterModeCommand, IndexCommand, PhonemeCommand,
-                             PitchCommand, RateCommand, VolumeCommand)
+from speech.commands import (BreakCommand, CharacterModeCommand, IndexCommand, LangChangeCommand,
+                             PhonemeCommand, PitchCommand, RateCommand, VolumeCommand)
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from synthDriverHandler import SynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
 from ._classicvoices import engine as cv_engine
+from ._classicvoices import languages as cv_languages
 from ._classicvoices import lib as cv_lib
 from ._classicvoices import paths as cv_paths
 from ._classicvoices import pronunciation as cv_pron
@@ -64,8 +65,9 @@ class SynthDriver(SynthDriver):
         # Translators: a setting: Apple's later pronunciation dictionary and rules, added to each voice's own.
         BooleanDriverSetting("newerPronunciation", _("&Newer pronunciation rules"), defaultVal=False),
     )
+    # LangChangeCommand: NVDA sends it when "Automatic language switching" is on
     supportedCommands = {IndexCommand, BreakCommand, PitchCommand, RateCommand, VolumeCommand,
-                         CharacterModeCommand, PhonemeCommand}
+                         CharacterModeCommand, PhonemeCommand, LangChangeCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
     @classmethod
@@ -91,6 +93,7 @@ class SynthDriver(SynthDriver):
         self._rules = True
         self._newer = False
         self._voice = next(iter(self._voices))
+        self._lang_cache = {}
         self._speaker = cv_engine.Speaker(
             cv_paths.voices_root(), cv_paths.downloads_root(),
             on_index=self._on_index, on_done=self._on_done,
@@ -195,17 +198,43 @@ class SynthDriver(SynthDriver):
         else:
             state[kind] = command
 
+    def _lang_voice(self, language):
+        """The voice key for text in `language` (None: the voice in use)."""
+        if not language:
+            return self._voice
+        cache = self._lang_cache
+        if cache.get("for") != self._voice:
+            cache.clear()
+            cache["for"] = self._voice
+            cache["choices"] = cv_languages.load(cv_paths.data_root())
+            cache["voices"] = [(k, v.language) for k, v in self._voices.items()]
+        if language not in cache:
+            cache[language] = cv_languages.pick(cache["choices"], self._voice, language, cache["voices"]) or self._voice
+        return cache[language]
+
     def speak(self, speechSequence):
         text = []
         indexes = []
-        voice = self._voices.get(self._voice)
+        key = self._voice
+        voice = self._voices.get(key)
         lib = cv_lib.load()
         # What the commands set lasts to the end of the sequence. An index is
-        # a bookmark in the text: the sequence is one utterance, phrased whole.
+        # a bookmark in the text: the sequence is one utterance, phrased whole,
+        # unless the language changes to another voice's: then each voice
+        # speaks its part, in turn.
         state = {}  # "pitch" / "rate" / "vol" / "tn" -> its ESC command
         prev = None
-        pack = self._pack(self._voice)
+        pack = self._pack(key)
+        parts = []  # (voice key, text, indexes, pack) of the voices before this one
         for item in speechSequence:
+            if isinstance(item, LangChangeCommand):
+                want = self._lang_voice(item.lang)
+                if want != key and want in self._voices:
+                    parts.append((key, " ".join(text).strip(), indexes, pack))
+                    key, voice, pack = want, self._voices[want], self._pack(want)
+                    text, indexes = list(state.values()), []  # what the commands set goes on
+                prev = item
+                continue
             if isinstance(item, str):
                 if (self._rules or pack) and voice and "tn" not in state:
                     item = cv_lib.rules_text(cv_paths.voices_root(), cv_paths.downloads_root(), voice.key, voice.language,
@@ -254,13 +283,15 @@ class SynthDriver(SynthDriver):
                 else:
                     text.append(lhp or item.text or "")
             prev = item
-        text = " ".join(text).strip()
-        utt = cv_engine.Utterance(
-            self._voice, None if _only_commands(text) else text, indexes,
-            rate=_exp_map(self._rate, RATE_MIN, RATE_MAX),
-            pitch=_exp_map(self._pitch, PITCH_MIN, PITCH_MAX),
-            volume=self._volume, pack=pack)
-        self._speaker.speak(utt)
+        parts.append((key, " ".join(text).strip(), indexes, pack))
+        for i, (k, t, idx, pk) in enumerate(parts):
+            if i < len(parts) - 1 and not idx and _only_commands(t):
+                continue  # nothing to say before the language changed
+            self._speaker.speak(cv_engine.Utterance(
+                k, None if _only_commands(t) else t, idx,
+                rate=_exp_map(self._rate, RATE_MIN, RATE_MAX),
+                pitch=_exp_map(self._pitch, PITCH_MIN, PITCH_MAX),
+                volume=self._volume, pack=pk, last=i == len(parts) - 1))
 
     def cancel(self):
         self._speaker.cancel()

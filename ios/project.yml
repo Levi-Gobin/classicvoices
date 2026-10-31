@@ -28,7 +28,7 @@ targetTemplates:
     type: library.static
     sources:
       - path: ../core
-        includes: ["thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c"]
+        includes: ["thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c", "vxlang.c"]
       - path: ../build/gen
       - path: ../build/gen3
       - path: ../build/gen4

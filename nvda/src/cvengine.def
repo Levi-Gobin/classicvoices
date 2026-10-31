@@ -21,3 +21,5 @@ EXPORTS
     vxs_last_audio_ms
     vxs_last_error
     vxs_benchmark
+    vx_lang_pick
+    vx_lang_same

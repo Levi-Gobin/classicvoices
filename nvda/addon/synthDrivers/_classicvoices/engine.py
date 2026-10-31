@@ -16,7 +16,7 @@ HOLD_BYTES = 2 * 220  # the last 10 ms, kept back to carry the index callback
 
 
 class Utterance:
-    def __init__(self, voice_key, text, indexes, rate, pitch, volume, pack=None):
+    def __init__(self, voice_key, text, indexes, rate, pitch, volume, pack=None, last=True):
         self.voice_key = voice_key
         self.pack = pack          # newer pronunciation pack folder (vxs_set_rules_pack), or None
         self.text = text          # engine text, or None when there is nothing to say
@@ -24,6 +24,7 @@ class Utterance:
         self.rate = rate          # percent of normal, 50-400
         self.pitch = pitch        # percent of normal, 50-200
         self.volume = volume      # 0-100
+        self.last = last          # False: another voice's part of the same speech follows
 
 
 class Speaker:
@@ -144,5 +145,6 @@ class Speaker:
                 self._feed(pending or b"\0\0", fire)
             elif pending:
                 self._feed(pending)
-            self._idle()
-            self._on_done()
+            if utt.last:
+                self._idle()
+                self._on_done()

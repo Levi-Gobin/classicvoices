@@ -24,7 +24,7 @@ mkdir -p "$OUT/apk" "$OUT/classes" "$OUT/gen" "$OUT/obj"
 
 # ---- native library, per ABI
 CFLAGS="-O2 -std=gnu11 -ffp-contract=off -fPIC -w -fvisibility=hidden -Icore -Iports/host -Iports/posix/compat -DVX_DYNAMIC_NATIVE"
-CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c"
+CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c core/vxlang.c"
 HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c android/jni/cv_jni.c"
 # the .xz decoder, for the Zig compiler the phone downloads to build fast code
 XZ="third_party/xz-embedded/xz_crc32.c third_party/xz-embedded/xz_crc64.c third_party/xz-embedded/xz_dec_lzma2.c third_party/xz-embedded/xz_dec_stream.c third_party/xz-embedded/xz_dec_bcj.c android/jni/cv_untar.c"
