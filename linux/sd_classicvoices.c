@@ -26,6 +26,7 @@
 #include "cv_rules.h"
 #include "cv_ssml.h"
 #include "spd_module_main.h"
+#include "vxlang.h"
 #include "vxstream.h"
 
 void cv_set_native_dir(const char *dir);
@@ -46,7 +47,8 @@ static struct {
     int rate, pitch, volume;  // speechd -100..100
     char voice_type[32], language[32], synthesis_voice[128];
     char cap_let[16], spelling[8];
-} g_set = {0, 0, 100, "", "", "", "none", "off"};
+    char language_at_voice[32];  // the language when synthesis_voice was set
+} g_set = {0, 0, 100, "", "", "", "none", "off", ""};
 
 // the job handed to the worker
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
@@ -209,6 +211,15 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
     // values scale it down to silence at -100.
     int volume = g_set.volume >= 100 ? -1 : (g_set.volume + 100) * 80 / 200;
     const CvVoice *v = choose_voice(g_set.synthesis_voice, g_set.language, g_set.voice_type);
+    // Automatic language switching: a client (Orca) that sets another
+    // language after choosing the voice marks text in that language. The
+    // voice for it is the one nearest the chosen voice, or as chosen in the
+    // app (<data>/languages.txt).
+    if (v && g_set.language[0] && strcmp(g_set.language, "NULL") && strcmp(g_set.language, g_set.language_at_voice) &&
+        !vx_lang_same(g_set.language, v->language)) {
+        const CvVoice *o = cv_lang_voice(g_voices, g_nvoices, g_paths.root, v->key, g_set.language);
+        if (o) v = o;
+    }
     int cap_pitch = !strcmp(g_set.cap_let, "pitch");
     int spell = !strcmp(g_set.spelling, "on");
     pthread_mutex_unlock(&g_mu);
@@ -366,6 +377,7 @@ int module_set(const char *var, const char *val) {
     else if (!strcmp(var, "language")) snprintf(g_set.language, sizeof g_set.language, "%s", val);
     else if (!strcmp(var, "synthesis_voice")) {
         snprintf(g_set.synthesis_voice, sizeof g_set.synthesis_voice, "%s", val);
+        snprintf(g_set.language_at_voice, sizeof g_set.language_at_voice, "%s", g_set.language);
         const CvVoice *v = strcmp(val, "NULL") ? cv_find_voice(g_voices, g_nvoices, val) : NULL;
         if (v) {  // warm it up before the first message
             char pack[1300];

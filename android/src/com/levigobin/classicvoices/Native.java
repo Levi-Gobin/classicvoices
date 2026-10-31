@@ -51,6 +51,10 @@ final class Native {
     /** Starts the engine afresh (new fast engine code is used from the next utterance). */
     static native void reload();
 
+    /** Automatic language switching (vxlang.h vx_lang_choose): the index in keys of the voice for language
+     *  while current speaks, with choices (languages.txt's text) applied; -1 if none speaks it. */
+    static native int langPick(String choices, String current, String language, String[] keys, String[] langs);
+
     /** Unpacks the paths in keep from a .tar.xz into dest; null when done, else what went wrong. */
     static native String untarXz(String archive, String dest, String[] keep, Progress p);
 

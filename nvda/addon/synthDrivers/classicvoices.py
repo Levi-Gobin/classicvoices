@@ -203,10 +203,10 @@ class SynthDriver(SynthDriver):
         if not language:
             return self._voice
         cache = self._lang_cache
-        if cache.get("for") != self._voice:
+        if cache.get("for") != (self._voice, cv_languages.generation):
             cache.clear()
-            cache["for"] = self._voice
-            cache["choices"] = cv_languages.load(cv_paths.data_root())
+            cache["for"] = (self._voice, cv_languages.generation)
+            cache["choices"] = cv_languages.text(cv_paths.data_root())
             cache["voices"] = [(k, v.language) for k, v in self._voices.items()]
         if language not in cache:
             cache[language] = cv_languages.pick(cache["choices"], self._voice, language, cache["voices"]) or self._voice

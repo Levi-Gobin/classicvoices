@@ -24,6 +24,17 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
 // Whether two BCP 47 tags name the same language (ignoring region).
 int vx_lang_same(const char *a, const char *b);
 
+// With the choices people made applied: the contents of <data>/languages.txt
+// (NULL or "" for none), one choice per line,
+//     <for> <language> <voice key>
+// <for> is "*" (whichever voice is in use) or a voice key (only while that
+// voice is in use, and it wins over "*"); <language> a bare code ("de"), so a
+// choice covers de-DE and de-AT text alike; '#' starts a comment. The voice
+// in use still speaks a language it speaks, and a chosen voice that isn't
+// there any more falls back to the automatic one.
+int vx_lang_choose(const char *choices, const char *current_key, const char *language,
+                   const char *const *keys, const char *const *languages, size_t n);
+
 #ifdef __cplusplus
 }
 #endif

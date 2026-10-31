@@ -60,6 +60,9 @@ def load():
     lib.cv_free.argtypes = [c.c_void_p]
     lib.vx_lang_pick.restype = c.c_int
     lib.vx_lang_pick.argtypes = [c.c_char_p, c.c_char_p, c.POINTER(c.c_char_p), c.POINTER(c.c_char_p), c.c_size_t]
+    lib.vx_lang_choose.restype = c.c_int
+    lib.vx_lang_choose.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.POINTER(c.c_char_p),
+                                   c.POINTER(c.c_char_p), c.c_size_t]
     if lib.cv_abi_version() != 3:
         raise OSError("cvengine ABI mismatch")
     _lib = lib
@@ -80,15 +83,17 @@ def phoneme_text(voices_root, downloads_root, voice_key, language, ipa, joined):
         lib.cv_free(p)
 
 
-def lang_pick(current_key, language, voices):
+def lang_pick(current_key, language, voices, choices=None):
     """The key of the voice for text in `language` (core/vxlang.c): the
-    nearest release to the voice in use. voices: [(key, language)]. None
-    when no voice speaks it."""
+    nearest release to the voice in use, unless choices (languages.txt's
+    text) name another. voices: [(key, language)]. None when no voice
+    speaks it."""
     lib = load()
     n = len(voices)
     keys = (ctypes.c_char_p * n)(*[k.encode("utf-8") for k, _ in voices])
     langs = (ctypes.c_char_p * n)(*[(l or "").encode("utf-8") for _, l in voices])
-    i = lib.vx_lang_pick(current_key.encode("utf-8") if current_key else None, language.encode("utf-8"), keys, langs, n)
+    i = lib.vx_lang_choose((choices or "").encode("utf-8"), current_key.encode("utf-8") if current_key else None,
+                           language.encode("utf-8"), keys, langs, n)
     return voices[i][0] if i >= 0 else None
 
 

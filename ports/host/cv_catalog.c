@@ -1,6 +1,7 @@
 // Voice discovery for the Linux and Android hosts; follows the NVDA add-on's
 // voices.py and the iOS app's VoiceCatalog (compact fallbacks, fixed pitch).
 #include "cv_catalog.h"
+#include "vxlang.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -333,4 +334,27 @@ const char *cv_voice_build(const CvVoice *v) {
         if (!strncmp(k, builds[i], n) && (k[n] == '/' || (k[n] == 'e' && k[n + 1] == '/'))) return builds[i];
     }
     return "ios6";
+}
+
+const CvVoice *cv_lang_voice(const CvVoice *v, size_t n, const char *data_root, const char *current_key,
+                             const char *language) {
+    if (!n || !language || !*language) return NULL;
+    char path[1100], choices[16384];
+    choices[0] = 0;
+    if (data_root) {
+        snprintf(path, sizeof path, "%s/languages.txt", data_root);
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            size_t got = fread(choices, 1, sizeof choices - 1, f);
+            choices[got] = 0;
+            fclose(f);
+        }
+    }
+    const char **keys = malloc(n * sizeof *keys), **langs = malloc(n * sizeof *langs);
+    if (!keys || !langs) { free(keys); free(langs); return NULL; }
+    for (size_t i = 0; i < n; i++) { keys[i] = v[i].key; langs[i] = v[i].language; }
+    int i = vx_lang_choose(choices, current_key, language, keys, langs, n);
+    free(keys);
+    free(langs);
+    return i >= 0 ? &v[i] : NULL;
 }

@@ -36,6 +36,14 @@ void cv_free_voices(CvVoice *v);
 const CvVoice *cv_pick_voice(const CvVoice *v, size_t n, const char *language);
 const CvVoice *cv_find_voice(const CvVoice *v, size_t n, const char *name_or_key);
 
+// Automatic language switching: the voice for text in `language` while the
+// voice current_key speaks, by default the nearest to it (core/vxlang.h),
+// unless <data_root>/languages.txt names another (the choices people made in
+// the app). The current voice when it speaks that language; NULL when no
+// voice does.
+const CvVoice *cv_lang_voice(const CvVoice *v, size_t n, const char *data_root, const char *current_key,
+                             const char *language);
+
 // The firmware build whose engine speaks a voice ("ios6" for "ios6e/en-US"
 // and the Lion voices, "ios10" for Mavericks premium ...).
 const char *cv_voice_build(const CvVoice *v);

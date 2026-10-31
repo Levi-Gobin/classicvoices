@@ -3,6 +3,7 @@
 #include "vxlang.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -126,4 +127,44 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
         if (best < 0 || score < best_score) { best = (int)i; best_score = score; }
     }
     return best;
+}
+
+// The voice key a choices line gives `lang` for `who` ("*" or a voice key);
+// writes it into out (empty: none).
+static void chosen(const char *choices, const char *who, const char *lang, char *out, size_t cap) {
+    out[0] = 0;
+    for (const char *line = choices; line && *line;) {
+        const char *end = strchr(line, '\n');
+        size_t len = end ? (size_t)(end - line) : strlen(line);
+        char f[3][128];
+        int nf = 0;
+        size_t i = 0;
+        while (nf < 3 && i < len && line[i] != '#') {
+            while (i < len && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) i++;
+            if (i >= len || line[i] == '#') break;
+            size_t j = 0;
+            while (i < len && line[i] != ' ' && line[i] != '\t' && line[i] != '\r' && j < sizeof f[0] - 1)
+                f[nf][j++] = line[i++];
+            f[nf++][j] = 0;
+        }
+        if (nf == 3 && !strcmp(f[0], who) && !strcmp(parse(f[1]).lang, lang)) snprintf(out, cap, "%s", f[2]);
+        line = end ? end + 1 : NULL;
+    }
+}
+
+int vx_lang_choose(const char *choices, const char *current_key, const char *language,
+                   const char *const *keys, const char *const *languages, size_t n) {
+    int autov = vx_lang_pick(current_key, language, keys, languages, n);
+    if (!choices || !*choices) return autov;
+    if (autov >= 0 && current_key && !strcmp(keys[autov], current_key)) return autov;
+    Tag want = parse(language);
+    char k[128];
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 0 && !current_key) continue;
+        chosen(choices, pass == 0 ? current_key : "*", want.lang, k, sizeof k);
+        if (!k[0]) continue;
+        for (size_t i = 0; i < n; i++)
+            if (!strcmp(keys[i], k)) return (int)i;
+    }
+    return autov;
 }

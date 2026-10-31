@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "cv_catalog.h"
+#include "vxlang.h"
 #include "cv_ssml.h"
 #include "vxstream.h"
 #include "vxrules.h"
@@ -284,4 +285,35 @@ JNIEXPORT jdoubleArray JNICALL Java_com_levigobin_classicvoices_Native_lastTimin
     pthread_rwlock_unlock(&g_life);
     (*env)->SetDoubleArrayRegion(env, a, 0, 3, t);
     return a;
+}
+
+// Automatic language switching (vxlang.h): index into keys of the voice for
+// `language` while `current` speaks, with the choices from languages.txt; -1
+// when none speaks it.
+JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_langPick(JNIEnv *env, jclass cls, jstring choices,
+                                                                         jstring current, jstring language,
+                                                                         jobjectArray keys, jobjectArray langs) {
+    (void)cls;
+    jsize n = (*env)->GetArrayLength(env, keys);
+    if ((*env)->GetArrayLength(env, langs) != n) return -1;
+    char *ch = dup_utf(env, choices), *cur = dup_utf(env, current), *lang = dup_utf(env, language);
+    char **k = calloc(n ? (size_t)n : 1, sizeof *k), **l = calloc(n ? (size_t)n : 1, sizeof *l);
+    int out = -1;
+    if (k && l && lang) {
+        for (jsize i = 0; i < n; i++) {
+            jstring a = (*env)->GetObjectArrayElement(env, keys, i), b = (*env)->GetObjectArrayElement(env, langs, i);
+            k[i] = dup_utf(env, a);
+            l[i] = dup_utf(env, b);
+            (*env)->DeleteLocalRef(env, a);
+            (*env)->DeleteLocalRef(env, b);
+        }
+        out = vx_lang_choose(ch, cur, lang, (const char *const *)k, (const char *const *)l, (size_t)n);
+    }
+    for (jsize i = 0; k && l && i < n; i++) { free(k[i]); free(l[i]); }
+    free(k);
+    free(l);
+    free(ch);
+    free(cur);
+    free(lang);
+    return out;
 }

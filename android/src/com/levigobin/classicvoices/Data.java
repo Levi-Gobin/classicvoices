@@ -7,10 +7,12 @@ import android.os.Build;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Where the voices live and which ones there are. Everything is kept in
@@ -84,6 +86,7 @@ final class Data {
             }
             all = Collections.unmodifiableList(out);
             voices = Collections.unmodifiableList(shown);
+            near.clear();
             return voices;
         }
     }
@@ -147,10 +150,59 @@ final class Data {
     }
 
     /**
-     * The voice for a language: the one chosen in the app for it, else the
-     * iOS 6 voice (VoiceOver's own in that era), else enhanced, else any.
+     * The voice for a language: the one chosen in the app for it; for the
+     * phone's own language else the iOS 6 voice (VoiceOver's own in that era),
+     * else enhanced, else any. For another language (TalkBack's language
+     * switching asks for one) the voice nearest the one speaking the phone's
+     * language, or the one chosen for that in the app (languages.txt,
+     * vxlang.h).
      */
     static VoiceInfo defaultFor(Context c, String lang, String country) {
+        VoiceInfo v = ranked(c, lang, country);
+        if (v == null || v.key.equals(prefs(c).getString("default_" + v.language, null))) return v;
+        Locale here = Locale.getDefault();
+        VoiceInfo home = ranked(c, iso3(here, true), iso3(here, false));
+        if (home == null || match(home, lang, null) > 0) return v;
+        String tag = match(v, lang, country) == 3 ? v.language : v.locale.getLanguage();
+        File choices = new File(root(c), "languages.txt");
+        String cacheKey = tag + " " + home.key + " " + choices.lastModified();
+        synchronized (LOCK) {
+            String k = near.get(cacheKey);
+            if (k != null) {
+                for (VoiceInfo x : voices) if (x.key.equals(k)) return x;
+            }
+        }
+        List<VoiceInfo> list = voices(c);
+        String[] keys = new String[list.size()], langs = new String[list.size()];
+        for (int i = 0; i < keys.length; i++) {
+            keys[i] = list.get(i).key;
+            langs[i] = list.get(i).language;
+        }
+        int i = Native.langPick(readSmall(choices), home.key, tag, keys, langs);
+        VoiceInfo out = i >= 0 ? list.get(i) : v;
+        synchronized (LOCK) {
+            near.put(cacheKey, out.key);
+        }
+        return out;
+    }
+
+    // voices picked for other languages ("de-DE <home key> <languages.txt time>" -> key), until the list changes
+    private static final Map<String, String> near = new HashMap<>();
+
+    private static String readSmall(File f) {
+        try {
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            byte[] b = new byte[(int) Math.min(f.length(), 65536)];
+            int n = 0, r;
+            while (n < b.length && (r = in.read(b, n, b.length - n)) > 0) n += r;
+            in.close();
+            return new String(b, 0, n, "UTF-8");
+        } catch (java.io.IOException e) {
+            return "";
+        }
+    }
+
+    private static VoiceInfo ranked(Context c, String lang, String country) {
         List<VoiceInfo> all = voices(c);
         VoiceInfo best = null;
         int bestScore = -1;

@@ -131,6 +131,10 @@ static void data_dir(WCHAR *out, DWORD cap) {
 
 // ---------------------------------------------------------------- the engine object
 
+typedef struct {
+    char key[96], fallback[96], language[24];
+} VoiceRef;
+
 typedef struct Engine Engine;
 struct Engine {
     ISpTTSEngine eng;          // first: the object's identity
@@ -138,7 +142,14 @@ struct Engine {
     LONG refs;
     ISpObjectToken *token;
     VxStream *vxs;
+    // the voice speaking now: the token's own (own), or the one for text in
+    // another language (automatic language switching, voice_for)
     char key[96], fallback[96], build[16], language[24];
+    VoiceRef own;
+    LANGID own_lang;
+    struct { LANGID id; VoiceRef v; } langs[16];  // voices picked per language
+    int nlangs;
+    FILETIME langs_stamp;  // languages.txt's when they were picked
     char root[MAX_PATH * 3 + 16], voices[MAX_PATH * 3 + 16], downloads[MAX_PATH * 3 + 16];
 };
 
@@ -456,6 +467,58 @@ static int same_prosody(const SPVSTATE *a, const SPVSTATE *b) {
 
 static int is_text(SPVACTIONS a) { return a == SPVA_Speak || a == SPVA_SpellOut || a == SPVA_Pronounce; }
 
+// Automatic language switching: the voice for text SAPI marks as another
+// language (SSML xml:lang, <lang langid>): by default the one nearest this
+// voice, or as chosen in the app (<data>\languages.txt, read by
+// cv_lang_voice). This voice when it speaks that language or no voice does.
+static const VoiceRef *voice_for(Engine *e, LANGID id) {
+    if (!id || id == e->own_lang || !e->root[0]) return &e->own;
+    WCHAR *root = wide_of(e->root), path[MAX_PATH * 2];
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    FILETIME stamp = {0, 0};
+    if (root) {
+        swprintf(path, MAX_PATH * 2, L"%ls\\languages.txt", root);
+        if (GetFileAttributesExW(path, GetFileExInfoStandard, &fa)) stamp = fa.ftLastWriteTime;
+        free(root);
+    }
+    if (CompareFileTime(&stamp, &e->langs_stamp)) {  // the choices changed
+        e->nlangs = 0;
+        e->langs_stamp = stamp;
+    }
+    for (int i = 0; i < e->nlangs; i++)
+        if (e->langs[i].id == id) return &e->langs[i].v;
+    WCHAR wname[LOCALE_NAME_MAX_LENGTH];
+    if (!LCIDToLocaleName(MAKELCID(id, SORT_DEFAULT), wname, LOCALE_NAME_MAX_LENGTH, 0)) return &e->own;
+    char *name = utf8_of(wname, -1);
+    if (!name) return &e->own;
+    CvVoice *all = NULL;
+    size_t n = cv_scan_voices(e->voices, e->downloads, &all);
+    const CvVoice *v = cv_lang_voice(all, n, e->root, e->own.key, name);
+    const VoiceRef *out = &e->own;
+    if (e->nlangs < (int)(sizeof e->langs / sizeof e->langs[0])) {  // this voice too: no scan next time
+        VoiceRef *r = &e->langs[e->nlangs].v;
+        e->langs[e->nlangs++].id = id;
+        if (v && strcmp(v->key, e->own.key)) {
+            snprintf(r->key, sizeof r->key, "%s", v->key);
+            snprintf(r->fallback, sizeof r->fallback, "%s", v->fallback);
+            snprintf(r->language, sizeof r->language, "%s", v->language);
+        } else *r = e->own;
+        out = r;
+    }
+    logf_("language %s: %s", name, out->key);
+    free(name);
+    cv_free_voices(all);
+    return out;
+}
+
+// Makes v the voice speaking now.
+static void use_voice(Engine *e, const VoiceRef *v) {
+    if (!strcmp(e->key, v->key)) return;
+    snprintf(e->key, sizeof e->key, "%s", v->key);
+    snprintf(e->fallback, sizeof e->fallback, "%s", v->fallback);
+    snprintf(e->language, sizeof e->language, "%s", v->language);
+}
+
 static int ensure_stream(Engine *e) {
     if (e->vxs) return 1;
     WCHAR dir[MAX_PATH];
@@ -525,6 +588,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
     Engine *e = (Engine *)This;
     if (!site) return E_INVALIDARG;
     if (!e->key[0] || !ensure_stream(e)) return E_FAIL;
+    use_voice(e, &e->own);
     set_pack(e);
     Run r = {e, site, 0, now_ms(), 0};
     int fallback = (int)user_setting(L"PitchFallback", 1);  // the compact voice speaks pitch changes
@@ -560,7 +624,12 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         }
         // From here to the last text is one engine utterance, phrased as a
         // whole: bookmarks, silence and changes of rate, pitch or volume go
-        // into it as commands.
+        // into it as commands; up to text in a language another voice speaks.
+        const VoiceRef *voice = voice_for(e, f->State.LangID);
+        if (strcmp(voice->key, e->key)) {  // later checks compare with e->key: voice_for may refill its list
+            use_voice(e, voice);
+            set_pack(e);
+        }
         Text text = {0};
         Marks marks = {0};
         const SPVSTATE *st = &f->State;
@@ -570,6 +639,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         for (;;) {
             char cmd[48];
             SPVACTIONS a = f->State.eAction;
+            if (is_text(a) && text.len && strcmp(voice_for(e, f->State.LangID)->key, e->key)) break;
             if (a == SPVA_Bookmark) {
                 if (marks.n == marks.cap) {
                     marks.cap = marks.cap ? marks.cap * 2 : 16;
@@ -618,6 +688,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         free(text.src);
         if (stop) break;
     }
+    use_voice(e, &e->own);
     return S_OK;
 }
 
@@ -673,6 +744,15 @@ static HRESULT STDMETHODCALLTYPE tok_SetObjectToken(ISpObjectWithToken *This, IS
     token_string(token, L"CVBuild", e->build, sizeof e->build);
     token_string(token, L"CVLanguage", e->language, sizeof e->language);
     if (!e->key[0]) return E_INVALIDARG;
+    snprintf(e->own.key, sizeof e->own.key, "%s", e->key);
+    snprintf(e->own.fallback, sizeof e->own.fallback, "%s", e->fallback);
+    snprintf(e->own.language, sizeof e->own.language, "%s", e->language);
+    WCHAR *wl = wide_of(e->language);
+    if (wl) {
+        for (WCHAR *p = wl; *p; p++) if (*p == '_') *p = '-';
+        e->own_lang = LANGIDFROMLCID(LocaleNameToLCID(wl, 0));
+        free(wl);
+    }
     // Programs pick the voice well before they speak: load it now.
     if (ensure_stream(e)) {
         set_pack(e);
