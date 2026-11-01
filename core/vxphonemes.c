@@ -755,7 +755,7 @@ static void voice_dir(const char *voices_root, const char *asset_root, const cha
     const char *slash = strchr(key, '/');
     size_t bl = slash ? (size_t)(slash - key) : strlen(key);
     const char *rest = slash ? slash + 1 : "";
-    if (!strncmp(key, "mac", 3)) snprintf(out, cap, "%s/%.*s/%s", asset_root ? asset_root : "", (int)bl, key, rest);
+    if (!strncmp(key, "mac", 3) || !strncmp(key, "siri7/", 6)) snprintf(out, cap, "%s/%.*s/%s", asset_root ? asset_root : "", (int)bl, key, rest);
     else if (bl && key[bl - 1] == 'e') snprintf(out, cap, "%s/%.*s/%s", asset_root ? asset_root : "", (int)bl - 1, key, rest);
     else snprintf(out, cap, "%s/%.*s/TTSResources/%s", voices_root, (int)bl, key, rest);
 }

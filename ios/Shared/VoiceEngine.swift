@@ -56,6 +56,10 @@ enum VoiceCatalog {
     static let macEras = [("mac107", "Lion", "10.7"), ("mac108", "Mountain Lion", "10.8"),
                           ("mac109", "Mavericks", "10.9")]
 
+    /// iOS 7's Siri voices, downloaded into <store>/siri7/<Name>[Compact]/ and
+    /// spoken by 7.0.6's engine (vxstream.c open_engine).
+    static let siri = (build: "siri7", name: "iOS 7 Siri", version: "7.0.6")
+
     struct Entry: Hashable, Codable {
         let build: String      // "ios6" / "ios5" / "ios4" / "ios3" / "ios70", or a Mac era "mac107"
         let buildName: String  // "iOS 6" / "Lion"
@@ -63,7 +67,7 @@ enum VoiceCatalog {
         let language: String   // e.g. "en-US"
         let name: String       // e.g. "Samantha"
         var enhanced = false
-        var macDir: String? = nil  // Mac voices: folder name, e.g. "KarenCompact" / "Karen"
+        var macDir: String? = nil  // Mac and Siri voices: folder name, e.g. "KarenCompact" / "Karen"
         var premium = false        // Mac premium (full unit-selection) voice
         var macinTalk = false      // Apple MacinTalk voice (Tiger/Leopard/Snow Leopard)
         private var tag: String { enhanced ? build + "e" : build }
@@ -73,6 +77,7 @@ enum VoiceCatalog {
         }
         var displayName: String {
             if macinTalk { return "\(name) (\(buildName))" }
+            if build == VoiceCatalog.siri.build { return "\(name) (\(buildName)\(enhanced ? " Enhanced" : ""))" }
             if macDir != nil { return "\(name) (\(buildName) \(premium ? "Premium" : "Compact"))" }
             return "\(name) (\(buildName)\(enhanced ? " Enhanced" : ""))"
         }
@@ -165,6 +170,26 @@ enum VoiceCatalog {
                 out.append(Entry(build: era, buildName: eraName, version: version, language: language, name: voice,
                                  macDir: name, premium: tag("voicemodel", in: xml)?.hasPrefix("full") ?? false))
             }
+        }
+        return out
+    }
+
+    /// Downloaded Siri voices under <base>/siri7/<Folder>/broker.hdr, where
+    /// 7.0.6's engine is here; the downloader writes each one's `locale`.
+    static func siriVoices(in base: URL) -> [Entry] {
+        guard let root, FileManager.default.fileExists(atPath: root.appendingPathComponent("ios70/voiced").path) else { return [] }
+        let dir = base.appendingPathComponent(siri.build)
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return [] }
+        var out: [Entry] = []
+        for name in names.sorted() where !name.hasPrefix(".") {
+            let vdir = dir.appendingPathComponent(name)
+            guard let xml = try? String(contentsOf: vdir.appendingPathComponent("broker.hdr"), encoding: .isoLatin1),
+                  let voice = tag("voice", in: xml) else { continue }
+            let locale = (try? String(contentsOf: vdir.appendingPathComponent("locale"), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let language = locale ?? nuanceLanguages[tag("langcode", in: xml) ?? ""] else { continue }
+            out.append(Entry(build: siri.build, buildName: siri.name, version: siri.version, language: language,
+                             name: voice, enhanced: !name.hasSuffix("Compact"), macDir: name))
         }
         return out
     }
@@ -401,6 +426,7 @@ enum VoiceCatalog {
         add(b)
         for (build, _, _) in builds { add(b + "/" + build) }
         for (era, _, _) in macEras { add(b + "/" + era) }
+        add(b + "/" + siri.build)
         for (gen, _, _) in macinTalkEras { add(b + "/" + gen); add(b + "/" + gen + "/Voices") }
         return out
     }
@@ -423,6 +449,7 @@ enum VoiceCatalog {
         // Downloaded Mac voices that aren't also bundled.
         let bundled = Set(builtIn.map(\.key))
         return out + (macVoices(in: base) + macinTalkVoices(in: base)).filter { !bundled.contains($0.key) }
+            + siriVoices(in: base)
     }
 
     static var entries: [Entry] { builtIn + enhanced }

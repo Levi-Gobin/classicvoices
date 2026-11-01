@@ -27,7 +27,8 @@ import java.util.zip.ZipInputStream;
 
 /**
  * Voices from Apple's own servers, once the matching engine is imported:
- * enhanced iOS 5 and 6 voices (MobileAsset zips, EnhancedCatalog.json) and
+ * enhanced iOS 5, 6 and 7 voices (MobileAsset zips, EnhancedCatalog.json), iOS 7's
+ * Siri voices (the same kind of zips, SiriVoiceCatalog.json) and
  * the Mac OS X Lion, Mountain Lion and Mavericks voices (software-update
  * packages, MacVoiceCatalog.json). Both are streamed straight into place: a
  * package is xar -> Payload (gzip) -> cpio -> <Name>.SpeechVoice whose
@@ -35,10 +36,10 @@ import java.util.zip.ZipInputStream;
  */
 final class Downloads {
     static final class Item {
-        final String kind;   // "enhanced" or "mac"
+        final String kind;   // "enhanced", "siri" or "mac"
         final String label;  // "Samantha, enhanced (iOS 6, en-US)"
-        final String build;  // ios5 / ios6 / ios70, or the Mac era
-        final String name;   // language for enhanced, voice name for Mac
+        final String build;  // ios5 / ios6 / ios70, siri7, or the Mac era
+        final String name;   // language for enhanced, the folder for Siri ("AaronCompact"), voice name for Mac
         final String locale, url, sha1;
         final long size;
         final List<String> needs = new ArrayList<>();  // firmware keys to get before it can be downloaded
@@ -57,13 +58,14 @@ final class Downloads {
         String id() { return kind + ":" + build + ":" + name; }
     }
 
-    private static JSONArray enhanced, mac;
+    private static JSONArray enhanced, mac, siri;
 
     private static synchronized void load(Context c) throws IOException {
         if (enhanced != null) return;
         try {
             enhanced = new JSONArray(asset(c, "EnhancedCatalog.json"));
             mac = new JSONObject(asset(c, "MacVoiceCatalog.json")).getJSONArray("voices");
+            siri = new JSONObject(asset(c, "SiriVoiceCatalog.json")).getJSONArray("voices");
         } catch (JSONException e) {
             throw new IOException("bad catalogue: " + e.getMessage());
         }
@@ -133,6 +135,19 @@ final class Downloads {
                 }
                 // firmware here but not the common files: an import assembles them
                 if (it.needs.isEmpty() && !new File(voices, era + "/common").isDirectory()) continue;
+                out.add(it);
+            }
+            for (int i = 0; i < siri.length(); i++) {
+                JSONObject v = siri.getJSONObject(i);
+                String locale = v.getString("locale");
+                if (!Languages.isWanted(locale, wanted)) continue;
+                boolean compact = v.getString("footprint").equals("compact");
+                String folder = v.getString("name") + (compact ? "Compact" : "");
+                if (new File(dl, "siri7/" + folder + "/broker.hdr").isFile()) continue;
+                String label = v.getString("name") + ", " + (compact ? "compact" : "enhanced") + " (iOS 7 Siri, " + locale + ")";
+                Item it = new Item("siri", label, "siri7", folder, locale, https(v.getString("url")), v.getLong("size"),
+                        v.optString("sha1", null));
+                if (!Data.hasEngine(c, "ios70")) it.needs.add("ios70");
                 out.add(it);
             }
         } catch (JSONException e) {
@@ -332,9 +347,18 @@ final class Downloads {
         } finally {
             conn.disconnect();
         }
-        if (!new File(tmp, "broker.hdr.asset").isFile()) {
+        boolean siriVoice = it.kind.equals("siri");
+        if (!new File(tmp, siriVoice ? "broker.hdr" : "broker.hdr.asset").isFile()) {
             Firmware.deleteTree(tmp);
             throw new IOException("the archive had no voice in it");
+        }
+        if (siriVoice) {  // its language, beside it (the C catalog reads it)
+            OutputStream out = new FileOutputStream(new File(tmp, "locale"));
+            try {
+                out.write((it.locale + "\n").getBytes("UTF-8"));
+            } finally {
+                out.close();
+            }
         }
         Firmware.deleteTree(dest);
         if (!tmp.renameTo(dest)) throw new IOException("couldn't move the voice into place");

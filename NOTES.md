@@ -1250,3 +1250,62 @@ interpreter (iOS 3-7, iOS 5/6/7 enhanced, Mountain Lion, Mavericks compact
 and premium). The profile before: Tessa's time is mostly three engine
 functions (unit selection and fixed-point multiplies); the register copies
 were down to ~5%.
+
+## iOS 7's Siri voices (2026-11-01)
+
+- Apple's `com.apple.MobileAsset.VoiceServices.CustomVoice` catalog (mesu,
+  the asset type iOS 7's voiced downloads Siri's voices as) still lists four
+  postings: compatibility 1 and 2 (appldnld .../iOS7/031-3415.20140310: 1 is
+  iOS 7.0's Aaron, Nicky, Daniel, Marie, Helena, Martin; 2 the voices 7.1
+  added, Arthur, Martha, Catherine, Gordon, Hattori, O-ren, Li-mu, Yu-shu),
+  3 (iOS 8.2) and 5 (iOS 10.0; what macOS 27 offers again). Only 1 and 2 are
+  offered (tools/siri_catalog.py -> SiriVoiceCatalog.json): Vocalizer 5.2.3,
+  bet3 compacts and full_155mrf22 premium voices, which 7.0.6's engine runs.
+  Not Li-mu and Yu-shu: their Mandarin front end (langversion 5.2.3.13310)
+  uses fe/fe_pw, the word segmenter 7.1 added in place of fe/fe_wordseg, and
+  7.0.6's engine fails ttsSetParamList (0x8000000d). 7.1.2's engine gets
+  further but needs an `_sscanf` import we don't provide. Nor the premium
+  versions of the other 7.1 voices (Arthur, Martha, Catherine, Gordon,
+  Hattori, O-ren): 7.0.6 fails ttsSetParamList (0x80000019) right after
+  mapping their pmk file (2014 data; without it, 0x80000014); Martha's speaks
+  on 7.1.2's engine. Their compacts run on 7.0.6.
+- Recordings (select/synth/uselect/pmk checksums, from the zips' central
+  directories): 11 of 14 voices are the same from iOS 7 to 10, only the clc
+  front-end data changed. Nicky was rebuilt in iOS 8 and again in 10 (iOS 7's
+  enhanced synth is 107 MB, iOS 10's 143 MB); Gordon's 7.1 recording differs
+  slightly from 8's (same sizes); Martin's compact changed in 8 and 10. The
+  iOS 10 voices on our iOS 10 engine are byte-identical to macOS 27's `say`.
+- Key `siri7/<Name>` (enhanced) / `siri7/<Name>Compact`; files in
+  Downloads/siri7/<folder>/ (the zip's AssetData, flattened, with a `locale`
+  file); engine and common data are ios70's (vxstream.c open_engine). Rules:
+  iOS 7.0's user_rules.txt for the language. They change pitch themselves.
+  Language switching: never a release's own voice (VoiceOver couldn't use
+  them); from a Siri voice, the same family is nearest and the same gender
+  wins (Nicky -> Marie, Aaron -> Daniel). Shown as "iOS 7 Siri" (7.0.6) in
+  every app; the compact and enhanced are separate downloads.
+- The iOS 7.0 voices' broker.hdr lists Siri's own resources, which the engine
+  loads itself (VX_FILES shows them mapped): a user dictionary
+  (siri_<voice>_pron.dat, siri_enu_prons.dat), rule sets (siri_<voice>_rules.dat,
+  ~390 rules, nav_<voice>_rules.dat) and, for the premium voices, two
+  active-prompt databases (apdb_tp_*: Domain siri, Mode automatic, ~3,460
+  recordings of Siri's phrases, with their text and L&H+). The databases work
+  by themselves: wherever text matches a recording's words the engine uses
+  the recording (the woodchuck answer, "In three miles, turn right", also
+  pieces of ordinary sentences), so they're kept. The rule sets turn Siri's
+  canned replies into explicit `\e\prompt=siri::SCAN...\` references, and
+  those fail in fe_promptorth (88e02014; it wants Siri's prompt texts,
+  enu_yosemite_prompts, which no asset or firmware has): the whole phrase is
+  silent (ttsProcessText2Speech 0x80000014, "Now, now."). vxengine.c m_open
+  reports `siri/<x>/rules` and `nav/<x>/rules` missing. The 7.1 compacts'
+  rlst rule sets have no prompt references and stay. No other voice we offer
+  has active prompts (iOS 5-7 enhanced, the Mac voices here: Lion Tom,
+  Mavericks Allison and the rest downloaded).
+- Fast code: the 18 offered downloads profiled into tools/profiles/ios70.txt
+  (16,038 -> 23,287 block starts; profiling through vxstream at VoiceOver's
+  settings found 20 more). Enhanced Aaron with the recorded phrases, Mac,
+  rate 190, first audio, before -> after the fast-code work below: "Home button"
+  44 -> 24 ms (18 without the databases), "Settings, button. Double-tap to
+  open." 55 -> 27 (20), a 70-character sentence 292 -> 142 (99). Compact
+  Aaron 17 / 15 / 56. Opening an enhanced Siri voice takes ~0.5 s, mostly
+  setup the engine does in the interpreter.
+

@@ -189,6 +189,9 @@ final class PronunciationRules: @unchecked Sendable {
         let fm = FileManager.default
         if let entry = VoiceCatalog.entry(forKey: key) {
             if entry.macinTalk { return nil }
+            if entry.build == VoiceCatalog.siri.build {  // iOS 7's Siri voices: iOS 7.0's rules for the language
+                return VoiceCatalog.root?.appendingPathComponent("ios70/TTSResources/\(entry.language)/user_rules.txt")
+            }
             if let dir = entry.macDir {
                 return [VoiceCatalog.enhancedRoot, VoiceCatalog.root].compactMap { $0 }
                     .map { $0.appendingPathComponent("\(entry.build)/\(dir)/user_rules.dat") }

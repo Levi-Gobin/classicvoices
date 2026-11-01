@@ -327,12 +327,7 @@ class DataDialog(wx.Dialog):
                 cv_remote.import_from_apple(k, cv_paths.voices_root(), self._progress)
             for kind, entry, label, _size, _needs in checked:
                 self._progress(label, None)
-                if kind == "enhanced":
-                    cv_download.download_enhanced(entry, cv_paths.downloads_root(),
-                                                  self._progress)
-                else:
-                    cv_download.download_mac_voice(entry, cv_paths.downloads_root(),
-                                                   self._progress)
+                cv_download.download(kind, entry, cv_paths.downloads_root(), self._progress)
         self._start(work)
 
 

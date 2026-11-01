@@ -13,8 +13,8 @@ struct VoiceVersion: Identifiable, Hashable {
 
     /// Menu title: "iOS 6" / "10.7 Lion".
     var menuName: String { platform == .iOS ? name : "\(number) \(name)" }
-    /// How the test sentence names it: "iOS 6" / "Mac OS X Lion".
-    var spokenName: String { platform == .iOS ? name : "Mac OS X \(name)" }
+    /// How the test sentence names it: "iOS 6" / "Mac OS X Lion" / "Siri in iOS 7".
+    var spokenName: String { id == "siri7" ? "Siri in iOS 7" : platform == .iOS ? name : "Mac OS X \(name)" }
 
     static let all: [VoiceVersion] = [
         .init(id: "ios3", platform: .iOS, name: "iOS 3", number: "3.1.3", builds: ["ios3"]),
@@ -22,6 +22,7 @@ struct VoiceVersion: Identifiable, Hashable {
         .init(id: "ios5", platform: .iOS, name: "iOS 5", number: "5.1.1", builds: ["ios5"]),
         .init(id: "ios6", platform: .iOS, name: "iOS 6", number: "6.1.6", builds: ["ios6"]),
         .init(id: "ios7", platform: .iOS, name: "iOS 7", number: "7.0.6", builds: ["ios70"]),
+        .init(id: "siri7", platform: .iOS, name: "iOS 7 Siri", number: "7.0.6", builds: ["siri7"]),
         .init(id: "tiger", platform: .macOS, name: "Tiger", number: "10.4", builds: ["mt104"]),
         .init(id: "leopard", platform: .macOS, name: "Leopard", number: "10.5", builds: ["mt105"]),
         .init(id: "snowleopard", platform: .macOS, name: "Snow Leopard", number: "10.6", builds: ["mt106"]),
@@ -44,11 +45,12 @@ struct VoiceItem: Identifiable, Hashable {
     var entry: VoiceCatalog.Entry?               // set once it's on the device
     var enhancedAsset: EnhancedDownloads.Asset?  // where it downloads from / what deleting removes
     var macPackage: MacDownloads.Voice?
+    var siriVoice: SiriDownloads.Voice?
     var discVoice: DiscDownloads.Voice?          // Alex, from an install disc
 
     var isInstalled: Bool { entry != nil }
-    var isDownloadable: Bool { enhancedAsset != nil || macPackage != nil || discVoice != nil }
-    var downloadSize: Int? { enhancedAsset?.size ?? macPackage?.size ?? discVoice?.size }
+    var isDownloadable: Bool { enhancedAsset != nil || macPackage != nil || siriVoice != nil || discVoice != nil }
+    var downloadSize: Int? { enhancedAsset?.size ?? macPackage?.size ?? siriVoice?.size ?? discVoice?.size }
     var installedSize: Int? { discVoice?.installedSize ?? downloadSize }
 
     var kindName: String {
@@ -80,6 +82,7 @@ final class VoiceLibrary {
     static let shared = VoiceLibrary()
     let enhanced = EnhancedDownloads()
     let mac = MacDownloads()
+    let siri = SiriDownloads()
     let disc = DiscDownloads()
     let pronunciation = PronunciationDownloads()
     private(set) var items: [VoiceItem] = []
@@ -90,6 +93,7 @@ final class VoiceLibrary {
         rebuild()
         enhanced.onChange = { [weak self] in self?.rebuild() }
         mac.onChange = { [weak self] in self?.rebuild() }
+        siri.onChange = { [weak self] in self?.rebuild() }
         disc.onChange = { [weak self] in Task.detached { try? VoiceStore.shared.refresh() }; self?.rebuild() }
         // The store (the speech extension) says what's downloaded; it answers
         // off the main thread, and again after every change.
@@ -100,6 +104,7 @@ final class VoiceLibrary {
             if self.settings.newerRulesWanted { self.pronunciation.ensure() }
             self.enhanced.refresh()
             self.mac.refresh()
+            self.siri.refresh()
             self.rebuild()
         }
         Task.detached {
@@ -149,6 +154,16 @@ final class VoiceLibrary {
                     add(VoiceItem(id: id, version: version, language: v.locale, name: v.name, kind: .premium,
                                   macPackage: v))
                 }
+            }
+        }
+        for v in SiriDownloads.catalog {
+            guard let version = VoiceVersion.of(build: VoiceCatalog.siri.build) else { continue }
+            if var item = byID[v.identifier] {
+                item.siriVoice = v
+                byID[v.identifier] = item
+            } else {
+                add(VoiceItem(id: v.identifier, version: version, language: v.locale, name: v.name,
+                              kind: v.compact ? .compact : .enhanced, siriVoice: v))
             }
         }
         for v in DiscDownloads.catalog {
@@ -225,17 +240,18 @@ final class VoiceLibrary {
     }
 
     func download(_ item: VoiceItem) {
-        if let a = item.enhancedAsset { enhanced.download(a) } else if let v = item.macPackage { mac.download(v) } else if let v = item.discVoice { disc.download(v) }
+        if let a = item.enhancedAsset { enhanced.download(a) } else if let v = item.macPackage { mac.download(v) } else if let v = item.siriVoice { siri.download(v) } else if let v = item.discVoice { disc.download(v) }
     }
 
     func remove(_ item: VoiceItem) {
-        if let a = item.enhancedAsset { enhanced.remove(a) } else if let v = item.macPackage { mac.remove(v) } else if let v = item.discVoice { disc.remove(v) }
+        if let a = item.enhancedAsset { enhanced.remove(a) } else if let v = item.macPackage { mac.remove(v) } else if let v = item.siriVoice { siri.remove(v) } else if let v = item.discVoice { disc.remove(v) }
     }
 
     /// 0...1 while downloading.
     func progress(_ item: VoiceItem) -> Double? {
         if let a = item.enhancedAsset { return enhanced.progress[a.id] }
         if let v = item.macPackage { return mac.progress[v.id] }
+        if let v = item.siriVoice { return siri.progress[v.id] }
         if let v = item.discVoice { return disc.progress[v.id] }
         return nil
     }
@@ -250,7 +266,7 @@ final class VoiceLibrary {
     /// A row's action for a voice that isn't here: start or stop its download.
     func toggleDownload(_ item: VoiceItem) {
         if progress(item) != nil {
-            if let a = item.enhancedAsset { enhanced.cancel(a.id) } else if let v = item.macPackage { mac.cancel(v.id) } else if let v = item.discVoice { disc.cancel(v.id) }
+            if let a = item.enhancedAsset { enhanced.cancel(a.id) } else if let v = item.macPackage { mac.cancel(v.id) } else if let v = item.siriVoice { siri.cancel(v.id) } else if let v = item.discVoice { disc.cancel(v.id) }
         } else {
             download(item)
         }
@@ -259,12 +275,14 @@ final class VoiceLibrary {
     func dismissErrors() {
         enhanced.errors = [:]
         mac.errors = [:]
+        siri.errors = [:]
         disc.errors = [:]
     }
 
     func error(_ item: VoiceItem) -> String? {
         if let a = item.enhancedAsset { return enhanced.errors[a.id] }
         if let v = item.macPackage { return mac.errors[v.id] }
+        if let v = item.siriVoice { return siri.errors[v.id] }
         if let v = item.discVoice { return disc.errors[v.id] }
         return nil
     }

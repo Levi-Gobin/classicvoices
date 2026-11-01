@@ -233,6 +233,7 @@ final class Rules {
             f = new File(new File(Data.downloadsDir(c), v.key), "user_rules.dat");
             if (!f.isFile()) f = new File(new File(Data.voicesDir(c), v.key), "user_rules.dat");
         } else {
+            if (build.equals("siri7")) build = "ios70";  // iOS 7's Siri voices: iOS 7.0's rules for the language
             if (build.endsWith("e")) build = build.substring(0, build.length() - 1);
             f = new File(new File(new File(new File(Data.voicesDir(c), build), "TTSResources"), v.language), "user_rules.txt");
         }

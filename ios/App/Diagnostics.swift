@@ -101,7 +101,7 @@ struct DiagnosticsView: View {
             }
         }
         .task {
-            let errors = library.enhanced.errors.merging(library.mac.errors) { a, _ in a }
+            let errors = library.enhanced.errors.merging(library.mac.errors) { a, _ in a }.merging(library.siri.errors) { a, _ in a }
             text = await Task.detached { Diagnostics.report(downloadErrors: errors) }.value
         }
     }

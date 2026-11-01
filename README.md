@@ -154,23 +154,29 @@ developers, so you can't register that one.
 | iOS 4.3.5 (8L1, iPhone 3GS) | The iOS 4 voices |
 | iOS 5.1.1 (9B206, iPhone 3GS) | The iOS 5 voices, plus enhanced variants downloaded in the app |
 | iOS 6.1.6 (10B500, iPhone 3GS) | The iOS 6 voices, and their enhanced voices (downloaded in the app) |
-| iOS 7.0.6 (11B651, iPhone 4) | The iOS 7 voices, on iOS 7.0's own engine, and their enhanced voices (downloaded in the app) |
+| iOS 7.0.6 (11B651, iPhone 4) | The iOS 7 voices, on iOS 7.0's own engine, their enhanced voices, and iOS 7's Siri voices (both downloaded in the app) |
 | iOS 7.1.2 (11D257, iPhone 4) | Only its engine, for the Mac OS X Mavericks voices |
 | iOS 10.3.4 (14G61, iPhone 5) | Only its engine, for the Mavericks premium voices |
 
 The app can also download the voices Mac OS X Lion, Mountain Lion and
-Mavericks offered in System Preferences, from Apple's software update servers.
+Mavericks offered in System Preferences, from Apple's software update servers,
+and iOS 7's Siri voices as iOS 7 fetched them from Apple: Aaron and Nicky
+(American English), Daniel and Marie (French), Helena and Martin (German) from
+iOS 7.0, compact and enhanced, and the compact Arthur and Martha (British
+English), Catherine and Gordon (Australian English), Hattori and O-ren
+(Japanese) from iOS 7.1. They run on iOS 7.0.6's engine.
 
 The voices speak the way they did then. Each voice gets the pronunciation rules
 its own release had: the iOS 3 voices iOS 3's, the iOS 6 voices iOS 6's ("iOS"
-is spelled out, "OS X" is "OS ten", and so on), and each Mac OS X voice its own.
+is spelled out, "OS X" is "OS ten", and so on), each Mac OS X voice its own, and
+iOS 7's Siri voices iOS 7.0's.
 "Newer pronunciation rules", off by default, adds Apple's later pronunciation
 dictionary and rules to any voice, the iOS 3 and 4 voices included; turning it
 on downloads them from Apple (about 5 MB for every language). When VoiceOver
 changes the pitch, a voice that can't change pitch
 itself (the iOS 5 and 6 enhanced voices, and the Lion and Mountain Lion premium
 voices) hands that part to its compact version, as iOS did. The iOS 7 enhanced
-voices and the Mavericks premium voices change pitch on their own and keep doing so. The rules and the compact voice are on for every voice. All three switches are in the app's Settings tab ("Apple's pronunciation rules", "Newer pronunciation rules" and "Compact voice for pitch changes") and on each voice's page. A search field at the top of each tab finds any voice in
+voices, iOS 7's Siri voices and the Mavericks premium voices change pitch on their own and keep doing so. The rules and the compact voice are on for every voice. All three switches are in the app's Settings tab ("Apple's pronunciation rules", "Newer pronunciation rules" and "Compact voice for pitch changes") and on each voice's page. A search field at the top of each tab finds any voice in
 the catalog.
 
 ### Mac OS X voices
@@ -215,7 +221,7 @@ TalkBack and every app that speaks, Android 5.0 and later) and as a
 **Speech Dispatcher** module on **Linux** (for Orca), where the same app
 manages the voices. None of these needs a Mac: the apps (or
 `classicvoices-data`) stream the firmware from Apple, copy out only the
-engines and voices, and download the enhanced and Mac OS X voices the same
+engines and voices, and download the enhanced, Siri and Mac OS X voices the same
 way. MacinTalk on these platforms is Panthera Speech's job. See
 [android/README.md](android/README.md) and [linux/README.md](linux/README.md).
 

@@ -44,6 +44,7 @@ final class Library {
         new Version("ios5", "iOS 5", "5.1.1", false, "ios5"),
         new Version("ios6", "iOS 6", "6.1.6", false, "ios6"),
         new Version("ios70", "iOS 7", "7.0.6", false, "ios70"),
+        new Version("siri7", "iOS 7 Siri", "7.0.6", false, "ios70"),
         new Version("mac107", "Lion", "10.7", true, "ios5", "ios6"),
         new Version("mac108", "Mountain Lion", "10.8", true, "ios6", IOS7),
         new Version("mac109", "Mavericks", "10.9", true, IOS7, "ios10"),
@@ -109,6 +110,9 @@ final class Library {
                 String b = build.substring(0, build.length() - 1);
                 out.add(new Item(v.key, version(b), v.voice, "enhanced", v.language, false, true,
                         folderSize(new File(dl, b + "/" + rest)), null));
+            } else if (build.equals("siri7")) {
+                out.add(new Item(v.key, version(build), v.voice, rest.endsWith("Compact") ? "compact" : "enhanced",
+                        v.language, false, true, folderSize(new File(dl, build + "/" + rest)), null));
             } else if (version(build) != null) {
                 boolean compact = rest.endsWith("Compact");
                 out.add(new Item(v.key, version(build), v.voice, compact ? "compact" : "premium", v.language, false, true,
@@ -127,6 +131,10 @@ final class Library {
                 String name = compactNames.get(d.build + "/" + d.name);
                 out.add(new Item(d.build + "e/" + d.name, version(d.build), name != null ? name : languageName(d.name),
                         "enhanced", d.name, false, false, d.size, d));
+            } else if (d.kind.equals("siri")) {
+                boolean compact = d.name.endsWith("Compact");
+                out.add(new Item("siri7/" + d.name, version("siri7"), compact ? d.name.substring(0, d.name.length() - 7) : d.name,
+                        compact ? "compact" : "enhanced", d.locale, false, false, d.size, d));
             } else {
                 out.add(new Item(d.build + "/" + d.name, version(d.build), d.name, "premium and compact", d.locale,
                         false, false, d.size, d));

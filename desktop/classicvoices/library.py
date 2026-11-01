@@ -35,6 +35,7 @@ VERSIONS = [
     Version("ios5", "iOS 5", "ios", ["ios5"], "5.1.1"),
     Version("ios6", "iOS 6", "ios", ["ios6"], "6.1.6"),
     Version("ios70", "iOS 7", "ios", ["ios70"], "7.0.6"),
+    Version("siri7", "iOS 7 Siri", "ios", ["ios70"], "7.0.6"),
     Version("mac107", "Lion", "mac", ["ios5", "ios6"], "10.7"),
     Version("mac108", "Mountain Lion", "mac", ["ios6", IOS7], "10.8"),
     Version("mac109", "Mavericks", "mac", [IOS7, "ios10"], "10.9"),
@@ -203,6 +204,10 @@ class Library:
                 b = build[:-1]
                 items.append(Item(key, VERSION[b], name, "enhanced", v.language, "installed",
                                   folder_size(os.path.join(dr, b, rest)), kind_of=(b, rest)))
+            elif build == cv_voices.SIRI:  # siri7/<Voice>[Compact]
+                items.append(Item(key, VERSION[build], name, "compact" if rest.endswith("Compact") else "enhanced",
+                                  v.language, "installed", folder_size(os.path.join(dr, build, rest)),
+                                  kind_of=(build, rest)))
             else:  # mac10x/<Voice>[Compact]
                 compact = rest.endswith("Compact")
                 items.append(Item(key, VERSION[build], name, "compact" if compact else "premium", v.language,
@@ -230,6 +235,15 @@ class Library:
             items.append(Item("%s/%s" % (era, e["name"]), VERSION[era], e["name"], "premium and compact",
                               e.get("locale", ""), "needs" if needs else "available", e["size"],
                               entry=("mac", e), needs=needs))
+        for e in cv_voices.siri_catalog():
+            folder = cv_voices.siri_folder(e)
+            key = "%s/%s" % (cv_voices.SIRI, folder)
+            if key in have or not cv_firmware.language_wanted(e["locale"], wanted):
+                continue
+            needs = self.firmware_missing(VERSION[cv_voices.SIRI])
+            items.append(Item(key, VERSION[cv_voices.SIRI], e["name"],
+                              "compact" if e["footprint"] == "compact" else "enhanced", e["locale"],
+                              "needs" if needs else "available", e["size"], entry=("siri", e), needs=needs))
         with self._lock:
             for it in items:
                 it.job = next((j for j in self.jobs if j.key == it.id), None)
@@ -325,10 +339,7 @@ class Library:
             return
         kind, entry = item.entry
         dr = system.downloads_root()
-        if kind == "enhanced":
-            run = lambda job: cv_download.download_enhanced(entry, dr, job.progress)  # noqa: E731
-        else:
-            run = lambda job: cv_download.download_mac_voice(entry, dr, job.progress)  # noqa: E731
+        run = lambda job: cv_download.download(kind, entry, dr, job.progress)  # noqa: E731
         self._queue(Job("download", item.id, item.title, item.size, run))
 
     def import_firmware(self, key):

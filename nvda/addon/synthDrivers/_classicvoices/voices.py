@@ -16,6 +16,10 @@ IOS7 = ("ios7", "ios70")
 # Engine firmware needed per Mac era (and for Mavericks, compact vs premium);
 # a tuple is a choice of firmware.
 MAC_ENGINES = {"mac107": ("ios6",), "mac108": ("ios6",), "mac109": (IOS7, "ios10")}
+# iOS 7's Siri voices (SiriVoiceCatalog.json): Downloads/siri7/<Name>[Compact],
+# spoken by 7.0.6's engine.
+SIRI = "siri7"
+SIRI_ENGINE = "ios70"
 
 
 def broker_voice_name(path):
@@ -38,6 +42,32 @@ def _mac_catalog():
             return json.load(f)["voices"]
     except (OSError, ValueError, KeyError):
         return []
+
+
+def siri_catalog():
+    path = os.path.join(os.path.dirname(__file__), "SiriVoiceCatalog.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)["voices"]
+    except (OSError, ValueError, KeyError):
+        return []
+
+
+def siri_folder(entry):
+    """A Siri catalog entry's folder (and key after "siri7/"): "Aaron", "AaronCompact"."""
+    return entry["name"] + ("Compact" if entry["footprint"] == "compact" else "")
+
+
+def siri_locale(downloads_root, folder):
+    """A downloaded Siri voice's language: the locale file written beside it, else the catalog's."""
+    try:
+        with open(os.path.join(downloads_root, SIRI, folder, "locale"), encoding="utf-8") as f:
+            tag = f.read().strip()
+            if tag:
+                return tag
+    except OSError:
+        pass
+    return next((e["locale"] for e in siri_catalog() if siri_folder(e) == folder), "")
 
 
 def _mac_locales():
@@ -114,6 +144,15 @@ def scan(voices_root, downloads_root, include_hidden=False):
             kind = "compact" if compact else "premium"
             out.append(Voice("%s/%s" % (era, folder),
                              "%s (Mac OS X %s, %s)" % (name, label, kind), lang))
+    if has_engine(voices_root, SIRI_ENGINE):
+        dl = os.path.join(downloads_root, SIRI)
+        for folder in sorted(os.listdir(dl)) if os.path.isdir(dl) else []:
+            name = broker_voice_name(os.path.join(dl, folder, "broker.hdr"))
+            if not name:
+                continue
+            kind = "compact" if folder.endswith("Compact") else "enhanced"
+            out.append(Voice("%s/%s" % (SIRI, folder), "%s (iOS 7 Siri, %s)" % (name, kind),
+                             siri_locale(downloads_root, folder)))
     if not include_hidden:
         hidden = hidden_keys(voices_root)
         out = [v for v in out if v.key not in hidden]

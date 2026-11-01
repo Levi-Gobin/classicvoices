@@ -378,6 +378,10 @@ static int era_file(const char *voices_root, const char *downloads_root, const c
         return exists(out);
     }
     if (!language || !*language) return 0;
+    if (!strncmp(voice_key, "siri7/", 6)) {  // iOS 7's Siri voices: iOS 7.0's rules for the language
+        snprintf(out, cap, "%s/ios70/TTSResources/%s/user_rules.txt", voices_root, language);
+        return exists(out);
+    }
     if (voice_key[bl - 1] == 'e') bl--;  // an enhanced voice: its firmware's rules
     snprintf(out, cap, "%s/%.*s/TTSResources/%s/user_rules.txt", voices_root, bl, voice_key, language);
     return exists(out);

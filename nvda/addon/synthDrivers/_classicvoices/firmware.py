@@ -395,6 +395,8 @@ def remove_language(voices_root, downloads_root, language):
                         tag = f.read().strip() or tag
                 except OSError:
                     pass
+            elif build == cv_voices.SIRI:
+                tag = cv_voices.siri_locale(downloads_root, name)
             else:
                 tag = name
             if os.path.isdir(p) and same(tag):

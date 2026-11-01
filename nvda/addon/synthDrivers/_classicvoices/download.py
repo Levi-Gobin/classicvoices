@@ -3,6 +3,8 @@
 #  - enhanced iOS voices: MobileAsset zips on appldnld.apple.com
 #    (EnhancedCatalog.json carries the URLs and SHA-1s; format 3 = iOS 5,
 #    format 4 = iOS 6, format 5 = iOS 7)
+#  - iOS 7's Siri voices: the same kind of zips (SiriVoiceCatalog.json, built
+#    by tools/siri_catalog.py), into Downloads/siri7/<Name>[Compact]
 #  - Mac OS X Lion / Mountain Lion / Mavericks voices: flat packages on
 #    swcdn.apple.com (MacVoiceCatalog.json, built by tools/mac_catalog.py).
 #    A package is xar -> Payload (gzip) -> cpio -> <Name>.SpeechVoice whose
@@ -82,6 +84,15 @@ def _listing(voices_root, downloads_root):
         era_label = dict(cv_voices.MAC_ERAS)[era]
         label = "%s (%s, Mac OS X %s)" % (v["name"], v["locale"], era_label)
         out.append(("mac", v, label, v["size"], needs))
+    for s in cv_voices.siri_catalog():
+        if not firmware.language_wanted(s["locale"], wanted):
+            continue
+        if os.path.isfile(os.path.join(downloads_root, cv_voices.SIRI, cv_voices.siri_folder(s), "broker.hdr")):
+            continue
+        needs = [] if cv_voices.has_engine(voices_root, cv_voices.SIRI_ENGINE) else [cv_voices.SIRI_ENGINE]
+        kind = "compact" if s["footprint"] == "compact" else "enhanced"
+        label = "%s (%s, iOS 7 Siri, %s)" % (s["name"], s["locale"], kind)
+        out.append(("siri", s, label, s["size"], needs))
     return out
 
 
@@ -117,16 +128,14 @@ def _fetch(url, dest, size_hint, progress, sha1=None):
         raise DownloadError("SHA-1 mismatch for %s" % os.path.basename(url))
 
 
-def download_enhanced(entry, downloads_root, progress):
-    """One MobileAsset zip -> Downloads/<build>/<language>/ (flattened)."""
-    build, lang = entry["build"], entry["language"]
-    dest = os.path.join(downloads_root, build, lang)
+def _download_asset(entry, dest, broker, what, downloads_root, progress):
+    """One MobileAsset zip -> dest (its AssetData, flattened), checked by SHA-1."""
     tmp = os.path.join(downloads_root, "_dl.zip")
     os.makedirs(downloads_root, exist_ok=True)
-    progress("Downloading enhanced %s (%d MB)" % (lang, entry["size"] >> 20), 0.0)
+    progress("Downloading %s (%d MB)" % (what, entry["size"] >> 20), 0.0)
     try:
         _fetch(entry["url"], tmp, entry["size"], progress, sha1=entry.get("sha1"))
-        progress("Unpacking %s" % lang, None)
+        progress("Unpacking %s" % what, None)
         if os.path.isdir(dest):
             shutil.rmtree(dest)
         os.makedirs(dest)
@@ -140,13 +149,38 @@ def download_enhanced(entry, downloads_root, progress):
                     continue
                 with z.open(info) as src, open(os.path.join(dest, name), "wb") as out:
                     shutil.copyfileobj(src, out, 1 << 20)
-        if not os.path.isfile(os.path.join(dest, "broker.hdr.asset")):
+        if not os.path.isfile(os.path.join(dest, broker)):
             shutil.rmtree(dest)
-            raise DownloadError("the archive had no broker.hdr.asset")
+            raise DownloadError("the archive had no " + broker)
     finally:
         if os.path.exists(tmp):
             os.remove(tmp)
-    progress("Enhanced %s installed" % lang, 1.0)
+    progress("%s%s installed" % (what[0].upper(), what[1:]), 1.0)
+
+
+def download_enhanced(entry, downloads_root, progress):
+    """One MobileAsset zip -> Downloads/<build>/<language>/ (flattened)."""
+    dest = os.path.join(downloads_root, entry["build"], entry["language"])
+    _download_asset(entry, dest, "broker.hdr.asset", "enhanced " + entry["language"], downloads_root, progress)
+
+
+def download_siri(entry, downloads_root, progress):
+    """An iOS 7 Siri voice -> Downloads/siri7/<Name>[Compact]/, with its language beside it."""
+    dest = os.path.join(downloads_root, cv_voices.SIRI, cv_voices.siri_folder(entry))
+    kind = "compact" if entry["footprint"] == "compact" else "enhanced"
+    _download_asset(entry, dest, "broker.hdr", "%s (Siri, %s)" % (entry["name"], kind), downloads_root, progress)
+    with open(os.path.join(dest, "locale"), "w", encoding="utf-8") as f:
+        f.write(entry["locale"] + "\n")
+
+
+def download(kind, entry, downloads_root, progress):
+    """A download from available()/needing(), by its kind."""
+    if kind == "enhanced":
+        download_enhanced(entry, downloads_root, progress)
+    elif kind == "siri":
+        download_siri(entry, downloads_root, progress)
+    else:
+        download_mac_voice(entry, downloads_root, progress)
 
 
 def _xar_payload(f):

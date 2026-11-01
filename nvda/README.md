@@ -36,8 +36,8 @@ of Apple's. Its MIT-licensed HFS+/UDIF/xar/cpio reader is vendored here as
    and voices — verified byte-identical to a Mac `hdiutil` extraction. Then
    it builds the fast engine code.
 3. Once an engine is in place, the same dialog lists what can be downloaded
-   from Apple's still-live servers: enhanced iOS voices (MobileAsset zips)
-   and the Mac OS X voices (software-update packages; xar → gzip cpio →
+   from Apple's still-live servers: enhanced iOS voices and iOS 7's Siri
+   voices (MobileAsset zips) and the Mac OS X voices (software-update packages; xar → gzip cpio →
    ROT13-named tar, unpacked in pure Python).
 
 Data lives in `<NVDA user config>/classicvoices/` (`Voices/` from firmware,

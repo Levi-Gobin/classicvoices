@@ -780,8 +780,16 @@ static void m_open(Vx *vx) {
     }
     fname[k] = 0;
     if (!has_dot) strcat(fname, ".dat");
+    // iOS 7's Siri voices list Siri's own rule sets in their broker.hdr; they
+    // turn Siri's replies into explicit \prompt=siri::...\ recordings, which
+    // need Siri's prompt texts (enu_yosemite_prompts, which Apple never put in
+    // the asset), so the whole phrase fails ("Now, now."). They aren't loaded.
+    // The active-prompt databases (recordings the engine uses by itself) and
+    // the pronunciation dictionary are.
+    size_t nl = strlen(name);
+    int siri_only = (!strncmp(name, "siri/", 5) || !strncmp(name, "nav/", 4)) && nl > 6 && !strcmp(name + nl - 6, "/rules");
     char path[1600] = {0};
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 2 && !siri_only; i++) {
         snprintf(path, sizeof path, "%s/%s", vx->dirs[i], fname);
         if (access(path, R_OK) == 0) break;
         path[0] = 0;

@@ -278,7 +278,7 @@ public class ImportService extends Service {
             case "download":
                 for (Downloads.Item it : Downloads.available(this)) {
                     if (!it.id().equals(j.arg)) continue;
-                    if (it.kind.equals("enhanced")) Downloads.downloadEnhanced(this, it, p);
+                    if (it.kind.equals("enhanced") || it.kind.equals("siri")) Downloads.downloadEnhanced(this, it, p);
                     else Downloads.downloadMac(this, it, p);
                     return;
                 }

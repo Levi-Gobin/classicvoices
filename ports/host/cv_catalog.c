@@ -27,7 +27,8 @@ static const char *kFemale[] = {
     "melina", "milena", "moira", "monica", "nora", "paola", "paulina", "petra", "samantha", "sara",
     "satu", "serena", "sin-ji", "tessa", "ting-ting", "veena", "victoria", "yelda", "yuna", "zosia",
     "zuzana", "silvia", "susan", "allison", "ava", "fiona", "kathy", "princess", "vicki", "agnes",
-    "sinji", "tingting", "meijia", "yuri", "narisa", "lana", "soledad", "isabela", "sora", NULL};
+    "sinji", "tingting", "meijia", "yuri", "narisa", "lana", "soledad", "isabela", "sora",
+    "nicky", "martha", "catherine", "marie", "helena", "o-ren", "yu-shu", NULL};
 
 static int is_dir(const char *p) { struct stat st; return stat(p, &st) == 0 && S_ISDIR(st.st_mode); }
 static int is_file(const char *p) { struct stat st; return stat(p, &st) == 0 && S_ISREG(st.st_mode); }
@@ -263,6 +264,32 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
         }
         free_dirs(dirs, nd);
     }
+    // iOS 7's Siri voices (7.0.6's engine; they change pitch themselves)
+    if (downloads_root && has_engine(voices_root, "ios70")) {
+        snprintf(p, sizeof p, "%s/siri7", downloads_root);
+        char **dirs;
+        size_t nd = list_dirs(p, &dirs);
+        for (size_t i = 0; i < nd; i++) {
+            size_t len = strlen(dirs[i]);
+            int compact = len > 7 && strcmp(dirs[i] + len - 7, "Compact") == 0;
+            char name[64], lc[16], hdr[1300], loc[32];
+            snprintf(hdr, sizeof hdr, "%s/%s/broker.hdr", p, dirs[i]);
+            if (!is_file(hdr)) continue;
+            if (!broker_info(hdr, name, sizeof name, lc, sizeof lc))
+                snprintf(name, sizeof name, "%.*s", (int)(compact ? len - 7 : len), dirs[i]);
+            snprintf(hdr, sizeof hdr, "%s/%s/locale", p, dirs[i]);
+            read_small(hdr, loc, sizeof loc);
+            if (!loc[0]) snprintf(loc, sizeof loc, "%s", langcode_locale(lc));
+            CvVoice *v = push(&l);
+            snprintf(v->key, sizeof v->key, "siri7/%s", dirs[i]);
+            snprintf(v->name, sizeof v->name, "%s (iOS 7 Siri, %s)", name, compact ? "compact" : "enhanced");
+            snprintf(v->voice, sizeof v->voice, "%s", name);
+            snprintf(v->language, sizeof v->language, "%s", loc);
+            v->quality = compact ? 1 : 2;
+            v->female = female_name(name);
+        }
+        free_dirs(dirs, nd);
+    }
     drop_hidden(voices_root, &l);
     *out = l.v;
     return l.n;
@@ -329,6 +356,7 @@ const char *cv_voice_build(const CvVoice *v) {
         return n > 7 && !strcmp(k + n - 7, "Compact") ? "ios7" : "ios10";  // "ios7": 7.1.2's or 7.0.6's engine
     }
     if (!strncmp(k, "mac10", 5)) return "ios6";
+    if (!strncmp(k, "siri7/", 6)) return "ios70";
     for (size_t i = 0; i < sizeof builds / sizeof builds[0]; i++) {
         size_t n = strlen(builds[i]);
         if (!strncmp(k, builds[i], n) && (k[n] == '/' || (k[n] == 'e' && k[n + 1] == '/'))) return builds[i];

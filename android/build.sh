@@ -70,7 +70,8 @@ done
 # ---- resources and manifest
 rm -rf "$OUT/assets"
 mkdir -p "$OUT/assets/fastcode/profiles"
-cp nvda/addon/synthDrivers/_classicvoices/EnhancedCatalog.json nvda/addon/synthDrivers/_classicvoices/MacVoiceCatalog.json "$OUT/assets/"
+cp nvda/addon/synthDrivers/_classicvoices/EnhancedCatalog.json nvda/addon/synthDrivers/_classicvoices/MacVoiceCatalog.json \
+    nvda/addon/synthDrivers/_classicvoices/SiriVoiceCatalog.json "$OUT/assets/"
 # what the phone needs to build fast code itself (FastCode.java): the recompiler's
 # profiles (addresses only) and the instruction semantics the generated C includes
 cp tools/profiles/ios3.txt tools/profiles/ios4.txt tools/profiles/ios5.txt tools/profiles/ios6.txt \

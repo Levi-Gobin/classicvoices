@@ -141,6 +141,8 @@ static void engine_build(const char *key, char *out, size_t cap) {
         snprintf(out, cap, "%s", compact ? "ios7" : "ios10");
     } else if (strncmp(key, "mac", 3) == 0) {
         snprintf(out, cap, "ios6");
+    } else if (strncmp(key, "siri7/", 6) == 0) {
+        snprintf(out, cap, "ios70");  // iOS 7's Siri voices: Vocalizer 5.2.3, 7.0.6's engine
     } else {
         if (bl && key[bl - 1] == 'e') bl--;  // "ios6e" = enhanced voice for the iOS 6 engine
         // "ios70": the iOS 7.0 voices on iOS 7.0.6's own engine ("ios7" is
@@ -153,6 +155,9 @@ static void engine_build(const char *key, char *out, size_t cap) {
 // is a downloaded enhanced voice for that firmware's engine. "mac107/KarenCompact" is a Mac
 // OS X voice: <root>/mac107/KarenCompact if bundled, else downloaded into
 // <asset_root>/mac107/KarenCompact; its common data is <root>/mac107/common.
+// "siri7/Aaron" ("siri7/AaronCompact") is an iOS 7 Siri voice, downloaded into
+// <asset_root>/siri7/Aaron; it runs on 7.0.6's engine with that firmware's
+// common data.
 static Vx *open_engine(const char *root, const char *asset_root, const char *key, char *err, size_t errlen) {
     char build[16], lang[80];
     const char *slash = strchr(key, '/');
@@ -163,6 +168,14 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
     snprintf(build, sizeof build, "%.*s", (int)(slash - key), key);
     snprintf(lang, sizeof lang, "%s", slash + 1);
     char voiced[1100], ldir[1200], cdir[1100];
+    if (strcmp(build, "siri7") == 0) {
+        snprintf(voiced, sizeof voiced, "%s/ios70/voiced", root);
+        snprintf(ldir, sizeof ldir, "%s/siri7/%s", asset_root, lang);
+        snprintf(cdir, sizeof cdir, "%s/ios70/TTSResources/common", root);
+        Vx *vx = vx_open(voiced, ldir, cdir, err, errlen);
+        if (vx) install_native(vx, "ios70");
+        return vx;
+    }
     if (strncmp(build, "mac", 3) == 0) {
         char eng[16];
         engine_build(key, eng, sizeof eng);

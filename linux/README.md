@@ -44,8 +44,8 @@ classicvoices-data firmware        # what each firmware is for, and Apple's link
 classicvoices-data import ios6     # stream iOS 6's speech files from Apple (~750 MB)
 classicvoices-data import all      # every firmware, about 5.5 GB to stream
 classicvoices-data import ~/iPhone2,1_6.1.6_10B500_Restore.ipsw   # or a file you have
-classicvoices-data voices          # enhanced iOS and Mac OS X voices you can download
-classicvoices-data download "Daniel" "enhanced en-US" all-enhanced
+classicvoices-data voices          # enhanced iOS, Siri and Mac OS X voices you can download
+classicvoices-data download "Daniel" "enhanced en-US" all-enhanced all-siri
 classicvoices-data pronunciation   # Apple's newer pronunciation rules: download (~5 MB), turn on
 classicvoices-data status
 ```

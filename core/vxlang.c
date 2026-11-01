@@ -109,8 +109,10 @@ static const struct { const char *locale, *name[3]; } kMacDefault[] = {
 };
 
 // Whether a voice is its release's own voice for its language: every iOS voice
-// is; a Mac OS X voice ("mac109/AnnaCompact", "de-DE") when kMacDefault says so.
+// is; a Mac OS X voice ("mac109/AnnaCompact", "de-DE") when kMacDefault says so;
+// iOS 7's Siri voices never were (VoiceOver couldn't use them).
 static int release_default(const char *key, const char *language) {
+    if (key && !strncmp(key, "siri7/", 6)) return 0;
     if (!key || strncmp(key, "mac10", 5) || !language) return !key || strncmp(key, "mac", 3);
     int era = key[5] - '7';  // mac107 / mac108 / mac109
     const char *slash = strchr(key, '/');
@@ -140,6 +142,7 @@ static Era era_of(const char *key) {
         {"ios3", 2009, 0}, {"ios4", 2010, 0}, {"ios5", 2011, 0}, {"ios6", 2012, 0}, {"ios70", 2013, 0},
         {"mac107", 2011, 1}, {"mac108", 2012, 1}, {"mac109", 2013, 1},
         {"mt104", 2005, 2}, {"mt105", 2007, 2}, {"mt106", 2009, 2}, {"mt107", 2011, 2},
+        {"siri7", 2013, 3},
     };
     Era e = {2012, 0, 0};
     if (!key) return e;
@@ -153,12 +156,22 @@ static Era era_of(const char *key) {
             e.family = kEra[i].family;
             break;
         }
-    if (!strncmp(key, "mac", 3) && slash) {  // Mac OS X: "Karen" is premium, "KarenCompact" compact
+    if ((!strncmp(key, "mac", 3) || !strncmp(key, "siri7/", 6)) && slash) {  // "Karen" premium, "KarenCompact" compact
         size_t n = strlen(slash + 1);
         enh = !(n > 7 && !strcmp(slash + 1 + n - 7, "Compact"));
     }
     e.enhanced = enh;
     return e;
+}
+
+// iOS 7's Siri voices come in pairs per language: from one Siri voice, the
+// other language's voice of the same gender is nearest.
+static int siri_female(const char *key) {
+    static const char *const female[] = {"Nicky", "Martha", "Catherine", "Marie", "Helena", "O-ren", "Yu-shu"};
+    if (!key || strncmp(key, "siri7/", 6)) return -1;
+    for (size_t i = 0; i < sizeof female / sizeof *female; i++)
+        if (!strncmp(key + 6, female[i], strlen(female[i]))) return 1;
+    return 0;
 }
 
 int vx_lang_same(const char *a, const char *b) {
@@ -180,6 +193,7 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
     }
     const char *region = want.region[0] ? want.region : default_region(want.lang);
     Era here = era_of(current_key);
+    int here_female = siri_female(current_key);
     int best = -1;
     long best_score = 0;
     for (size_t i = 0; i < n; i++) {
@@ -194,6 +208,8 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
         if (!e.enhanced) score += 20;  // the enhanced (premium) version of a voice, when it is here
         if (!release_default(keys[i], languages[i])) score += 30;  // a release's own voice for it first
         if (e.year == 2012 && !e.enhanced) score -= 1;  // ties: iOS 6's compacts, VoiceOver's own
+        int f = siri_female(keys[i]);
+        if (here_female >= 0 && f >= 0 && f != here_female) score += 5;
         if (best < 0 || score < best_score) { best = (int)i; best_score = score; }
     }
     return best;
