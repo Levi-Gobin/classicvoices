@@ -15,6 +15,12 @@ protocol DownloadClient: AnyObject, Sendable {
 /// while the app is in the background or closed, queues many at once without
 /// timing out the ones still waiting, and reports real progress. Interrupted
 /// downloads resume where they stopped, a few times, before failing.
+///
+/// On iPhone the background session's traffic has the lowest priority: with
+/// anything else busy on the network it crawls (20 KB/s per download, with a
+/// Mac uploading to iCloud). So while the app is in front, downloads run in an
+/// ordinary session, and move between the two at the byte they reached when
+/// the app leaves or comes back (setActive).
 final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     static let shared = Downloader()
     static let sessionIdentifier = "com.levigobin.ClassicVoices.downloads"
@@ -24,9 +30,12 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
 
     private let lock = NSLock()
     private var clients: [String: DownloadClient] = [:]
-    private var finished: [Int: URL] = [:]       // task id -> file, until the task completes
+    private var finished: [String: URL] = [:]    // task key -> file, until the task completes
     private var attempts: [String: Int] = [:]
     private var cancelled: Set<String> = []
+    private var handedOver: Set<String> = []      // task keys cancelled to go on in the other session
+    private var delivered: Set<String> = []       // ids that finished as they were being handed over
+    private var active = false
     private let queue: OperationQueue = {
         let q = OperationQueue()
         q.maxConcurrentOperationCount = 1
@@ -45,12 +54,73 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
         return URLSession(configuration: c, delegate: self, delegateQueue: queue)
     }()
 
+    #if canImport(UIKit)
+    private lazy var front: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.allowsCellularAccess = true
+        c.allowsExpensiveNetworkAccess = true
+        c.allowsConstrainedNetworkAccess = true
+        c.timeoutIntervalForResource = 24 * 60 * 60
+        return URLSession(configuration: c, delegate: self, delegateQueue: queue)
+    }()
+    #endif
+
+    /// Where a new download goes now.
+    private var current: URLSession {
+        #if canImport(UIKit)
+        lock.withLock { active } ? front : session
+        #else
+        session
+        #endif
+    }
+
+    private func key(_ task: URLSessionTask, in s: URLSession) -> String {
+        #if canImport(UIKit)
+        (s === front ? "f" : "b") + String(task.taskIdentifier)
+        #else
+        "b" + String(task.taskIdentifier)
+        #endif
+    }
+
+    /// The app came to the front (true) or went to the background: downloads
+    /// move to the ordinary session or back to the background one.
+    func setActive(_ on: Bool) {
+        #if canImport(UIKit)
+        let changed = lock.withLock { () -> Bool in
+            defer { active = on }
+            return active != on
+        }
+        guard changed else { return }
+        if on { move(from: session, to: front) } else { move(from: front, to: session) }
+        #endif
+    }
+
+    private func move(from src: URLSession, to dst: URLSession) {
+        src.getAllTasks { tasks in
+            for case let t as URLSessionDownloadTask in tasks where t.state == .running || t.state == .suspended {
+                guard let id = t.taskDescription else { continue }
+                let k = self.key(t, in: src)
+                self.lock.withLock { _ = self.handedOver.insert(k) }
+                let url = t.originalRequest?.url
+                t.cancel { data in
+                    // finished as it was cancelled: nothing to go on with
+                    if self.lock.withLock({ self.delivered.remove(id) }) != nil { return }
+                    guard let next = data.map({ dst.downloadTask(withResumeData: $0) }) ?? url.map({ dst.downloadTask(with: $0) })
+                    else { return }
+                    next.taskDescription = id
+                    next.resume()
+                }
+            }
+        }
+    }
+
     /// Ids look like "<prefix>:<client's own id>".
     func register(_ client: DownloadClient, prefix: String) {
         lock.withLock { clients[prefix] = client }
     }
 
-    /// Reconnects to downloads still running from before a relaunch.
+    /// Reconnects to downloads still running from before a relaunch (setActive
+    /// takes them into the ordinary session when the app comes to the front).
     func restore() {
         session.getAllTasks { tasks in
             for t in tasks where t.state == .running || t.state == .suspended {
@@ -63,17 +133,24 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
     func start(_ url: URL, id: String) {
         lock.withLock {
             cancelled.remove(id)
+            delivered.remove(id)
             attempts[id] = 0
         }
-        let task = session.downloadTask(with: url)
+        let task = current.downloadTask(with: url)
         task.taskDescription = id
         task.resume()
     }
 
     func cancel(_ id: String) {
         lock.withLock { _ = cancelled.insert(id) }
-        session.getAllTasks { tasks in
-            for t in tasks where t.taskDescription == id { t.cancel() }
+        var sessions = [session]
+        #if canImport(UIKit)
+        sessions.append(front)
+        #endif
+        for s in sessions {
+            s.getAllTasks { tasks in
+                for t in tasks where t.taskDescription == id { t.cancel() }
+            }
         }
     }
 
@@ -98,7 +175,7 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
         let dest = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "." + ext)
         do {
             try FileManager.default.moveItem(at: location, to: dest)
-            lock.withLock { finished[downloadTask.taskIdentifier] = dest }
+            lock.withLock { finished[key(downloadTask, in: session)] = dest }
         } catch {
             log.error("download move: \(error.localizedDescription, privacy: .public)")
         }
@@ -106,7 +183,15 @@ final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked Sendabl
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let id = task.taskDescription else { return }
-        let file = lock.withLock { finished.removeValue(forKey: task.taskIdentifier) }
+        let k = key(task, in: session)
+        let file = lock.withLock { finished.removeValue(forKey: k) }
+        if lock.withLock({ handedOver.remove(k) }) != nil {
+            // moved to the other session; unless it finished just then
+            guard error == nil, let file else { return }
+            lock.withLock { _ = delivered.insert(id) }
+            if let target = client(for: id) { target.0.downloadFinished(target.1, .success(file)) }
+            return
+        }
         let target = client(for: id)
         if lock.withLock({ cancelled.remove(id) }) != nil {
             if let file { try? FileManager.default.removeItem(at: file) }

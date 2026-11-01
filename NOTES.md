@@ -1436,3 +1436,11 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   starts. 221/221 cases bit-identical (the usual 195 plus Aaron, Arthur,
   Hattori, Li-mu, Martha on 7.1.2). Enhanced Aaron's first audio on 7.1.2
   matches 7.0.6's.
+- iPhone downloads crawled (four Siri zips at ~20 KB/s each for 8 minutes;
+  the same file at 2-3 MB/s on the Mac): background-session traffic has the
+  lowest priority and yields to anything else on the network (here a Mac
+  uploading to iCloud). Downloader.swift now runs downloads in an ordinary
+  session while the app is in front and moves them to the background
+  session, at the byte they reached (resume data), when it leaves, and back
+  when it returns (setActive from the scene phase). A download that finishes
+  just as it's handed over is delivered, not restarted.

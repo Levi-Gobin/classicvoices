@@ -105,6 +105,9 @@ struct ClassicVoicesApp: App {
             .defaultSize(width: 760, height: 720)
         #endif
             .onChange(of: scenePhase) { _, phase in
+                // downloads run in an ordinary session while the app is in front
+                if phase == .active { Downloader.shared.setActive(true) }
+                if phase == .background { Downloader.shared.setActive(false) }
                 // Downloads that finished in the background are handed to the
                 // speech extension once the app is in front again.
                 if phase == .active, VoiceStore.shared.hasPending {
