@@ -85,6 +85,17 @@ final class Udif extends Source {
         return size;
     }
 
+    /** Where each deflated chunk starts in the image file, sorted (RangeFs's content check). */
+    long[] deflatedStarts() {
+        int n = 0;
+        for (Chunk c : chunks) if (c.kind == ZLIB) n++;
+        long[] out = new long[n];
+        n = 0;
+        for (Chunk c : chunks) if (c.kind == ZLIB) out[n++] = c.src;
+        Arrays.sort(out);
+        return out;
+    }
+
     private int find(long off) {
         int lo = 0, hi = chunks.size() - 1;
         while (lo <= hi) {

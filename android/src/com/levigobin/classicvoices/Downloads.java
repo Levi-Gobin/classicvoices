@@ -147,7 +147,7 @@ final class Downloads {
                 String label = v.getString("name") + ", " + (compact ? "compact" : "enhanced") + " (iOS 7 Siri, " + locale + ")";
                 Item it = new Item("siri", label, "siri7", folder, locale, https(v.getString("url")), v.getLong("size"),
                         v.optString("sha1", null));
-                if (!Data.hasEngine(c, "ios70")) it.needs.add("ios70");
+                if (!Data.hasEngine(c, "ios7")) it.needs.add("ios7");  // 7.1.2's engine: a small fetch (RangeFs)
                 out.add(it);
             }
         } catch (JSONException e) {

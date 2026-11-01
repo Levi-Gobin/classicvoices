@@ -7,7 +7,7 @@ import Observation
 /// from 7.1), from Apple's MobileAsset servers, as iOS 7 fetched them for
 /// Siri. Each voice's compact and enhanced version is its own download, into
 /// the speech extension's store: <store>/siri7/<Name>[Compact]/. They run on
-/// 7.0.6's engine.
+/// 7.1.2's engine.
 @MainActor @Observable
 final class SiriDownloads {
     struct Voice: Codable, Hashable, Identifiable {

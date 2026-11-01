@@ -1395,3 +1395,39 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   every platform, exactly as typed: "\toi=LHP\" stays ignored by the engine,
   as on Apple's systems. Text that already has ESC before the backslash is
   left alone.
+
+## iOS 7's Siri voices on iOS 7.1.2's engine; 7.1.2 read in place (2026-11-01)
+
+- All 14 Siri voices, compact and premium, speak on 7.1.2's engine (subagent
+  test, interpreter): the 7.1 premiums (2014 pmk data, version 3) and the
+  Mandarin pair (fe/fe_pw) need it. Mandarin also needs `_sscanf`, which
+  7.1.2's voiced imports (with `_fprintf`; 7.0.6's has `_atoi` instead): the
+  fe_pw/maxent model loader reads tags like "#mdl#%d#%u", "[%i,%u%n", 414,000
+  calls at open (~4 s interpreted). vxengine.c h_sscanf runs each conversion
+  through the host's sscanf and stores at the guest pointers with the guest's
+  sizes.
+- So the Siri voices run on 7.1.2 (vxstream.c open_engine; 7.0.6's engine
+  where only it was imported, which runs all but the voices
+  tools/siri_catalog.py marks "needs": "ios7"; cv_catalog.c siri_needs_712,
+  voices.py). Rules stay iOS 7.0's. The iOS 7.0 voices' output on 7.1.2 is not
+  bit-identical to 7.0.6 (same lengths, pitch and pauses; premiums join units
+  1-4 samples apart), and 33 of the 36 iOS 7.0.6 built-in languages are
+  identical on 7.1.2 (not pl-PL, ru-RU, zh-HK); the iOS 7 voices themselves
+  stay on 7.0.6. Martha premium's prompt database turns "Settings" into ~2 s.
+- 7.1.2 used to cost the whole root filesystem (1.17 GB streamed). The IPSW
+  member is deflated, but the image is encrypted (encrcdsa, 512-byte chunks,
+  holding a zlib UDIF), so after a short Huffman start deflate stored it:
+  5-byte headers, blocks of 16383-16401 bytes. rangefs.py reads it in place by
+  range requests: the start (inflated) and the end (the member ends with a
+  stored block, at the image's end) are exact anchors; between two exact
+  anchors the header count is exact and the count to any point between is a
+  random walk of ~4.6 bytes per block, so it rounds to the exact one (sigma
+  0.001-0.05 blocks); a run read on from a placed stretch knows its next
+  header. The content confirms (a zlib header where the UDIF table says a
+  deflated chunk starts; text/code not noise: a wrong placement is off by
+  5-40 bytes, never whole AES blocks, so it decrypts to noise). The image's
+  last bytes are a compressed block: inflated with the 32 KB before as the
+  dictionary. An inverted Range makes Apple's server send the whole file:
+  ranges are clamped. Engine and common files byte-identical, 51 MB read,
+  18 s. remote.py uses it for ios7 (ENGINE_ONLY), falling back to the full
+  stream on any error; NVDA's "Get from Apple" now includes 7.1.2.

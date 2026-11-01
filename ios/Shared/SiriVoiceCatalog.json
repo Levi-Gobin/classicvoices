@@ -8,7 +8,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/af2ad1b2a0b26f0effa17f0b63473794d9ebb8a5.zip",
    "size": 9712096,
    "unarchivedSize": 15647312,
-   "sha1": "edbaddd5e522f6ad698eb77bffca0111b95f9b81"
+   "sha1": "edbaddd5e522f6ad698eb77bffca0111b95f9b81",
+   "needs": ""
   },
   {
    "name": "Helena",
@@ -18,7 +19,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/f22e1707645313ae7f0fa0dddd59baf4e963cb6b.zip",
    "size": 173257385,
    "unarchivedSize": 206000424,
-   "sha1": "a338e4d72e1368aa7f60e5881aedde6049086a19"
+   "sha1": "a338e4d72e1368aa7f60e5881aedde6049086a19",
+   "needs": ""
   },
   {
    "name": "Martin",
@@ -28,7 +30,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/591a83b57917799ea6328d8fb22bde60a7aa9c14.zip",
    "size": 9827064,
    "unarchivedSize": 15792602,
-   "sha1": "3ead48dd23e8559445dff42b0b23ad5665da07f3"
+   "sha1": "3ead48dd23e8559445dff42b0b23ad5665da07f3",
+   "needs": ""
   },
   {
    "name": "Martin",
@@ -38,7 +41,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/041e4500bdf6053e269c52590c3553009722efda.zip",
    "size": 172939154,
    "unarchivedSize": 204916853,
-   "sha1": "f263753aff073947dcf1a68f47c3670b158d99d6"
+   "sha1": "f263753aff073947dcf1a68f47c3670b158d99d6",
+   "needs": ""
   },
   {
    "name": "Catherine",
@@ -48,7 +52,19 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/2e86b5b1bfe3928f1b472050cabf81c4eab60adf.zip",
    "size": 2509521,
    "unarchivedSize": 3293070,
-   "sha1": "6df66785c1dadd243e1b2ffba1b24c683b50a8cc"
+   "sha1": "6df66785c1dadd243e1b2ffba1b24c683b50a8cc",
+   "needs": ""
+  },
+  {
+   "name": "Catherine",
+   "locale": "en-AU",
+   "gender": "female",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/eb4a5617e7ebfba7aaae190adbaf8c11676df558.zip",
+   "size": 188476997,
+   "unarchivedSize": 215167598,
+   "sha1": "42047fa6cc8ca979bf7c789e7ea8a91d75016907",
+   "needs": "ios7"
   },
   {
    "name": "Gordon",
@@ -58,7 +74,19 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/30fca1b1f45f092929eb5c1e9464f807fe9ab2a0.zip",
    "size": 2593647,
    "unarchivedSize": 3415193,
-   "sha1": "5704432d4ef0085a5073cb55a706485d4876a029"
+   "sha1": "5704432d4ef0085a5073cb55a706485d4876a029",
+   "needs": ""
+  },
+  {
+   "name": "Gordon",
+   "locale": "en-AU",
+   "gender": "male",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/f5304217ac576001980265448574f5d273414d27.zip",
+   "size": 156123423,
+   "unarchivedSize": 182984775,
+   "sha1": "4c37f8882603cb84634e5e18b8fc938d70510b99",
+   "needs": "ios7"
   },
   {
    "name": "Arthur",
@@ -68,7 +96,19 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/2e3cb49a27ac30f0ed8bb8768c6397686abfa7b6.zip",
    "size": 5264599,
    "unarchivedSize": 6350452,
-   "sha1": "a63f5808c96d2f0dcaf570cd12b485a67c060d52"
+   "sha1": "a63f5808c96d2f0dcaf570cd12b485a67c060d52",
+   "needs": ""
+  },
+  {
+   "name": "Arthur",
+   "locale": "en-GB",
+   "gender": "male",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/f71dfaffbb5d8a2a76ecf3dd399fec17161c738d.zip",
+   "size": 138899740,
+   "unarchivedSize": 161982685,
+   "sha1": "f02ae7b0d7538c1d1c1f440ff3397fdb728352d9",
+   "needs": "ios7"
   },
   {
    "name": "Martha",
@@ -78,7 +118,19 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/6ac0ce912216078cf8a2d30f89cad3d6501fb18c.zip",
    "size": 5241492,
    "unarchivedSize": 6344861,
-   "sha1": "884c8c71e7992d4735dbaf553e5f436cfcb6deec"
+   "sha1": "884c8c71e7992d4735dbaf553e5f436cfcb6deec",
+   "needs": ""
+  },
+  {
+   "name": "Martha",
+   "locale": "en-GB",
+   "gender": "female",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/b3e180f4bee7bd5663c598a43c36a8a92cbc65b7.zip",
+   "size": 167349893,
+   "unarchivedSize": 191237133,
+   "sha1": "6737d7f68efa667c00944618b9b8d739b7eebea2",
+   "needs": "ios7"
   },
   {
    "name": "Aaron",
@@ -88,7 +140,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/8d342cc86ebd3382a9dc6d7c973534f9ef4c833b.zip",
    "size": 6543834,
    "unarchivedSize": 11792431,
-   "sha1": "ba16f62a78b901b383657498ad4ed2b9150a2b38"
+   "sha1": "ba16f62a78b901b383657498ad4ed2b9150a2b38",
+   "needs": ""
   },
   {
    "name": "Aaron",
@@ -98,7 +151,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/78f29bfbc6dd97a34d9dc2bebdc323ad295f1b88.zip",
    "size": 128219036,
    "unarchivedSize": 153109684,
-   "sha1": "9f9d70bbaab2fa17efd158783936cd009484cccf"
+   "sha1": "9f9d70bbaab2fa17efd158783936cd009484cccf",
+   "needs": ""
   },
   {
    "name": "Nicky",
@@ -108,7 +162,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/791fb77c028c158c35c8402e3179276898ecefa5.zip",
    "size": 6706514,
    "unarchivedSize": 12088055,
-   "sha1": "61574c959ac61ab83af9c89c2f191e36aadb2d8d"
+   "sha1": "61574c959ac61ab83af9c89c2f191e36aadb2d8d",
+   "needs": ""
   },
   {
    "name": "Nicky",
@@ -118,7 +173,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/8cd9004faaecb1add189efec1b8f303c5eff7716.zip",
    "size": 129650073,
    "unarchivedSize": 155377363,
-   "sha1": "e467587fe1302f62314efd94692a8d35ccdc68b1"
+   "sha1": "e467587fe1302f62314efd94692a8d35ccdc68b1",
+   "needs": ""
   },
   {
    "name": "Daniel",
@@ -128,7 +184,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/30b0ba44006a8e1bd411912825845883d731498d.zip",
    "size": 7737645,
    "unarchivedSize": 9695880,
-   "sha1": "e7660c652ea8d691f2ede19ee961892cca2abb4e"
+   "sha1": "e7660c652ea8d691f2ede19ee961892cca2abb4e",
+   "needs": ""
   },
   {
    "name": "Daniel",
@@ -138,7 +195,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/0470d0125d7d0a3c2d5a375a61a94c0a9feff59a.zip",
    "size": 148808443,
    "unarchivedSize": 174026976,
-   "sha1": "41190d59206e3cb7d9f83144fee7e3663d4dbd2c"
+   "sha1": "41190d59206e3cb7d9f83144fee7e3663d4dbd2c",
+   "needs": ""
   },
   {
    "name": "Marie",
@@ -148,7 +206,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/539dbb560441848fd6b690fd25b07006ae63ffdb.zip",
    "size": 7688281,
    "unarchivedSize": 9664186,
-   "sha1": "ece0965f0689475869a1c9af3e1fac73d14de07b"
+   "sha1": "ece0965f0689475869a1c9af3e1fac73d14de07b",
+   "needs": ""
   },
   {
    "name": "Marie",
@@ -158,7 +217,8 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/7c6cf7871439903e90f606610d9c6af7977fad54.zip",
    "size": 152516099,
    "unarchivedSize": 177691041,
-   "sha1": "4db60fec2223cc89d26706d111e352fb4a4d7cb3"
+   "sha1": "4db60fec2223cc89d26706d111e352fb4a4d7cb3",
+   "needs": ""
   },
   {
    "name": "Hattori",
@@ -168,7 +228,19 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/d3e76f005211f70251217a671b0ff21dd766bd3e.zip",
    "size": 2985627,
    "unarchivedSize": 4000940,
-   "sha1": "c3fb804789f3e7aeca943c4fd6cf1534ba07ddf0"
+   "sha1": "c3fb804789f3e7aeca943c4fd6cf1534ba07ddf0",
+   "needs": ""
+  },
+  {
+   "name": "Hattori",
+   "locale": "ja-JP",
+   "gender": "male",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/162b8ca60a199e2ae0c8433d0a1fffc85abd42b9.zip",
+   "size": 164374268,
+   "unarchivedSize": 191237294,
+   "sha1": "22d8f6170280089e17731cfb6f6f9d274b4819d4",
+   "needs": "ios7"
   },
   {
    "name": "O-ren",
@@ -178,7 +250,63 @@
    "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/9516fc2b518971998f4269bfb342e5f56e3c8081.zip",
    "size": 2830975,
    "unarchivedSize": 3820073,
-   "sha1": "c78f7953c267998e7e48d4c7f32209a387a7b984"
+   "sha1": "c78f7953c267998e7e48d4c7f32209a387a7b984",
+   "needs": ""
+  },
+  {
+   "name": "O-ren",
+   "locale": "ja-JP",
+   "gender": "female",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/bd6a7561a1722cec5eab24c35b8a1e2483124a35.zip",
+   "size": 178958169,
+   "unarchivedSize": 206983138,
+   "sha1": "a763ffcc97ea4016c25f7b32c6f1c911d312b2f0",
+   "needs": "ios7"
+  },
+  {
+   "name": "Li-mu",
+   "locale": "zh-CN",
+   "gender": "male",
+   "footprint": "compact",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/772240f6d9d65f726abeedfd7fa626d5fa4fadd8.zip",
+   "size": 7005170,
+   "unarchivedSize": 13791770,
+   "sha1": "aab2bc836257c5c33585348358b4cc7c083a0b6b",
+   "needs": "ios7"
+  },
+  {
+   "name": "Li-mu",
+   "locale": "zh-CN",
+   "gender": "male",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/b2eea35081de365adb57d4a76eb62b007794525f.zip",
+   "size": 173959373,
+   "unarchivedSize": 212763021,
+   "sha1": "88a3792b2176e50c2798662a9001210c3495af73",
+   "needs": "ios7"
+  },
+  {
+   "name": "Yu-shu",
+   "locale": "zh-CN",
+   "gender": "female",
+   "footprint": "compact",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/770c58aad4faa3ff71af77b3fc6c8894da19def2.zip",
+   "size": 6948116,
+   "unarchivedSize": 13760439,
+   "sha1": "2f564d18cf13c5fa1169615033c3e323a2e2427a",
+   "needs": "ios7"
+  },
+  {
+   "name": "Yu-shu",
+   "locale": "zh-CN",
+   "gender": "female",
+   "footprint": "premium",
+   "url": "http://appldnld.apple.com/iOS7/031-3415.20140310.Xdedr/com_apple_MobileAsset_VoiceServices_CustomVoice/b2c0bb0c8cf2cad7c0464ee9ed7c854157c22175.zip",
+   "size": 191674571,
+   "unarchivedSize": 227640600,
+   "sha1": "f7cf3238fdd97b51c6c74f94be752191248eb21b",
+   "needs": "ios7"
   }
  ]
 }

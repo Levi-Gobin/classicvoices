@@ -57,8 +57,8 @@ enum VoiceCatalog {
                           ("mac109", "Mavericks", "10.9")]
 
     /// iOS 7's Siri voices, downloaded into <store>/siri7/<Name>[Compact]/ and
-    /// spoken by 7.0.6's engine (vxstream.c open_engine).
-    static let siri = (build: "siri7", name: "iOS 7 Siri", version: "7.0.6")
+    /// spoken by 7.1.2's engine (vxstream.c open_engine).
+    static let siri = (build: "siri7", name: "iOS 7 Siri", version: "7.1.2")
 
     struct Entry: Hashable, Codable {
         let build: String      // "ios6" / "ios5" / "ios4" / "ios3" / "ios70", or a Mac era "mac107"

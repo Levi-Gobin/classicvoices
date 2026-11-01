@@ -22,7 +22,7 @@ struct VoiceVersion: Identifiable, Hashable {
         .init(id: "ios5", platform: .iOS, name: "iOS 5", number: "5.1.1", builds: ["ios5"]),
         .init(id: "ios6", platform: .iOS, name: "iOS 6", number: "6.1.6", builds: ["ios6"]),
         .init(id: "ios7", platform: .iOS, name: "iOS 7", number: "7.0.6", builds: ["ios70"]),
-        .init(id: "siri7", platform: .iOS, name: "iOS 7 Siri", number: "7.0.6", builds: ["siri7"]),
+        .init(id: "siri7", platform: .iOS, name: "iOS 7 Siri", number: "7.1.2", builds: ["siri7"]),
         .init(id: "tiger", platform: .macOS, name: "Tiger", number: "10.4", builds: ["mt104"]),
         .init(id: "leopard", platform: .macOS, name: "Leopard", number: "10.5", builds: ["mt105"]),
         .init(id: "snowleopard", platform: .macOS, name: "Snow Leopard", number: "10.6", builds: ["mt106"]),

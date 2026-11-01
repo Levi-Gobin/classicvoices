@@ -639,6 +639,83 @@ static void h_sprintf(Vx *vx) {
     put_guest(vx, arg(vx, 0), sizeof buf, buf, n);
     ret(vx, (uint32_t)n);
 }
+// sscanf over guest varargs (the iOS 7.1 Mandarin front end reads
+// "#mdl#2#1987"-style model tags with "#mdl#%d#%u"). Each conversion is done
+// by the host's sscanf on what's left of the input; results are stored at the
+// guest pointers with the guest's sizes (int/long 4 bytes, long long and
+// double 8, short 2, char 1).
+static void h_sscanf(Vx *vx) {
+    const char *in = gstr(vx, arg(vx, 0)), *fmt = gstr(vx, arg(vx, 1)), *fmt0 = fmt;
+    VaCursor va = {vx, 2, 0};
+    const char *p = in;
+    int count = 0;
+    if (!in || !fmt) { ret(vx, 0xFFFFFFFF); return; }
+    while (*fmt) {
+        if (isspace((unsigned char)*fmt)) { while (isspace((unsigned char)*p)) p++; fmt++; continue; }
+        if (*fmt != '%' || fmt[1] == '%') {
+            if (*fmt == '%') fmt++;
+            if (*p != *fmt) break;
+            p++; fmt++;
+            continue;
+        }
+        const char *start = fmt++;
+        int suppress = 0;
+        if (*fmt == '*') { suppress = 1; fmt++; }
+        while (isdigit((unsigned char)*fmt)) fmt++;
+        int hs = 0, ls = 0;
+        while (*fmt && strchr("hlLqjzt", *fmt)) { if (*fmt == 'h') hs++; else if (*fmt == 'l' || *fmt == 'q' || *fmt == 'L') ls++; fmt++; }
+        if (*fmt == '[') { fmt++; if (*fmt == '^') fmt++; if (*fmt == ']') fmt++; while (*fmt && *fmt != ']') fmt++; }
+        char conv = *fmt;
+        if (!conv) break;
+        fmt++;
+        // host spec: the conversion without its size modifiers, then %n
+        char spec[128];
+        size_t k = 0;
+        spec[k++] = '%';
+        if (suppress) spec[k++] = '*';
+        for (const char *q = start + 1 + suppress; q < fmt && k < sizeof spec - 8; q++)
+            if (!strchr("hlLqjzt", *q) || conv == '[') spec[k++] = *q;
+        if (conv == 'n') { if (!suppress) s32(&vx->cpu.k, va_next(&va), (uint32_t)(p - in)); continue; }
+        int used = -1, got;
+        char sbuf[4096];
+        long long iv = 0;
+        double dv = 0;
+        if (strchr("diuxXo", conv)) {
+            if (k > 1 && strchr("diuxXo", spec[k - 1])) { spec[k - 1] = 'l'; spec[k++] = 'l'; spec[k++] = conv; }
+            strcpy(spec + k, "%n");
+            got = suppress ? sscanf(p, spec, &used) : sscanf(p, spec, &iv, &used);
+        } else if (strchr("eEfgaG", conv)) {
+            spec[k - 1] = 'l'; spec[k++] = conv;
+            strcpy(spec + k, "%n");
+            got = suppress ? sscanf(p, spec, &used) : sscanf(p, spec, &dv, &used);
+        } else if (conv == 's' || conv == 'c' || conv == '[') {
+            strcpy(spec + k, "%n");
+            memset(sbuf, 0, sizeof sbuf);
+            got = suppress ? sscanf(p, spec, &used) : sscanf(p, spec, sbuf, &used);
+        } else break;
+        if (used < 0) break;  // no match (host sscanf stops before %n)
+        p += used;
+        if (suppress) continue;
+        if (got < 1) break;
+        uint32_t dst = va_next(&va);
+        if (strchr("diuxXo", conv)) {
+            if (ls >= 2) { s32(&vx->cpu.k, dst, (uint32_t)iv); s32(&vx->cpu.k, dst + 4, (uint32_t)((unsigned long long)iv >> 32)); }
+            else if (hs == 1) s16(&vx->cpu.k, dst, (uint16_t)iv);
+            else if (hs >= 2) { check_range(vx, dst, 1); vx->mem[dst] = (uint8_t)iv; }
+            else s32(&vx->cpu.k, dst, (uint32_t)iv);
+        } else if (strchr("eEfgaG", conv)) {
+            if (ls) { uint64_t u; memcpy(&u, &dv, 8); s32(&vx->cpu.k, dst, (uint32_t)u); s32(&vx->cpu.k, dst + 4, (uint32_t)(u >> 32)); }
+            else { float f = (float)dv; uint32_t u; memcpy(&u, &f, 4); s32(&vx->cpu.k, dst, u); }
+        } else {
+            size_t n = conv == 'c' ? (size_t)used : strlen(sbuf) + 1;
+            check_range(vx, dst, (uint32_t)n);
+            memcpy(vx->mem + dst, sbuf, n);
+        }
+        count++;
+    }
+    if (getenv("VX_DEBUG")) fprintf(stderr, "[sscanf] \"%s\" with \"%s\" -> %d\n", in, fmt0, count);
+    ret(vx, (uint32_t)(count == 0 && !*p ? 0xFFFFFFFF : count));
+}
 static void h_vsprintf(Vx *vx) {
     char buf[4096];
     VaCursor va = {vx, 0, arg(vx, 2)};
@@ -1081,7 +1158,7 @@ static const HleEntry kHle[] = {
     {"_lroundf", h_lroundf}, {"_sysconf", h_sysconf}, {"_strerror", h_strerror},
     {"___memmove_chk", h_memcpy}, {"___strcpy_chk", h_strcpy}, {"___strcat_chk", h_strcat},
     {"___strncpy_chk", h_strncpy}, {"_snprintf", h_snprintf},
-    {"_sprintf", h_sprintf}, {"_vsprintf", h_vsprintf}, {"_fprintf", h_fprintf}, {"_fputc", h_zero},
+    {"_sprintf", h_sprintf}, {"_sscanf", h_sscanf}, {"_vsprintf", h_vsprintf}, {"_fprintf", h_fprintf}, {"_fputc", h_zero},
 };
 
 static const char *const kDataImports[] = {

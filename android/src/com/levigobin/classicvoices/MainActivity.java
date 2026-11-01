@@ -607,7 +607,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
     /** A voice whose firmware isn't here: offer to get it from Apple, then the voice. */
     private void offerFirmware(final Library.Item it) {
         long size = 0;
-        for (String k : it.needs()) size += Firmware.byKey(k).size;
+        for (String k : it.needs()) size += Firmware.byKey(k).fetch;
         new AlertDialog.Builder(this)
                 .setMessage(getString(R.string.get_firmware_for_voice, it.title(), firmwareNames(it.needs()),
                         Library.size(size), it.name, Library.size(it.size)))
@@ -856,7 +856,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
             String label;
             if (job != null) label = getString(R.string.stop_getting, b.nice, step(job));
             else if (Library.firmwareImported(this, key)) label = getString(R.string.firmware_imported, b.nice);
-            else label = getString(R.string.firmware_get, b.nice, Library.size(b.size), b.purpose);
+            else label = getString(R.string.firmware_get, b.nice, Library.size(b.fetch), b.purpose);
             final Button btn = button("fw:" + key, label, new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
@@ -867,7 +867,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
                         enqueueFirmware(b);
                     } else {
                         new AlertDialog.Builder(MainActivity.this)
-                                .setMessage(getString(R.string.reimport_question, b.nice, Library.size(b.size)))
+                                .setMessage(getString(R.string.reimport_question, b.nice, Library.size(b.fetch)))
                                 .setPositiveButton(R.string.reimport_yes, new DialogInterface.OnClickListener() {
                                     @Override
                                     public void onClick(DialogInterface d, int w) {

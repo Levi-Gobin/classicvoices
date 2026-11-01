@@ -263,9 +263,8 @@ class DataDialog(wx.Dialog):
 
     def onApple(self, evt):
         vr = cv_paths.voices_root()
-        # not iOS 7.1.2: iOS 7.0.6 runs the Mavericks compacts too
-        todo = [k for k, _label in BUILDS if k in cv_remote.FIRMWARE and k != "ios7"
-                and not cv_voices.has_engine(vr, k)]
+        # iOS 7.1.2 too: only its engine, read in place (about 50 MB), for the Siri voices
+        todo = [k for k, _label in BUILDS if k in cv_remote.FIRMWARE and not cv_voices.has_engine(vr, k)]
         if not todo:
             # Translators: message when every firmware is imported already.
             gui.messageBox(_("Every firmware is imported already."), _("Classic Voices"), wx.OK, self)

@@ -154,17 +154,18 @@ developers, so you can't register that one.
 | iOS 4.3.5 (8L1, iPhone 3GS) | The iOS 4 voices |
 | iOS 5.1.1 (9B206, iPhone 3GS) | The iOS 5 voices, plus enhanced variants downloaded in the app |
 | iOS 6.1.6 (10B500, iPhone 3GS) | The iOS 6 voices, and their enhanced voices (downloaded in the app) |
-| iOS 7.0.6 (11B651, iPhone 4) | The iOS 7 voices, on iOS 7.0's own engine, their enhanced voices, and iOS 7's Siri voices (both downloaded in the app) |
-| iOS 7.1.2 (11D257, iPhone 4) | Only its engine, for the Mac OS X Mavericks voices |
+| iOS 7.0.6 (11B651, iPhone 4) | The iOS 7 voices, on iOS 7.0's own engine, and their enhanced voices (downloaded in the app) |
+| iOS 7.1.2 (11D257, iPhone 4) | Only its engine (read straight from Apple's server, about 50 MB), for iOS 7's Siri voices and the Mac OS X Mavericks voices |
 | iOS 10.3.4 (14G61, iPhone 5) | Only its engine, for the Mavericks premium voices |
 
 The app can also download the voices Mac OS X Lion, Mountain Lion and
 Mavericks offered in System Preferences, from Apple's software update servers,
-and iOS 7's Siri voices as iOS 7 fetched them from Apple: Aaron and Nicky
-(American English), Daniel and Marie (French), Helena and Martin (German) from
-iOS 7.0, compact and enhanced, and the compact Arthur and Martha (British
-English), Catherine and Gordon (Australian English), Hattori and O-ren
-(Japanese) from iOS 7.1. They run on iOS 7.0.6's engine.
+and iOS 7's Siri voices as iOS 7 fetched them from Apple, compact and enhanced:
+Aaron and Nicky (American English), Daniel and Marie (French), Helena and
+Martin (German) from iOS 7.0, and Arthur and Martha (British English),
+Catherine and Gordon (Australian English), Hattori and O-ren (Japanese), Li-mu
+and Yu-shu (Mandarin) from iOS 7.1. They run on iOS 7.1.2's engine. The
+enhanced voices play Siri's own tuned recordings of the phrases Siri said.
 
 The voices speak the way they did then. Each voice gets the pronunciation rules
 its own release had: the iOS 3 voices iOS 3's, the iOS 6 voices iOS 6's ("iOS"

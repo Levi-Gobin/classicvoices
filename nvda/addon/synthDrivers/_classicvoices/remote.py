@@ -4,6 +4,7 @@
 # firmware.import_rootfs does for a file you have. Shared by the Linux tool and
 # the desktop app.
 import os
+import shutil
 import struct
 import tempfile
 import urllib.request
@@ -27,7 +28,7 @@ PURPOSE = {
     "ios3": "the iOS 3 voices", "ios4": "the iOS 4 voices", "ios5": "the iOS 5 voices and their enhanced versions",
     "ios6": "the iOS 6 voices and their enhanced versions; also the Lion and Mountain Lion voices",
     "ios70": "the iOS 7 voices and their enhanced versions; also the Mavericks compact voices",
-    "ios7": "engine only: Mavericks compact voices (iOS 7.0.6 runs them too)",
+    "ios7": "engine only, read from Apple's server (about 50 MB): the iOS 7 Siri voices and Mavericks compact voices",
     "ios10": "engine only: Mavericks premium voices",
 }
 
@@ -115,8 +116,47 @@ def stream_rootfs(url, dest, progress):
 
 
 
+def _import_engine_only(key, voices_root, progress):
+    """iOS 7.1.2 is only an engine here (Siri voices, Mavericks compacts):
+    read its voiced and common data out of the IPSW on Apple's server
+    (rangefs) instead of downloading the whole root filesystem."""
+    from . import rangefs
+    build, url, _size = FIRMWARE[key]
+    build_key, _device, nice = firmware.SUPPORTED[build]
+    progress("Reading the %s engine from Apple's server" % nice, None)
+    vol, member = rangefs.open_volume(url, build, progress)
+    fw = "System/Library/PrivateFrameworks/VoiceServices.framework/"
+    voiced, common = vol.entry(fw + "Support/voiced"), vol.entry(fw + "TTSResources/common")
+    if not voiced or not common:
+        raise firmware.ImportError_("voiced/TTSResources missing from the firmware")
+    dest = os.path.join(voices_root, build_key)
+    tmp = dest + ".part"
+    if os.path.isdir(tmp):
+        shutil.rmtree(tmp)
+    firmware._copy_entry(vol, voiced, os.path.join(tmp, "voiced"))
+    progress(None, 0.5)
+    firmware._copy_tree(vol, common, os.path.join(tmp, "TTSResources", "common"))
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    os.rename(tmp, dest)
+    firmware.assemble_mac_common(voices_root)
+    progress("%s imported (%d MB read from Apple)" % (nice, member.fetched >> 20), 1.0)
+    return build_key
+
+
+ENGINE_ONLY = ("ios7",)
+
+
 def import_from_apple(key, voices_root, progress):
     """Stream firmware `key` (ios3 ... ios10, ios70) from Apple and import it."""
+    if key in ENGINE_ONLY:
+        try:
+            return _import_engine_only(key, voices_root, progress)
+        except Exception as e:  # anything unexpected: the whole image, as before
+            progress("Reading it in place didn't work (%s); downloading the whole firmware" % e, None)
+            part = os.path.join(voices_root, key + ".part")
+            if os.path.isdir(part):
+                shutil.rmtree(part)
     build, url, _size = FIRMWARE[key]
     progress("Streaming %s from Apple" % firmware.SUPPORTED[build][2], None)
     os.makedirs(voices_root, exist_ok=True)

@@ -72,6 +72,21 @@ final class Encrcdsa extends Source {
         return size;
     }
 
+    int blockSize() { return blockSize; }
+
+    long dataOff() { return dataOff; }
+
+    /** Chunk n's ciphertext, given (n bytes of b from o), decrypted: for RangeFs's content check. */
+    byte[] decrypt(long n, byte[] b, int o, int len) throws IOException {
+        try {
+            byte[] iv = hmac.doFinal(new byte[] {(byte) (n >>> 24), (byte) (n >>> 16), (byte) (n >>> 8), (byte) n});
+            aes.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv, 0, 16));
+            return aes.doFinal(b, o, len - len % 16);
+        } catch (GeneralSecurityException e) {
+            throw new IOException("decryption failed: " + e);
+        }
+    }
+
     @Override
     void read(long off, byte[] b, int o, int n) throws IOException {
         while (n > 0) {

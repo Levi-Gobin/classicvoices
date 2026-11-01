@@ -17,9 +17,10 @@ IOS7 = ("ios7", "ios70")
 # a tuple is a choice of firmware.
 MAC_ENGINES = {"mac107": ("ios6",), "mac108": ("ios6",), "mac109": (IOS7, "ios10")}
 # iOS 7's Siri voices (SiriVoiceCatalog.json): Downloads/siri7/<Name>[Compact],
-# spoken by 7.0.6's engine.
+# spoken by 7.1.2's engine (core/vxstream.c open_engine; 7.0.6's runs those
+# whose catalog entry doesn't say "needs": "ios7", where only it was imported).
 SIRI = "siri7"
-SIRI_ENGINE = "ios70"
+SIRI_ENGINE = "ios7"
 
 
 def broker_voice_name(path):
@@ -144,11 +145,13 @@ def scan(voices_root, downloads_root, include_hidden=False):
             kind = "compact" if compact else "premium"
             out.append(Voice("%s/%s" % (era, folder),
                              "%s (Mac OS X %s, %s)" % (name, label, kind), lang))
-    if has_engine(voices_root, SIRI_ENGINE):
+    if has_engine(voices_root, IOS7):
+        ios712 = has_engine(voices_root, SIRI_ENGINE)
+        needs = {siri_folder(e) for e in siri_catalog() if e.get("needs")}
         dl = os.path.join(downloads_root, SIRI)
         for folder in sorted(os.listdir(dl)) if os.path.isdir(dl) else []:
             name = broker_voice_name(os.path.join(dl, folder, "broker.hdr"))
-            if not name:
+            if not name or (not ios712 and folder in needs):
                 continue
             kind = "compact" if folder.endswith("Compact") else "enhanced"
             out.append(Voice("%s/%s" % (SIRI, folder), "%s (iOS 7 Siri, %s)" % (name, kind),

@@ -44,7 +44,7 @@ final class Library {
         new Version("ios5", "iOS 5", "5.1.1", false, "ios5"),
         new Version("ios6", "iOS 6", "6.1.6", false, "ios6"),
         new Version("ios70", "iOS 7", "7.0.6", false, "ios70"),
-        new Version("siri7", "iOS 7 Siri", "7.0.6", false, "ios70"),
+        new Version("siri7", "iOS 7 Siri", "7.1.2", false, "ios7"),
         new Version("mac107", "Lion", "10.7", true, "ios5", "ios6"),
         new Version("mac108", "Mountain Lion", "10.8", true, "ios6", IOS7),
         new Version("mac109", "Mavericks", "10.9", true, IOS7, "ios10"),

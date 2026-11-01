@@ -29,15 +29,21 @@ import java.util.zip.InflaterInputStream;
 final class Firmware {
     static final class Build {
         final String key, build, device, nice, url, purpose;
-        final long size;
+        final long size;   // the IPSW
+        final long fetch;  // about what getting it downloads
 
         Build(String key, String build, String device, String nice, String url, long size, String purpose) {
+            this(key, build, device, nice, url, size, size, purpose);
+        }
+
+        Build(String key, String build, String device, String nice, String url, long size, long fetch, String purpose) {
             this.key = key;
             this.build = build;
             this.device = device;
             this.nice = nice;
             this.url = url;
             this.size = size;
+            this.fetch = fetch;
             this.purpose = purpose;
         }
     }
@@ -61,7 +67,8 @@ final class Firmware {
                 1201645522L, "The iOS 7 voices, the engine for the enhanced iOS 7 voices, and for the Mac OS X Mavericks compact voices."),
         new Build("ios7", "11D257", "iPhone3,1", "iOS 7.1.2",
                 "https://secure-appldnld.apple.com/iOS7.1/031-4812.20140627.cq6y8/iPhone3,1_7.1.2_11D257_Restore.ipsw",
-                1204958925L, "Engine only, for the Mac OS X Mavericks compact voices (iOS 7.0.6 runs them too)."),
+                1204958925L, 52000000L, "Engine only, a small download read straight from Apple's server: for the iOS 7"
+                + " Siri voices and the Mac OS X Mavericks compact voices."),
         new Build("ios10", "14G61", "iPhone5,1", "iOS 10.3.4",
                 "https://updates.cdn-apple.com/2019/ios/091-25277-20190722-0C1B94DE-992C-11E9-A2EE-E2C9A77C2E40/iPhone_4.0_32bit_10.3.4_14G61_Restore.ipsw",
                 2000796302L, "Engine only, for the Mac OS X Mavericks premium voices."),
@@ -97,7 +104,7 @@ final class Firmware {
 
     // ---------------------------------------------------------------- the zip
 
-    /** {name, method, compressed size, local header offset} of the largest .dmg. */
+    /** {name, method, compressed size, local header offset, size} of the largest .dmg. */
     static Object[] rootfsEntry(Source s) throws IOException {
         long size = s.size();
         long tailAt = Math.max(0, size - 65536);
@@ -139,7 +146,7 @@ final class Firmware {
             if (name.toLowerCase().endsWith(".dmg") && usz > bestSize) {
                 bestSize = usz;
                 String base = name.substring(name.lastIndexOf('/') + 1);
-                best = new Object[] {base, method, csz, lho};
+                best = new Object[] {base, method, csz, lho, usz};
             }
             p += 46 + nl + el + cl;
         }
@@ -308,11 +315,63 @@ final class Firmware {
 
     // ---------------------------------------------------------------- import
 
+    // Firmware that is only an engine here, read out of the IPSW on Apple's
+    // server (RangeFs) instead of downloading its whole root filesystem.
+    static final String[] ENGINE_ONLY = {"ios7"};
+
+    static boolean engineOnly(Build b) {
+        for (String k : ENGINE_ONLY) if (k.equals(b.key)) return true;
+        return false;
+    }
+
+    /**
+     * iOS 7.1.2 is only an engine here (Siri voices, Mavericks compacts): its
+     * voiced and common data, read out of the IPSW on Apple's server. Returns
+     * the bytes read from Apple.
+     */
+    static long importEngineOnly(File voices, Build b, Progress p) throws IOException {
+        p.step("Reading the " + b.nice + " engine from Apple's server");
+        p.fraction(-1);
+        RangeFs.Volume rv = RangeFs.open(b, p);
+        Hfs vol = rv.hfs;
+        String fw = "System/Library/PrivateFrameworks/VoiceServices.framework/";
+        Hfs.Entry voiced = vol.entry(fw + "Support/voiced"), common = vol.entry(fw + "TTSResources/common");
+        if (voiced == null || common == null) {
+            throw new IOException("voiced/TTSResources missing from the firmware");
+        }
+        File dest = new File(voices, b.key + ".importing");
+        deleteTree(dest);
+        p.step("Copying the " + b.nice + " engine");
+        vol.copyFile(voiced, new File(dest, "voiced"), p);
+        p.fraction(0.5);
+        vol.copyTree(common, new File(dest, "TTSResources/common"), p);
+        File fin = new File(voices, b.key);
+        deleteTree(fin);
+        if (!dest.renameTo(fin)) throw new IOException("couldn't move the imported files into place");
+        assembleMacCommon(voices);
+        p.fraction(1);
+        p.step(b.nice + " imported (" + (rv.member.fetched >> 20) + " MB read from Apple)");
+        return rv.member.fetched;
+    }
+
     /** Import one firmware: from Apple (local == null) or from an IPSW on the device. */
     static void importBuild(Context c, Build b, Source local, Progress p) throws IOException {
         File voices = Data.voicesDir(c);
         //noinspection ResultOfMethodCallIgnored
         voices.mkdirs();
+        if (local == null && engineOnly(b)) {
+            try {
+                importEngineOnly(voices, b, p);
+                return;
+            } catch (Progress.Cancelled e) {
+                deleteTree(new File(voices, b.key + ".importing"));
+                throw e;
+            } catch (Exception e) {  // anything unexpected: the whole image, as before
+                android.util.Log.w("ClassicVoices", "range import of " + b.key + " failed", e);
+                p.step("Reading it in place didn't work (" + e.getMessage() + "); downloading the whole firmware");
+                deleteTree(new File(voices, b.key + ".importing"));
+            }
+        }
         File tmp = new File(Data.root(c), "rootfs.tmp");
         Source src = local != null ? local : new Source.Http(b.url);
         try {

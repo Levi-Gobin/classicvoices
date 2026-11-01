@@ -41,6 +41,16 @@ static int has_engine(const char *voices_root, const char *build) {
     return !strcmp(build, "ios7") && has_engine(voices_root, "ios70");
 }
 
+// iOS 7.1's premium Siri voices and the Mandarin pair only run on 7.1.2's
+// engine (tools/siri_catalog.py "needs").
+static int siri_needs_712(const char *folder, const char *locale) {
+    static const char *const k71[] = {"Arthur", "Martha", "Catherine", "Gordon", "Hattori", "O-ren"};
+    if (!strncmp(locale, "zh", 2)) return 1;
+    for (size_t i = 0; i < sizeof k71 / sizeof k71[0]; i++)
+        if (!strcmp(folder, k71[i])) return 1;  // the premium folder; compacts end in "Compact"
+    return 0;
+}
+
 // The voice name from a broker.hdr / broker.hdr.asset: "defaultvoice:Name"
 // (iOS 3/4) or <voice>Name</voice>. Also the Nuance langcode when present.
 static int broker_info(const char *path, char *name, size_t ncap, char *langcode, size_t lcap) {
@@ -264,8 +274,13 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
         }
         free_dirs(dirs, nd);
     }
-    // iOS 7's Siri voices (7.0.6's engine; they change pitch themselves)
-    if (downloads_root && has_engine(voices_root, "ios70")) {
+    // iOS 7's Siri voices (7.1.2's engine; they change pitch themselves). On
+    // 7.0.6's, where only that one was imported, all but the voices 7.1 added
+    // in their premium form and the Mandarin pair (siri_needs_712).
+    char e712[1100];
+    snprintf(e712, sizeof e712, "%s/ios7/voiced", voices_root);
+    int ios712 = is_file(e712);
+    if (downloads_root && (ios712 || has_engine(voices_root, "ios70"))) {
         snprintf(p, sizeof p, "%s/siri7", downloads_root);
         char **dirs;
         size_t nd = list_dirs(p, &dirs);
@@ -280,6 +295,7 @@ size_t cv_scan_voices(const char *voices_root, const char *downloads_root, CvVoi
             snprintf(hdr, sizeof hdr, "%s/%s/locale", p, dirs[i]);
             read_small(hdr, loc, sizeof loc);
             if (!loc[0]) snprintf(loc, sizeof loc, "%s", langcode_locale(lc));
+            if (!ios712 && siri_needs_712(dirs[i], loc)) continue;
             CvVoice *v = push(&l);
             snprintf(v->key, sizeof v->key, "siri7/%s", dirs[i]);
             snprintf(v->name, sizeof v->name, "%s (iOS 7 Siri, %s)", name, compact ? "compact" : "enhanced");
@@ -356,7 +372,7 @@ const char *cv_voice_build(const CvVoice *v) {
         return n > 7 && !strcmp(k + n - 7, "Compact") ? "ios7" : "ios10";  // "ios7": 7.1.2's or 7.0.6's engine
     }
     if (!strncmp(k, "mac10", 5)) return "ios6";
-    if (!strncmp(k, "siri7/", 6)) return "ios70";
+    if (!strncmp(k, "siri7/", 6)) return "ios7";  // 7.1.2's engine (7.0.6's runs the iOS 7.0 voices)
     for (size_t i = 0; i < sizeof builds / sizeof builds[0]; i++) {
         size_t n = strlen(builds[i]);
         if (!strncmp(k, builds[i], n) && (k[n] == '/' || (k[n] == 'e' && k[n + 1] == '/'))) return builds[i];

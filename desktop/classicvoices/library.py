@@ -35,7 +35,7 @@ VERSIONS = [
     Version("ios5", "iOS 5", "ios", ["ios5"], "5.1.1"),
     Version("ios6", "iOS 6", "ios", ["ios6"], "6.1.6"),
     Version("ios70", "iOS 7", "ios", ["ios70"], "7.0.6"),
-    Version("siri7", "iOS 7 Siri", "ios", ["ios70"], "7.0.6"),
+    Version("siri7", "iOS 7 Siri", "ios", ["ios7"], "7.1.2"),
     Version("mac107", "Lion", "mac", ["ios5", "ios6"], "10.7"),
     Version("mac108", "Mountain Lion", "mac", ["ios6", IOS7], "10.8"),
     Version("mac109", "Mavericks", "mac", [IOS7, "ios10"], "10.9"),
