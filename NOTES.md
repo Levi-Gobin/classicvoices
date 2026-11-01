@@ -1413,7 +1413,7 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   bit-identical to 7.0.6 (same lengths, pitch and pauses; premiums join units
   1-4 samples apart), and 33 of the 36 iOS 7.0.6 built-in languages are
   identical on 7.1.2 (not pl-PL, ru-RU, zh-HK); the iOS 7 voices themselves
-  stay on 7.0.6. Martha premium's prompt database turns "Settings" into ~2 s.
+  stay on 7.0.6. Martha premium says "Settings" as "location services settings": Apple's database has a prompt "Settings" (12517) whose units are exactly prompt 12305's, "location services settings" (identical audio). Kept: the same data on the same engine, as iOS 7.1 had it.
 - 7.1.2 used to cost the whole root filesystem (1.17 GB streamed). The IPSW
   member is deflated, but the image is encrypted (encrcdsa, 512-byte chunks,
   holding a zlib UDIF), so after a short Huffman start deflate stored it:
