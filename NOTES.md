@@ -1392,5 +1392,6 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   unexpected end". Every Siri voice zip hit it (compact and enhanced).
 - Typed commands: "\toi=lhp\ ... \toi=orth\" written as plain text (no ESC)
   becomes ESC\toi=lhp\ in vxs_start (typed_commands) for Vocalizer voices on
-  every platform; toi's and tn's values are lowercased (the engine ignores
-  "LHP"). Text that already has ESC before the backslash is left alone.
+  every platform, exactly as typed: "\toi=LHP\" stays ignored by the engine,
+  as on Apple's systems. Text that already has ESC before the backslash is
+  left alone.

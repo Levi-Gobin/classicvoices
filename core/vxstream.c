@@ -1097,9 +1097,9 @@ void vxs_cancel(VxStream *s) {
 
 // Vocalizer commands typed as plain text, "\toi=lhp\" (as people write them,
 // and as Apple's voices took them): the engine only knows them after an ESC,
-// so "\name=value\" becomes ESC\name=value\, the name lowercased, and toi's
-// and tn's value too (the engine ignores "LHP"). Commands already after an
-// ESC are left as they are.
+// so "\name=value\" becomes ESC\name=value\, exactly as written (the engine
+// ignores "LHP", as Apple's did). Commands already after an ESC are left as
+// they are.
 static char *typed_commands(const char *t) {
     size_t n = strlen(t);
     char *o = malloc(n + n / 3 + 2), *w = o;  // each command (at least 5 bytes) grows by 1
@@ -1108,19 +1108,13 @@ static char *typed_commands(const char *t) {
         size_t a = i + 1, k = a;
         if (t[i] == '\\' && (i == 0 || t[i - 1] != 0x1b)) {
             while (k < n && k - a < 12 && isalpha((unsigned char)t[k])) k++;
-            size_t name = k - a, v = k + 1, e = v;
-            if (name >= 2 && k < n && t[k] == '=') {
+            size_t v = k + 1, e = v;
+            if (k - a >= 2 && k < n && t[k] == '=') {
                 while (e < n && e - v < 24 && (isalnum((unsigned char)t[e]) || strchr("_.+-", t[e]))) e++;
                 if (e > v && e < n && t[e] == '\\') {
-                    char nm[4] = {0};
-                    for (size_t j = 0; j < name && j < 3; j++) nm[j] = (char)tolower((unsigned char)t[a + j]);
-                    int lower_value = (name == 3 && !strcmp(nm, "toi")) || (name == 2 && !strcmp(nm, "tn"));
                     *w++ = 0x1b;
-                    *w++ = '\\';
-                    for (size_t j = a; j < k; j++) *w++ = (char)tolower((unsigned char)t[j]);
-                    *w++ = '=';
-                    for (size_t j = v; j < e; j++) *w++ = lower_value ? (char)tolower((unsigned char)t[j]) : t[j];
-                    *w++ = '\\';
+                    memcpy(w, t + i, e + 1 - i);
+                    w += e + 1 - i;
                     i = e + 1;
                     continue;
                 }
