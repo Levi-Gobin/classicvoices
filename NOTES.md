@@ -1444,3 +1444,12 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   session, at the byte they reached (resume data), when it leaves, and back
   when it returns (setActive from the scene phase). A download that finishes
   just as it's handed over is delivered, not restarted.
+- Interrupting a long utterance: enhanced Siri Aaron makes a 317-character
+  sentence's 8.75 s of audio in 1.17 s, but in a few silent unit searches
+  (634 ms before the first audio, 256 ms later on); a cancel waited for the
+  engine's next audio callback, so the next phrase took 155-216 ms. Now
+  vxs_cancel asks the speaking engine to stop (vx_request_stop): at the
+  engine's next library call (on_trap) it makes the engine's own
+  ve_ttsStop / vauto_ttsStop on its thread, as iOS did from another thread.
+  The engine checks between stages (not inside the search itself): next
+  phrase after interrupting 48-83 ms. Other voices were already 8-20 ms.

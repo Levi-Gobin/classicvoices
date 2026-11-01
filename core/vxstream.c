@@ -93,6 +93,7 @@ struct VxStream {
     _Atomic uint64_t write_pos, read_pos;
     _Atomic int producing;   // worker is still generating the current utterance
     _Atomic int cancel;      // ask the worker to stop the current utterance
+    Vx *speaking;            // the engine in vx_speak now (under mu): a cancel stops it at once
     _Atomic int mt_keep_commands;  // vxs_set_mt_reset(0)
     _Atomic int mt_12_hour;        // vxs_set_mt_24_hour(0)
     _Atomic int mt_modern_rate;    // vxs_set_mt_modern_rate(1)
@@ -788,7 +789,14 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
                 marks_find(k, seg, src, m);
                 on_word(k, VX_MARK_SENTENCE, 0, (uint32_t)k->map_n, 0);  // the first word, reported or not
                 vx_set_word_callback(use, on_word, k);
+                pthread_mutex_lock(&s->mu);
+                s->speaking = use;
+                if (atomic_load(&s->cancel)) vx_request_stop(use);
+                pthread_mutex_unlock(&s->mu);
                 rc = vx_speak_utf8(use, seg, on_pcm, k);
+                pthread_mutex_lock(&s->mu);
+                s->speaking = NULL;
+                pthread_mutex_unlock(&s->mu);
                 vx_set_word_callback(use, NULL, NULL);
                 words_end_call(k);
                 free(map);
@@ -1089,6 +1097,10 @@ void vxs_set_mt_modern_rate(VxStream *s, int on) { atomic_store(&s->mt_modern_ra
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);
     atomic_store(&s->cancel, 1);
+    // Enhanced voices can search for their units for a few hundred ms without
+    // producing audio, where a stop would otherwise wait: the engine's own
+    // ttsStop ends it at the next stage
+    if (s->speaking) vx_request_stop(s->speaking);
     free(s->job_text);
     s->job_text = NULL;
     if (s->has_job) {  // never picked up by the worker

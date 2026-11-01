@@ -23,6 +23,9 @@ void vx_close(Vx *vx);
 // 0 on success (including cancellation), engine error code otherwise.
 int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb, void *ctx);
 int vx_speak_utf8(Vx *vx, const char *text, VxPcmCallback cb, void *ctx);
+// From another thread, while vx_speak runs: stop as soon as the engine can
+// (Vocalizer's ttsStop, made at the engine's next library call).
+void vx_request_stop(Vx *vx);
 
 // Sentence and word positions as the engine reports them, before the audio
 // they belong to: the place in the text (UTF-16 units of what vx_speak_* was

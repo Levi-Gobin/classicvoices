@@ -3,6 +3,7 @@
 #include "thumb.h"
 
 #include <ctype.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <runetype.h>
 #include <fcntl.h>
@@ -104,6 +105,7 @@ struct Vx {
     // engine
     uint32_t fn_initialize, fn_open, fn_setparams, fn_setoutdevice, fn_process;
     uint32_t fn_resourceload;  // 0: this build's isn't known
+    uint32_t fn_stop;          // ve_ttsStop / vauto_ttsStop, 0 if unknown
     const Build *build;
     uint32_t hspeech, hinst;  // guest addresses of 2-word handles
     uint32_t pcm_buf, pcm_buf_size, mark_buf;
@@ -115,6 +117,8 @@ struct Vx {
     VxWordCallback word_cb;
     void *word_ctx;
     int cancelled;
+    _Atomic int stop_req;  // vx_request_stop, from another thread
+    int stop_sent;
 };
 
 // ---------------------------------------------------------------- small utils
@@ -1261,6 +1265,7 @@ static int load_macho(Vx *vx, const char *path) {
         {"_ve_ttsInitialize", &vx->fn_initialize}, {"_ve_ttsOpen", &vx->fn_open},
         {"_ve_ttsSetParamList", &vx->fn_setparams}, {"_ve_ttsSetOutDevice", &vx->fn_setoutdevice},
         {"_ve_ttsProcessText2Speech", &vx->fn_process}, {"_ve_ttsResourceLoad", &vx->fn_resourceload},
+        {"_vauto_ttsStop", &vx->fn_stop}, {"_ve_ttsStop", &vx->fn_stop},
     };
     for (uint32_t i = 0; i < nsyms; i++) {
         const uint8_t *nl = d + symoff + 12 * i;
@@ -1366,7 +1371,14 @@ static void outnotify(Vx *vx) {
 
 static void on_trap(Cpu *c, uint32_t addr, void *ctx) {
     Vx *vx = ctx;
-    (void)c;
+    if (atomic_load_explicit(&vx->stop_req, memory_order_relaxed) && !vx->stop_sent && vx->fn_stop && vx->cb) {
+        // a stop asked for from another thread, as iOS's ttsStop came: made
+        // here, between two library calls of the engine's own thread
+        vx->stop_sent = 1;
+        vx->cancelled = 1;
+        uint32_t a[2] = {g32(&c->k, vx->hinst), g32(&c->k, vx->hinst + 4)};
+        cpu_call(c, vx->fn_stop, a, 2, NULL);
+    }
     if (addr == TRAP_OUTNOTIFY) { outnotify(vx); return; }
     if (addr >= TRAP_MAPPING && addr < TRAP_MAPPING + 20) {
         switch ((addr - TRAP_MAPPING) / 4) {
@@ -1579,11 +1591,15 @@ void vx_close(Vx *vx) {
     free(vx);
 }
 
+void vx_request_stop(Vx *vx) { atomic_store(&vx->stop_req, 1); }
+
 int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb, void *ctx) {
     GUARD(vx);
     vx->cb = cb;
     vx->cb_ctx = ctx;
     vx->cancelled = 0;
+    vx->stop_sent = 0;
+    atomic_store(&vx->stop_req, 0);
     uint32_t bytes = (uint32_t)(units * 2);
     uint32_t buf = heap_alloc(vx, bytes + 2);
     memcpy(vx->mem + buf, text, bytes);
