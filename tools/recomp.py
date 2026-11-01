@@ -22,6 +22,26 @@ DIV_HELPERS = {
     "___umodsi3": "K.r[0] = K.r[1] ? K.r[0] % K.r[1] : 0;",
 }
 
+# Guest functions whose calls become host code (core/recomp_rt.h), by symbol,
+# in the builds whose code was checked against them: iOS 7.0.6's and 7.1.2's
+# engines (the same code). log_HasTraceTuningDataSubscriber asks the engine's
+# loggers, through up to six indirect calls, whether any wants tuning traces;
+# none does here (its last logger's level check always says no), so it is 0.
+HOST_FUNCS = {
+    "_cstdlib_strlen": "rt_strlen(&K);",
+    "_cstdlib_strchr": "rt_strchr(&K);",
+    "_cstdlib_strcmp": "rt_strcmp(&K);",
+    "_cstdlib_strncmp": "rt_strncmp(&K);",
+    "_cstdlib_strstr": "rt_strstr(&K);",
+    "_cstdlib_memcpy": "rt_memcpy(&K);",
+    "_cstdlib_memmove": "rt_memmove(&K);",
+    "_log_HasTraceTuningDataSubscriber": "K.r[0] = 0;",
+    "_fxd_S32ShMultRndS32S32": "rt_fxd_mult_rnd(&K);",
+}
+HOST_FUNC_BUILDS = ("ios70", "ios7")
+host_at = {}  # guest address -> host code, for the build being translated
+leaf_of = {}  # guest address -> its leaf function's name (emit_leaf)
+
 
 class MachO:
     def __init__(self, path):
@@ -309,7 +329,14 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
         else:
             ind = "    "
             body = []
-            if ins.kind == "bl":
+            if ins.kind == "bl" and ins.target in host_at:
+                body.append(f"K.r[14] = {nxt | 1:#x};")
+                body.append(host_at[ins.target])
+            elif ins.kind == "bl" and ins.target in leaf_of and not debug_calls:
+                body.append(f"K.r[14] = {nxt | 1:#x};")
+                body.append(f"if ({leaf_of[ins.target]}(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }}")
+                body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
+            elif ins.kind == "bl":
                 t = ins.target
                 body.append(f"K.r[14] = {nxt | 1:#x};")
                 body.append(store)
@@ -330,7 +357,13 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
                 body.append(f"K.r[15] = {a + 4:#x}; K.npc = {nxt:#x};")
                 body.append(f"exec{16 if ins.size == 2 else 32}(&K, " +
                             (f"{ins.hw1:#06x}, {a:#x}, {ins.in_it});" if ins.size == 2 else f"{ins.hw1:#06x}, {ins.hw2:#06x}, {a:#x});"))
-                body.append(f"{store} rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1;")
+                if leaf_of and not debug_calls:
+                    # a leaf target runs on these registers; anything else through the dispatcher
+                    body.append(f"{{ LeafFn lf = K.thumb ? {prefix}_leaf(K.npc) : 0;")
+                    body.append(f"  if (lf) {{ K.r[15] = K.npc; if (lf(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
+                    body.append(f"  else {{ {store} rc = rt_icall(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
+                else:
+                    body.append(f"{store} rc = rt_icall(c, {nxt | 1:#x}); {load} if (rc) return 1;")
                 body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
             else:
                 body.append(f"K.r[15] = {a + 4:#x}; K.npc = {nxt:#x};")
@@ -384,6 +417,78 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     return name, resume
 
 
+def leaf_region(fn, root, limit=96):
+    """The instructions reachable from `root` if they make a leaf: no calls,
+    no branches out of the function, no VFP/NEON, at most `limit` of them;
+    else None. Its exits are returns (BX LR, POP {..., PC}), checked at run
+    time like any function's."""
+    seen, work = set(), [root]
+    while work:
+        a = work.pop()
+        if a in seen:
+            continue
+        ins = fn.insns.get(a)
+        if ins is None or ins.kind in ("bl", "blx_stub", "icall", "stop") or uses_vfp(ins):
+            return None
+        seen.add(a)
+        if len(seen) > limit:
+            return None
+        nxt = a + ins.size
+        conditional = ins.cond is not None and ins.cond != 14
+        if ins.kind in ("b", "bcond"):
+            if not (fn.start <= ins.target < fn.end):
+                return None
+            work.append(ins.target)
+        if ins.kind == "tb":
+            return None  # its targets aren't kept per instruction
+        if not (ins.kind in ("b", "ijump") and not conditional):
+            work.append(nxt)
+    return seen
+
+
+def emit_leaf(fn, root, region, out, prefix):
+    """lf_<prefix>_<root>(Core *): the leaf on the caller's registers, with no
+    copies in or out. 0 when it returned (K->r[15] = the return address),
+    1 when it left any other way (K->r[15] = where; the caller hands over)."""
+    name = f"lf_{prefix}_{root:06x}"
+    labels = sorted(region)
+    w = out.append
+    w(f"int {name}(Core *Kp) {{")
+    w("#define K (*Kp)")
+    w("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];")
+    w(f"    goto L_{root:x};")
+    for i, a in enumerate(labels):
+        ins = fn.insns[a]
+        nxt = a + ins.size
+        w(f"L_{a:x}:")
+        if ins.kind != "it":
+            w(f"    K.r[15] = {a + 4:#x}; K.npc = {nxt:#x};")
+            ex = (f"exec16(&K, {ins.hw1:#06x}, {a:#x}, {ins.in_it});" if ins.size == 2 else
+                  f"exec32(&K, {ins.hw1:#06x}, {ins.hw2:#06x}, {a:#x});")
+            if ins.cond is not None and ins.cond != 14:
+                w(f"    if (cond_pass(&K, {ins.cond})) {{ {ex} }}")
+            else:
+                w("    " + ex)
+            if ins.kind in ("b", "bcond"):
+                guard = "" if ins.kind == "b" and ins.cond in (None, 14) else f"if (K.npc != {nxt:#x}) "
+                w(f"    {guard}goto L_{ins.target:x};")
+            elif ins.kind == "ijump" and ins.cond in (None, 14):
+                w("    goto dyn;")
+            else:
+                w(f"    if (K.npc != {nxt:#x}) goto dyn;")
+        terminator = ins.kind in ("b", "ijump") and (ins.cond is None or ins.cond == 14)
+        if not terminator:
+            following = labels[i + 1] if i + 1 < len(labels) else None
+            if following != nxt:
+                w(f"    goto L_{nxt:x};")
+    w("dyn:")
+    w("    K.r[15] = K.npc;")
+    w("    return !(K.thumb && K.npc == entry_lr && K.r[13] == entry_sp);")
+    w("#undef K")
+    w("}")
+    return name
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("voiced")
@@ -402,6 +507,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     mo = MachO(a.voiced)
+    if a.prefix in HOST_FUNC_BUILDS:
+        host_at.update({addr: HOST_FUNCS[nm] for addr, nm in mo.syms if nm in HOST_FUNCS})
     if a.profile.endswith(".txt"):
         # tools/profiles/*.txt: one hex address per line (block starts seen while profiling)
         seen = sorted({int(ln, 16) for ln in (l.split("#")[0].strip() for l in open(a.profile)) if ln})
@@ -447,6 +554,27 @@ def main(argv=None):
             if r in f.insns:
                 entries_of[r] = f"nf_{a.prefix}_{f.start:06x}"
 
+    # Leaves (leaf_region): the targets of direct calls, and entry points no
+    # other code of their function reaches (what the dispatcher was given,
+    # e.g. the unit-selection distance functions called through pointers).
+    leaves = []
+    if not (a.debug_calls or a.debug_budget):
+        bl_targets = {ins.target for f in funcs.values() for ins in f.insns.values() if ins.kind == "bl"}
+        for f in funcs.values():
+            reached = set()
+            for ins in f.insns.values():
+                if ins.kind in ("b", "bcond") and ins.target is not None:
+                    reached.add(ins.target)
+                if not (ins.kind in ("b", "ijump", "tb", "stop") and (ins.cond is None or ins.cond == 14)):
+                    reached.add(ins.addr + ins.size)
+            for e in sorted((f.roots - reached) | {f.start} | (bl_targets & set(f.insns))):
+                if e in host_at:
+                    continue
+                region = leaf_region(f, e)
+                if region:
+                    leaf_of[e] = f"lf_{a.prefix}_{e:06x}"
+                    leaves.append((f, e, region))
+
     os.makedirs(a.outdir, exist_ok=True)
     order = sorted(funcs.values(), key=lambda f: f.start)
     header = [
@@ -459,6 +587,15 @@ def main(argv=None):
     files, cur, cur_n, table, decls = [], [], 0, [], []
     for f in order:
         decls.append(f"int nf_{a.prefix}_{f.start:06x}(Cpu *c, uint32_t start);")
+    for _f, e, _r in leaves:
+        decls.append(f"int lf_{a.prefix}_{e:06x}(Core *Kp);")
+    if leaves:
+        decls.append(f"static inline LeafFn {a.prefix}_leaf(uint32_t t) {{")
+        decls.append("    switch (t) {")
+        decls += [f"    case {e:#x}: return lf_{a.prefix}_{e:06x};" for _f, e, _r in leaves]
+        decls.append("    default: return 0;")
+        decls.append("    }")
+        decls.append("}")
     decl_text = "\n".join(decls)
     total = 0
     for f in order:
@@ -473,6 +610,15 @@ def main(argv=None):
         if cur_n >= a.per_file:
             files.append(cur)
             cur, cur_n = [], 0
+    for f, e, region in leaves:
+        body = []
+        emit_leaf(f, e, region, body, a.prefix)
+        cur.extend(body)
+        cur.append("")
+        cur_n += len(region)
+        if cur_n >= a.per_file:
+            files.append(cur)
+            cur, cur_n = [], 0
     if cur:
         files.append(cur)
     for i, body in enumerate(files):
@@ -484,7 +630,7 @@ def main(argv=None):
                  f"const NativeEntry vx_native_{a.prefix}[] = {{"] +
                  [f"    {{{addr:#x}, {fn}}}," for addr, fn in table] +
                  ["};", f"const size_t vx_native_{a.prefix}_count = {len(table)};", ""]))
-    print(f"{len(funcs)} functions, {total} instructions, {len(table)} resume points, {len(files)} files")
+    print(f"{len(funcs)} functions, {total} instructions, {len(table)} resume points, {len(leaves)} leaves, {len(files)} files")
 
 
 if __name__ == "__main__":

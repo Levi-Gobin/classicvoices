@@ -31,7 +31,7 @@ void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc) {
     cpu_fault(tls_cpu, "undefined/unsupported instruction %04x %04x at %#x", hw1, hw2, pc);
 }
 
-static NativeFn lookup_native(const Cpu *c, uint32_t pc) {
+static NativeFn lookup_native(Cpu *c, uint32_t pc) {
     static int have_range = -1;
     static uint32_t range_lo, range_hi;
     if (have_range < 0) {  // debugging: VX_NATIVE_RANGE=lo-hi limits native code to [lo, hi)
@@ -40,14 +40,19 @@ static NativeFn lookup_native(const Cpu *c, uint32_t pc) {
     }
     if (have_range && (pc < range_lo || pc >= range_hi)) return NULL;
     if (c->budget_on && c->budget < 0) return NULL;  // debug budget exhausted
+    unsigned slot = (pc >> 1) & 511;
+    if (c->ncache[slot].pc == pc) return c->ncache[slot].fn;
+    NativeFn fn = NULL;
     size_t lo = 0, hi = c->nnative;
     while (lo < hi) {
         size_t mid = (lo + hi) / 2;
         uint32_t a = c->native[mid].addr;
-        if (a == pc) return c->native[mid].fn;
+        if (a == pc) { fn = c->native[mid].fn; break; }
         if (a < pc) lo = mid + 1; else hi = mid;
     }
-    return NULL;
+    c->ncache[slot].pc = pc;
+    c->ncache[slot].fn = fn;
+    return fn;
 }
 
 // Returns 0 when PC reaches `stop`, 1 if the outermost return sentinel is hit
@@ -122,6 +127,20 @@ static int run(Cpu *c, uint32_t stop) {
 int rt_call(Cpu *c, uint32_t ret) {
     c->k.r[15] = c->k.npc;
     c->k.it = 0;
+    return run(c, ret & ~1u);
+}
+
+// A call through a register from recompiled code: straight into the target's
+// recompiled function when it has one (unit selection calls its distance
+// functions this way for every candidate), else as rt_call does.
+int rt_icall(Cpu *c, uint32_t ret) {
+    uint32_t t = c->k.npc;
+    c->k.r[15] = t;
+    c->k.it = 0;
+    if (c->k.thumb && !c->profile && c->nnative) {
+        NativeFn f = lookup_native(c, t);
+        if (f && !f(c, t) && c->k.r[15] == (ret & ~1u)) return 0;
+    }
     return run(c, ret & ~1u);
 }
 

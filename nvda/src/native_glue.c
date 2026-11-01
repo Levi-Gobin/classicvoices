@@ -17,12 +17,15 @@ typedef int (*CvRtImport)(Cpu *, uint32_t, uint32_t);
 typedef void (*CvFaultMem)(const char *, uint32_t, uint32_t);
 typedef void (*CvUndef)(uint32_t, uint32_t, uint32_t);
 
-static CvRtCall p_rt_call;
+static CvRtCall p_rt_call, p_rt_icall;
 static CvRtImport p_rt_import;
 static CvFaultMem p_fault_mem;
 static CvUndef p_undef;
 
 int rt_call(Cpu *c, uint32_t ret) { return p_rt_call(c, ret); }
+// calls through a register (recomp.py since 0.4.1); an older engine library
+// doesn't hand rt_icall in, and rt_call does the same, only slower
+int rt_icall(Cpu *c, uint32_t ret) { return (p_rt_icall ? p_rt_icall : p_rt_call)(c, ret); }
 int rt_import(Cpu *c, uint32_t stub, uint32_t ret) { return p_rt_import(c, stub, ret); }
 void vx_fault_mem(const char *kind, uint32_t addr, uint32_t pc) { p_fault_mem(kind, addr, pc); }
 void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc) { p_undef(hw1, hw2, pc); }
@@ -40,6 +43,8 @@ CV_EXPORT void cv_native_bind(CvRtCall rc, CvRtImport ri, CvFaultMem fm, CvUndef
     p_fault_mem = fm;
     p_undef = ud;
 }
+
+CV_EXPORT void cv_native_bind_icall(CvRtCall ic) { p_rt_icall = ic; }
 
 CV_EXPORT const NativeEntry *cv_native_table(size_t *count) {
     *count = CV_CAT(CV_CAT(vx_native_, CV_BUILD), _count);

@@ -1309,3 +1309,41 @@ were down to ~5%.
   Aaron 17 / 15 / 56. Opening an enhanced Siri voice takes ~0.5 s, mostly
   setup the engine does in the interpreter.
 
+## Fast code: host helpers, leaves, a lookup cache (2026-11-01)
+
+Sampling enhanced Aaron (above) found most of its time outside real work:
+
+- The active-prompt lookup calls the engine's own C library (strchr, strlen,
+  strcmp, strncmp, strstr, memcpy, memmove) and log_HasTraceTuningData-
+  Subscriber, 231,000 times a sentence; that one asks up to six loggers
+  through indirect calls whether any wants tuning traces (the last one's
+  level check always says no; no trace ever gets past it). tools/recomp.py
+  HOST_FUNCS turns BL calls to them into host code (core/recomp_rt.h
+  rt_strchr ...), for ios70 and ios7, whose code they were checked against
+  (the other engines' copies differ, e.g. strcmp's result range); the same
+  for fxd_S32ShMultRndS32S32. Prompt overhead 40% -> 21% of the time.
+- Unit selection calls its distance functions (small static functions inside
+  uselect_InitForPreselDistFunc) through pointers, ~1.08 million times for
+  one 70-character sentence, each through the dispatcher's binary search over
+  ~37,000 entries and four register-file copies. Now: Cpu.ncache (512
+  direct-mapped lookup_native answers, misses too), rt_icall (straight into
+  the target's recompiled function), and leaves: recomp.py emit_leaf writes
+  a second version of every call-free, VFP-free piece of code reachable from
+  an entry point (direct-call targets, and entries nothing else in their
+  function reaches) as lf_<build>_<addr>(Core *), run on the caller's own
+  registers with no copies; BL sites call it directly and icall sites through
+  a <build>_leaf() switch. An exit other than a return hands over to the
+  dispatcher. 125-371 leaves per engine.
+- Separately built fast code (NVDA, the Windows and Linux app, Android) gets
+  rt_icall through an optional cv_native_bind_icall export (native_glue.c),
+  so libraries built before 0.4.1 still load (ABI 1) and use rt_call.
+  Android's Recompiler.java writes exactly what recomp.py writes again
+  (diff -r over all seven engines empty): it had also missed the
+  integer-register copies (ef39126), so phones were 20-35% behind.
+
+All seven engines byte-identical to the interpreter (195 cases: 13 corpus and
+Siri lines on iOS 3-7, iOS 5/6/7 enhanced, Mountain Lion, Mavericks compact
+and premium, Siri compacts and enhanced). Mac, rate 190, first audio of a
+70-character sentence, before -> after: iOS 3 25 -> 20 ms, iOS 6 27 -> 21,
+iOS 7 37 -> 29, iOS 6 enhanced 57 -> 41, iOS 7 enhanced 53 -> 38, Mountain
+Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.

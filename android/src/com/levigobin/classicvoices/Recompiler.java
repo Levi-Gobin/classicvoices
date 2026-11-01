@@ -44,6 +44,23 @@ final class Recompiler {
         DIV_HELPERS.put("___umodsi3", "K.r[0] = K.r[1] ? K.r[0] % K.r[1] : 0;");
     }
 
+    // Guest functions whose calls become host code (core/recomp_rt.h), by
+    // symbol, in the builds whose code was checked against them (recomp.py
+    // HOST_FUNCS / HOST_FUNC_BUILDS).
+    private static final Map<String, String> HOST_FUNCS = new HashMap<>();
+    static {
+        HOST_FUNCS.put("_cstdlib_strlen", "rt_strlen(&K);");
+        HOST_FUNCS.put("_cstdlib_strchr", "rt_strchr(&K);");
+        HOST_FUNCS.put("_cstdlib_strcmp", "rt_strcmp(&K);");
+        HOST_FUNCS.put("_cstdlib_strncmp", "rt_strncmp(&K);");
+        HOST_FUNCS.put("_cstdlib_strstr", "rt_strstr(&K);");
+        HOST_FUNCS.put("_cstdlib_memcpy", "rt_memcpy(&K);");
+        HOST_FUNCS.put("_cstdlib_memmove", "rt_memmove(&K);");
+        HOST_FUNCS.put("_log_HasTraceTuningDataSubscriber", "K.r[0] = 0;");
+        HOST_FUNCS.put("_fxd_S32ShMultRndS32S32", "rt_fxd_mult_rnd(&K);");
+    }
+    private static final List<String> HOST_FUNC_BUILDS = Arrays.asList("ios70", "ios7");
+
     private Recompiler() {}
 
     static final class BadAddress extends Exception {
@@ -54,6 +71,7 @@ final class Recompiler {
         final byte[] d;
         final List<long[]> segs = new ArrayList<>();  // vmaddr, fileoff, filesize
         final TreeSet<Long> syms = new TreeSet<>();
+        final List<Object[]> symNames = new ArrayList<>();  // (Long addr, String name), sorted like recomp.py's syms
         long textLo, textHi;
         boolean hasText;
         final Map<Long, String> stubNames = new HashMap<>();
@@ -103,10 +121,20 @@ final class Recompiler {
                 long value = u32(so + 8);
                 int st = (int) (stroff + strx), end = st;
                 while (d[end] != 0) end++;
-                names.add(new String(d, st, end - st, Charset.forName("ISO-8859-1")));
-                if ((ntype & 0x0E) == 0x0E && nsect != 0 && hasText && textLo <= value && value < textHi)
+                String nm = new String(d, st, end - st, Charset.forName("ISO-8859-1"));
+                names.add(nm);
+                if ((ntype & 0x0E) == 0x0E && nsect != 0 && hasText && textLo <= value && value < textHi) {
                     syms.add(value & ~1L);
+                    symNames.add(new Object[] {value & ~1L, nm});
+                }
             }
+            Collections.sort(symNames, new java.util.Comparator<Object[]>() {
+                @Override
+                public int compare(Object[] x, Object[] y) {
+                    int c = Long.compare((Long) x[0], (Long) y[0]);
+                    return c != 0 ? c : ((String) x[1]).compareTo((String) y[1]);
+                }
+            });
             if (stubs != null) {
                 long addr = stubs[0], ssize = stubs[1], r1 = stubs[2], r2 = stubs[3];
                 for (long k = 0; k < ssize / r2; k++) {
@@ -371,15 +399,22 @@ final class Recompiler {
 
     static String fname(String prefix, long start) { return String.format("nf_%s_%06x", prefix, start); }
 
-    private static String exitTo(long t, String indent, Set<Long> labelset, Map<Long, String> entriesOf) {
-        if (labelset.contains(t)) return indent + "goto L_" + Long.toHexString(t) + ";";
-        if (entriesOf.containsKey(t))
-            return indent + "{ c->k = K; c->k.r[15] = " + hx(t) + "; c->k.thumb = 1; return " + entriesOf.get(t)
-                    + "(c, " + hx(t) + "); }";
-        return indent + "{ c->k = K; c->k.r[15] = " + hx(t) + "; c->k.thumb = 1; return 1; }";
+    /** VFP/NEON (coprocessor) encodings, and the NEON loads and stores (recomp.py uses_vfp). */
+    static boolean usesVfp(Insn ins) {
+        if (ins.size != 4) return false;
+        return (ins.hw1 & 0xEC00) == 0xEC00 || (ins.hw1 & 0xFF10) == 0xF900;
     }
 
-    static List<Long> emitFunction(Function fn, Map<Long, String> entriesOf, List<String> w, String prefix) {
+    private static String exitTo(long t, String indent, Set<Long> labelset, Map<Long, String> entriesOf, String store) {
+        if (labelset.contains(t)) return indent + "goto L_" + Long.toHexString(t) + ";";
+        if (entriesOf.containsKey(t))
+            return indent + "{ " + store + " c->k.r[15] = " + hx(t) + "; c->k.thumb = 1; return " + entriesOf.get(t)
+                    + "(c, " + hx(t) + "); }";
+        return indent + "{ " + store + " c->k.r[15] = " + hx(t) + "; c->k.thumb = 1; return 1; }";
+    }
+
+    static List<Long> emitFunction(Function fn, Map<Long, String> entriesOf, List<String> w, String prefix,
+                                   Map<Long, String> hostAt, Map<Long, String> leafOf) {
         String name = fname(prefix, fn.start);
         List<Long> labels = new ArrayList<>(fn.insns.keySet());
         Collections.sort(labels);
@@ -389,8 +424,13 @@ final class Recompiler {
         rs.addAll(fn.branchTargets);
         rs.retainAll(labelset);
         List<Long> resume = new ArrayList<>(rs);
+        // Without VFP/NEON instructions the function only ever touches the
+        // integer registers: copy just those (recomp_rt.h RT_IN / RT_OUT).
+        boolean vfp = false;
+        for (Insn ins : fn.insns.values()) if (usesVfp(ins)) { vfp = true; break; }
+        String load = vfp ? "K = c->k;" : "RT_IN(K, c);", store = vfp ? "c->k = K;" : "RT_OUT(c, K);";
         w.add("int " + name + "(Cpu *c, uint32_t start) {");
-        w.add("    Core K = c->k;");
+        w.add(vfp ? "    Core K = c->k;" : "    Core K; RT_IN(K, c);");
         w.add("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];");
         w.add("    int rc;");
         w.add("    switch (start) {");
@@ -406,16 +446,24 @@ final class Recompiler {
             if (!ins.kind.equals("it")) {
                 String ind = "    ";
                 List<String> body = new ArrayList<>();
-                if (ins.kind.equals("bl")) {
+                if (ins.kind.equals("bl") && hostAt.containsKey(ins.target)) {
+                    body.add("K.r[14] = " + hx(nxt | 1) + ";");
+                    body.add(hostAt.get(ins.target));
+                } else if (ins.kind.equals("bl") && leafOf.containsKey(ins.target)) {
+                    body.add("K.r[14] = " + hx(nxt | 1) + ";");
+                    body.add("if (" + leafOf.get(ins.target) + "(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
+                            + hx(nxt | 1) + "); " + load + " if (rc) return 1; }");
+                    body.add("if (K.r[15] != " + hx(nxt) + ") { K.npc = K.r[15]; goto dyn; }");
+                } else if (ins.kind.equals("bl")) {
                     long t = ins.target;
                     body.add("K.r[14] = " + hx(nxt | 1) + ";");
-                    body.add("c->k = K;");
+                    body.add(store);
                     if (entriesOf.containsKey(t)) {
                         body.add("rc = " + entriesOf.get(t) + "(c, " + hx(t) + ");");
                     } else {
                         body.add("c->k.npc = " + hx(t) + "; c->k.thumb = 1; rc = rt_call(c, " + hx(nxt | 1) + ");");
                     }
-                    body.add("K = c->k; if (rc) return 1;");
+                    body.add(load + " if (rc) return 1;");
                     body.add("if (K.r[15] != " + hx(nxt) + ") { K.npc = K.r[15]; goto dyn; }");
                 } else if (ins.kind.equals("blx_stub")) {
                     body.add("K.r[14] = " + hx(nxt | 1) + ";");
@@ -423,7 +471,7 @@ final class Recompiler {
                     if (helper != null) {
                         body.add(helper);
                     } else {
-                        body.add("c->k = K; rc = rt_import(c, " + hx(ins.target) + ", " + hx(nxt | 1) + "); K = c->k; if (rc) return 1;");
+                        body.add(store + " rc = rt_import(c, " + hx(ins.target) + ", " + hx(nxt | 1) + "); " + load + " if (rc) return 1;");
                         body.add("if (K.r[15] != " + hx(nxt) + ") { K.npc = K.r[15]; goto dyn; }");
                     }
                 } else if (ins.kind.equals("icall")) {
@@ -431,7 +479,15 @@ final class Recompiler {
                     body.add(ins.size == 2
                             ? "exec16(&K, " + hx4(ins.hw1) + ", " + hx(a) + ", " + ins.inIt + ");"
                             : "exec32(&K, " + hx4(ins.hw1) + ", " + hx4(ins.hw2) + ", " + hx(a) + ");");
-                    body.add("c->k = K; rc = rt_call(c, " + hx(nxt | 1) + "); K = c->k; if (rc) return 1;");
+                    if (!leafOf.isEmpty()) {
+                        // a leaf target runs on these registers; anything else through the dispatcher
+                        body.add("{ LeafFn lf = K.thumb ? " + prefix + "_leaf(K.npc) : 0;");
+                        body.add("  if (lf) { K.r[15] = K.npc; if (lf(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
+                                + hx(nxt | 1) + "); " + load + " if (rc) return 1; } }");
+                        body.add("  else { " + store + " rc = rt_icall(c, " + hx(nxt | 1) + "); " + load + " if (rc) return 1; } }");
+                    } else {
+                        body.add(store + " rc = rt_icall(c, " + hx(nxt | 1) + "); " + load + " if (rc) return 1;");
+                    }
                     body.add("if (K.r[15] != " + hx(nxt) + ") { K.npc = K.r[15]; goto dyn; }");
                 } else {
                     body.add("K.r[15] = " + hx(a + 4) + "; K.npc = " + hx(nxt) + ";");
@@ -457,9 +513,9 @@ final class Recompiler {
                 if (k.equals("b") || k.equals("bcond")) {
                     boolean plain = k.equals("b") && always;
                     if (!plain) {
-                        w.add("    if (K.npc != " + hx(nxt) + ") " + exitTo(ins.target, "", labelset, entriesOf).trim());
+                        w.add("    if (K.npc != " + hx(nxt) + ") " + exitTo(ins.target, "", labelset, entriesOf, store).trim());
                     } else {
-                        w.add(exitTo(ins.target, "    ", labelset, entriesOf));
+                        w.add(exitTo(ins.target, "    ", labelset, entriesOf, store));
                     }
                 } else if ((k.equals("ijump") || k.equals("tb")) && always) {
                     // Unconditional indirect jump: always dispatch on the target, even
@@ -468,26 +524,104 @@ final class Recompiler {
                 } else if (k.equals("ijump") || k.equals("tb") || k.equals("op")) {
                     w.add("    if (K.npc != " + hx(nxt) + ") goto dyn;");
                 } else if (k.equals("stop")) {
-                    w.add("    c->k = K; c->k.r[15] = " + hx(a) + "; return 1;");
+                    w.add("    " + store + " c->k.r[15] = " + hx(a) + "; return 1;");
                 }
             }
             boolean terminator = isTerminatorKind(ins.kind) && always;
             if (!terminator) {
                 Long following = i + 1 < labels.size() ? labels.get(i + 1) : null;
-                if (following == null || following != nxt) w.add(exitTo(nxt, "    ", labelset, entriesOf));
+                if (following == null || following != nxt) w.add(exitTo(nxt, "    ", labelset, entriesOf, store));
             }
         }
         w.add("dyn: {");
         w.add("    uint32_t t = K.npc;");
-        w.add("    if (K.thumb && t == entry_lr && K.r[13] == entry_sp) { c->k = K; c->k.r[15] = t; return 0; }");
+        w.add("    if (K.thumb && t == entry_lr && K.r[13] == entry_sp) { " + store + " c->k.r[15] = t; return 0; }");
         w.add("    if (K.thumb) switch (t) {");
         for (long a : resume) w.add("    case " + hx(a) + ": goto L_" + Long.toHexString(a) + ";");
         w.add("    default: break;");
         w.add("    }");
-        w.add("    c->k = K; c->k.r[15] = t; return 1;");
+        w.add("    " + store + " c->k.r[15] = t; return 1;");
         w.add("}");
         w.add("}");
         return resume;
+    }
+
+    static String lname(String prefix, long root) { return String.format("lf_%s_%06x", prefix, root); }
+
+    /**
+     * The instructions reachable from root if they make a leaf: no calls, no
+     * branches out of the function, no VFP/NEON, at most limit of them; else
+     * null (recomp.py leaf_region). Its exits are returns, checked at run time.
+     */
+    static Set<Long> leafRegion(Function fn, long root, int limit) {
+        Set<Long> seen = new HashSet<>();
+        List<Long> work = new ArrayList<>();
+        work.add(root);
+        while (!work.isEmpty()) {
+            long a = work.remove(work.size() - 1);
+            if (seen.contains(a)) continue;
+            Insn ins = fn.insns.get(a);
+            if (ins == null || ins.kind.equals("bl") || ins.kind.equals("blx_stub") || ins.kind.equals("icall")
+                    || ins.kind.equals("stop") || usesVfp(ins)) return null;
+            seen.add(a);
+            if (seen.size() > limit) return null;
+            long nxt = a + ins.size;
+            boolean conditional = ins.cond != null && ins.cond != 14;
+            if (ins.kind.equals("b") || ins.kind.equals("bcond")) {
+                if (!(fn.start <= ins.target && ins.target < fn.end)) return null;
+                work.add(ins.target);
+            }
+            if (ins.kind.equals("tb")) return null;  // its targets aren't kept per instruction
+            if (!((ins.kind.equals("b") || ins.kind.equals("ijump")) && !conditional)) work.add(nxt);
+        }
+        return seen;
+    }
+
+    /**
+     * lf_<prefix>_<root>(Core *): the leaf on the caller's registers, with no
+     * copies in or out (recomp.py emit_leaf). 0 when it returned, 1 when it
+     * left any other way (K->r[15] = where; the caller hands over).
+     */
+    static void emitLeaf(Function fn, long root, Set<Long> region, List<String> w, String prefix) {
+        List<Long> labels = new ArrayList<>(region);
+        Collections.sort(labels);
+        w.add("int " + lname(prefix, root) + "(Core *Kp) {");
+        w.add("#define K (*Kp)");
+        w.add("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];");
+        w.add("    goto L_" + Long.toHexString(root) + ";");
+        for (int i = 0; i < labels.size(); i++) {
+            long a = labels.get(i);
+            Insn ins = fn.insns.get(a);
+            long nxt = a + ins.size;
+            boolean always = ins.cond == null || ins.cond == 14;
+            w.add("L_" + Long.toHexString(a) + ":");
+            if (!ins.kind.equals("it")) {
+                w.add("    K.r[15] = " + hx(a + 4) + "; K.npc = " + hx(nxt) + ";");
+                String ex = ins.size == 2
+                        ? "exec16(&K, " + hx4(ins.hw1) + ", " + hx(a) + ", " + ins.inIt + ");"
+                        : "exec32(&K, " + hx4(ins.hw1) + ", " + hx4(ins.hw2) + ", " + hx(a) + ");";
+                if (!always) w.add("    if (cond_pass(&K, " + ins.cond + ")) { " + ex + " }");
+                else w.add("    " + ex);
+                if (ins.kind.equals("b") || ins.kind.equals("bcond")) {
+                    String guard = ins.kind.equals("b") && always ? "" : "if (K.npc != " + hx(nxt) + ") ";
+                    w.add("    " + guard + "goto L_" + Long.toHexString(ins.target) + ";");
+                } else if (ins.kind.equals("ijump") && always) {
+                    w.add("    goto dyn;");
+                } else {
+                    w.add("    if (K.npc != " + hx(nxt) + ") goto dyn;");
+                }
+            }
+            boolean terminator = (ins.kind.equals("b") || ins.kind.equals("ijump")) && always;
+            if (!terminator) {
+                Long following = i + 1 < labels.size() ? labels.get(i + 1) : null;
+                if (following == null || following != nxt) w.add("    goto L_" + Long.toHexString(nxt) + ";");
+            }
+        }
+        w.add("dyn:");
+        w.add("    K.r[15] = K.npc;");
+        w.add("    return !(K.thumb && K.npc == entry_lr && K.r[13] == entry_sp);");
+        w.add("#undef K");
+        w.add("}");
     }
 
     /** One hex address per line, # comments (tools/profiles/*.txt). */
@@ -517,6 +651,13 @@ final class Recompiler {
     private static List<File> generate(byte[] engine, InputStream profile, File outdir, String prefix, int perFile,
                                        boolean scanBl) throws IOException, BadAddress {
         MachO mo = new MachO(engine);
+        Map<Long, String> hostAt = new HashMap<>();  // guest address -> host code, for this build
+        if (HOST_FUNC_BUILDS.contains(prefix)) {
+            for (Object[] sym : mo.symNames) {
+                String code = HOST_FUNCS.get((String) sym[1]);
+                if (code != null) hostAt.put((Long) sym[0], code);
+            }
+        }
         List<Long> starts = new ArrayList<>();
         for (long x : readProfile(profile)) if (mo.textLo <= x && x < mo.textHi) starts.add(x);
 
@@ -550,6 +691,38 @@ final class Recompiler {
             for (long r : all) if (f.insns.containsKey(r)) entriesOf.put(r, fname(prefix, f.start));
         }
 
+        // Leaves (leafRegion): the targets of direct calls, and entry points no
+        // other code of their function reaches (what the dispatcher was given,
+        // e.g. the unit-selection distance functions called through pointers).
+        Map<Long, String> leafOf = new HashMap<>();  // guest address -> its leaf function's name
+        List<Function> leafFns = new ArrayList<>();
+        List<Long> leafRoots = new ArrayList<>();
+        List<Set<Long>> leafRegions = new ArrayList<>();
+        Set<Long> blTargets = new HashSet<>();
+        for (Function f : funcs.values())
+            for (Insn ins : f.insns.values()) if (ins.kind.equals("bl")) blTargets.add(ins.target);
+        for (Function f : funcs.values()) {
+            Set<Long> reached = new HashSet<>();
+            for (Insn ins : f.insns.values()) {
+                if ((ins.kind.equals("b") || ins.kind.equals("bcond")) && ins.target != null) reached.add(ins.target);
+                if (!(isTerminatorKind(ins.kind) && (ins.cond == null || ins.cond == 14))) reached.add(ins.addr + ins.size);
+            }
+            TreeSet<Long> cand = new TreeSet<>(f.roots);
+            cand.removeAll(reached);
+            cand.add(f.start);
+            for (long t : blTargets) if (f.insns.containsKey(t)) cand.add(t);
+            for (long e : cand) {
+                if (hostAt.containsKey(e)) continue;
+                Set<Long> region = leafRegion(f, e, 96);
+                if (region != null && !region.isEmpty()) {
+                    leafOf.put(e, lname(prefix, e));
+                    leafFns.add(f);
+                    leafRoots.add(e);
+                    leafRegions.add(region);
+                }
+            }
+        }
+
         //noinspection ResultOfMethodCallIgnored
         outdir.mkdirs();
         List<Function> order = new ArrayList<>(funcs.values());
@@ -570,26 +743,53 @@ final class Recompiler {
             if (decl.length() > 0) decl.append('\n');
             decl.append("int ").append(fname(prefix, f.start)).append("(Cpu *c, uint32_t start);");
         }
+        List<String> leafDecls = new ArrayList<>();
+        for (long e : leafRoots) leafDecls.add("int " + lname(prefix, e) + "(Core *Kp);");
+        if (!leafRoots.isEmpty()) {
+            leafDecls.add("static inline LeafFn " + prefix + "_leaf(uint32_t t) {");
+            leafDecls.add("    switch (t) {");
+            for (long e : leafRoots) leafDecls.add("    case " + hx(e) + ": return " + lname(prefix, e) + ";");
+            leafDecls.add("    default: return 0;");
+            leafDecls.add("    }");
+            leafDecls.add("}");
+        }
+        for (String l : leafDecls) {
+            if (decl.length() > 0) decl.append('\n');
+            decl.append(l);
+        }
         List<long[]> table = new ArrayList<>();
         List<String> tableNames = new ArrayList<>();
         List<File> written = new ArrayList<>();
+        List<List<String>> files = new ArrayList<>();
         List<String> cur = new ArrayList<>();
-        int curN = 0, nfile = 0;
-        for (int fi = 0; fi < order.size(); fi++) {
-            Function f = order.get(fi);
-            List<Long> resume = emitFunction(f, entriesOf, cur, prefix);
+        int curN = 0;
+        for (Function f : order) {
+            List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf);
             for (long r : resume) {
                 table.add(new long[] {r, tableNames.size()});
                 tableNames.add(fname(prefix, f.start));
             }
             cur.add("");
             curN += f.insns.size();
-            if (curN >= perFile || fi == order.size() - 1) {
-                written.add(writeFile(new File(outdir, String.format("%s_%03d.c", prefix, nfile++)), header, decl, cur, null));
-                cur.clear();
+            if (curN >= perFile) {
+                files.add(cur);
+                cur = new ArrayList<>();
                 curN = 0;
             }
         }
+        for (int li = 0; li < leafRoots.size(); li++) {
+            emitLeaf(leafFns.get(li), leafRoots.get(li), leafRegions.get(li), cur, prefix);
+            cur.add("");
+            curN += leafRegions.get(li).size();
+            if (curN >= perFile) {
+                files.add(cur);
+                cur = new ArrayList<>();
+                curN = 0;
+            }
+        }
+        if (!cur.isEmpty()) files.add(cur);
+        for (int i = 0; i < files.size(); i++)
+            written.add(writeFile(new File(outdir, String.format("%s_%03d.c", prefix, i)), header, decl, files.get(i), null));
         Collections.sort(table, new java.util.Comparator<long[]>() {
             @Override
             public int compare(long[] x, long[] y) {

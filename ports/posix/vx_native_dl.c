@@ -18,6 +18,7 @@ typedef void (*CvBind)(int (*)(Cpu *, uint32_t), int (*)(Cpu *, uint32_t, uint32
                        void (*)(const char *, uint32_t, uint32_t),
                        void (*)(uint32_t, uint32_t, uint32_t));
 typedef const NativeEntry *(*CvTable)(size_t *);
+typedef void (*CvBindIcall)(int (*)(Cpu *, uint32_t));
 
 void vx_fault_mem(const char *kind, uint32_t addr, uint32_t pc);
 void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc);
@@ -62,6 +63,8 @@ int vx_try_native_dll(Vx *vx, const char *build) {
             CvTable table = (CvTable)dlsym(m, "cv_native_table");
             if (abi && bind && table && abi() == 1) {
                 bind(rt_call, rt_import, vx_fault_mem, vx_undef);
+                CvBindIcall bic = (CvBindIcall)dlsym(m, "cv_native_bind_icall");  // fast code built before 0.4.1 has none
+                if (bic) bic(rt_icall);
                 slot->table = table(&slot->count);
                 vx_posix_log(1, "native engine code for %s: %zu functions", build, slot->count);
             } else {

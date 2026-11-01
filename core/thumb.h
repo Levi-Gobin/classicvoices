@@ -30,6 +30,11 @@ struct Cpu {
     uint8_t *profile;                      // optional: 1 byte per halfword of guest code below 4 MB
     jmp_buf *fault_jmp;
     char fault_msg[256];
+    // lookup_native's recent answers, direct-mapped by address (a miss is
+    // kept too): unit selection calls its distance functions through a
+    // pointer for every candidate, millions of times a sentence, and each
+    // call would binary-search ~37,000 entries. Emptied when the table is set.
+    struct { uint32_t pc; NativeFn fn; } ncache[512];
 };
 
 void cpu_init(Cpu *cpu, uint8_t *mem);

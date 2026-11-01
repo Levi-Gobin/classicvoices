@@ -1593,5 +1593,6 @@ uint32_t vx_budget_exit_pc(Vx *vx) { return vx->cpu.budget_exit_pc; }
 void vx_set_native(Vx *vx, const void *entries, size_t n) {
     vx->cpu.native = entries;
     vx->cpu.nnative = n;
+    memset(vx->cpu.ncache, 0, sizeof vx->cpu.ncache);
 }
 const char *vx_last_error(Vx *vx) { return vx->err; }
