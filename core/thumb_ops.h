@@ -26,7 +26,7 @@ static inline uint32_t vx_bitrev32(uint32_t x) {
 #endif
 
 #ifndef GUEST_MEM_SIZE
-#define GUEST_MEM_SIZE 0x40000000u  // 1 GB flat guest address space (mostly unbacked)
+#define GUEST_MEM_SIZE 0x44000000u  // 1.06 GB flat guest address space (mostly unbacked): Mavericks Anna needs 992 MB of mappings
 #endif
 
 typedef struct Core {

@@ -23,7 +23,7 @@
 #define TRAP_OUTNOTIFY 0x0030F000u
 #define TRAP_MAPPING   0x0030F100u  // 5 consecutive slots
 #define DATA_SYMS      0x00380000u
-#define MAP_LO         0x04000000u  // file mappings: 960 MB (Mac premium voices reach ~750 MB)
+#define MAP_LO         0x04000000u  // file mappings: 1 GB (Mavericks Anna's premium voice needs 992 MB)
 #define MAP_HI         GUEST_MEM_SIZE
 #define HEAP_LO        0x01400000u
 #define HEAP_HI        0x03C00000u
