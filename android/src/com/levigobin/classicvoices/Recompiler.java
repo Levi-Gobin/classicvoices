@@ -548,6 +548,14 @@ final class Recompiler {
 
     static String lname(String prefix, long root) { return String.format("lf_%s_%06x", prefix, root); }
 
+    static String liname(String prefix, long root) { return String.format("lfi_%s_%06x", prefix, root); }
+
+    /**
+     * Leaves of at most this many instructions are also written as
+     * always-inlined functions that direct calls use (recomp.py TINY_LEAF).
+     */
+    static final int TINY_LEAF = 24;
+
     /**
      * The instructions reachable from root if they make a leaf: no calls, no
      * branches out of the function, no VFP/NEON, at most limit of them; else
@@ -582,10 +590,11 @@ final class Recompiler {
      * copies in or out (recomp.py emit_leaf). 0 when it returned, 1 when it
      * left any other way (K->r[15] = where; the caller hands over).
      */
-    static void emitLeaf(Function fn, long root, Set<Long> region, List<String> w, String prefix) {
+    static void emitLeaf(Function fn, long root, Set<Long> region, List<String> w, String prefix, boolean inline) {
         List<Long> labels = new ArrayList<>(region);
         Collections.sort(labels);
-        w.add("int " + lname(prefix, root) + "(Core *Kp) {");
+        w.add(inline ? "static inline __attribute__((always_inline)) int " + liname(prefix, root) + "(Core *Kp) {"
+                     : "int " + lname(prefix, root) + "(Core *Kp) {");
         w.add("#define K (*Kp)");
         w.add("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];");
         w.add("    goto L_" + Long.toHexString(root) + ";");
@@ -715,7 +724,7 @@ final class Recompiler {
                 if (hostAt.containsKey(e)) continue;
                 Set<Long> region = leafRegion(f, e, 96);
                 if (region != null && !region.isEmpty()) {
-                    leafOf.put(e, lname(prefix, e));
+                    leafOf.put(e, region.size() <= TINY_LEAF ? liname(prefix, e) : lname(prefix, e));
                     leafFns.add(f);
                     leafRoots.add(e);
                     leafRegions.add(region);
@@ -753,6 +762,9 @@ final class Recompiler {
             leafDecls.add("    }");
             leafDecls.add("}");
         }
+        for (int li = 0; li < leafRoots.size(); li++)
+            if (leafRegions.get(li).size() <= TINY_LEAF)
+                emitLeaf(leafFns.get(li), leafRoots.get(li), leafRegions.get(li), leafDecls, prefix, true);
         for (String l : leafDecls) {
             if (decl.length() > 0) decl.append('\n');
             decl.append(l);
@@ -778,7 +790,11 @@ final class Recompiler {
             }
         }
         for (int li = 0; li < leafRoots.size(); li++) {
-            emitLeaf(leafFns.get(li), leafRoots.get(li), leafRegions.get(li), cur, prefix);
+            long e = leafRoots.get(li);
+            if (leafRegions.get(li).size() <= TINY_LEAF)
+                cur.add("int " + lname(prefix, e) + "(Core *Kp) { return " + liname(prefix, e) + "(Kp); }");
+            else
+                emitLeaf(leafFns.get(li), e, leafRegions.get(li), cur, prefix, false);
             cur.add("");
             curN += leafRegions.get(li).size();
             if (curN >= perFile) {

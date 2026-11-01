@@ -53,36 +53,36 @@ typedef struct Core {
 __attribute__((noreturn, cold)) void vx_fault_mem(const char *kind, uint32_t addr, uint32_t pc);
 __attribute__((noreturn, cold)) void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc);
 
-static inline uint32_t g32(const Core *c, uint32_t a) {
+VX_OPS_INLINE uint32_t g32(const Core *c, uint32_t a) {
     if (__builtin_expect(a > GUEST_MEM_SIZE - 4, 0)) vx_fault_mem("read32", a, c->r[15]);
     uint32_t v; memcpy(&v, c->mem + a, 4); return v;
 }
-static inline uint32_t g16(const Core *c, uint32_t a) {
+VX_OPS_INLINE uint32_t g16(const Core *c, uint32_t a) {
     if (__builtin_expect(a > GUEST_MEM_SIZE - 2, 0)) vx_fault_mem("read16", a, c->r[15]);
     uint16_t v; memcpy(&v, c->mem + a, 2); return v;
 }
-static inline uint32_t g8(const Core *c, uint32_t a) {
+VX_OPS_INLINE uint32_t g8(const Core *c, uint32_t a) {
     if (__builtin_expect(a >= GUEST_MEM_SIZE, 0)) vx_fault_mem("read8", a, c->r[15]);
     return c->mem[a];
 }
-static inline void s32(Core *c, uint32_t a, uint32_t v) {
+VX_OPS_INLINE void s32(Core *c, uint32_t a, uint32_t v) {
     if (__builtin_expect(a > GUEST_MEM_SIZE - 4 || a < 0x1000, 0)) vx_fault_mem("write32", a, c->r[15]);
     memcpy(c->mem + a, &v, 4);
 }
-static inline void s16(Core *c, uint32_t a, uint32_t v) {
+VX_OPS_INLINE void s16(Core *c, uint32_t a, uint32_t v) {
     if (__builtin_expect(a > GUEST_MEM_SIZE - 2 || a < 0x1000, 0)) vx_fault_mem("write16", a, c->r[15]);
     uint16_t h = (uint16_t)v; memcpy(c->mem + a, &h, 2);
 }
-static inline void s8(Core *c, uint32_t a, uint32_t v) {
+VX_OPS_INLINE void s8(Core *c, uint32_t a, uint32_t v) {
     if (__builtin_expect(a >= GUEST_MEM_SIZE || a < 0x1000, 0)) vx_fault_mem("write8", a, c->r[15]);
     c->mem[a] = (uint8_t)v;
 }
 
 // ---------------------------------------------------------------- helpers
 
-static inline uint32_t ror32(uint32_t v, unsigned n) { n &= 31; return n ? (v >> n) | (v << (32 - n)) : v; }
+VX_OPS_INLINE uint32_t ror32(uint32_t v, unsigned n) { n &= 31; return n ? (v >> n) | (v << (32 - n)) : v; }
 
-static inline int cond_pass(const Core *c, unsigned cond) {
+VX_OPS_INLINE int cond_pass(const Core *c, unsigned cond) {
     switch (cond) {
     case 0: return c->z;
     case 1: return !c->z;
@@ -102,7 +102,7 @@ static inline int cond_pass(const Core *c, unsigned cond) {
     }
 }
 
-static inline uint32_t addc(Core *c, uint32_t x, uint32_t y, uint32_t cin, int s) {
+VX_OPS_INLINE uint32_t addc(Core *c, uint32_t x, uint32_t y, uint32_t cin, int s) {
     uint64_t u = (uint64_t)x + y + cin;
     uint32_t r = (uint32_t)u;
     if (s) {
@@ -114,10 +114,10 @@ static inline uint32_t addc(Core *c, uint32_t x, uint32_t y, uint32_t cin, int s
     return r;
 }
 
-static inline void nz(Core *c, uint32_t r) { c->n = r >> 31; c->z = r == 0; }
+VX_OPS_INLINE void nz(Core *c, uint32_t r) { c->n = r >> 31; c->z = r == 0; }
 
 // type: 0 LSL, 1 LSR, 2 ASR, 3 ROR, 4 RRX
-static inline uint32_t shift_c(uint32_t v, unsigned type, unsigned amt, uint32_t cin, uint32_t *cout) {
+VX_OPS_INLINE uint32_t shift_c(uint32_t v, unsigned type, unsigned amt, uint32_t cin, uint32_t *cout) {
     if (type == 4) { *cout = v & 1; return (cin << 31) | (v >> 1); }
     if (amt == 0) { *cout = cin; return v; }
     switch (type) {
@@ -138,7 +138,7 @@ static inline uint32_t shift_c(uint32_t v, unsigned type, unsigned amt, uint32_t
 }
 
 // DecodeImmShift
-static inline void decode_imm_shift(unsigned type, unsigned imm5, unsigned *t, unsigned *amt) {
+VX_OPS_INLINE void decode_imm_shift(unsigned type, unsigned imm5, unsigned *t, unsigned *amt) {
     switch (type) {
     case 0: *t = 0; *amt = imm5; break;
     case 1: *t = 1; *amt = imm5 ? imm5 : 32; break;
@@ -148,7 +148,7 @@ static inline void decode_imm_shift(unsigned type, unsigned imm5, unsigned *t, u
     }
 }
 
-static inline uint32_t thumb_expand_imm_c(uint32_t imm12, uint32_t cin, uint32_t *cout) {
+VX_OPS_INLINE uint32_t thumb_expand_imm_c(uint32_t imm12, uint32_t cin, uint32_t *cout) {
     if ((imm12 >> 10) == 0) {
         uint32_t b = imm12 & 0xff;
         *cout = cin;
@@ -164,7 +164,7 @@ static inline uint32_t thumb_expand_imm_c(uint32_t imm12, uint32_t cin, uint32_t
     return r;
 }
 
-static inline uint32_t sext(uint32_t v, unsigned bits) {
+VX_OPS_INLINE uint32_t sext(uint32_t v, unsigned bits) {
     uint32_t m = 1u << (bits - 1);
     return (v ^ m) - m;
 }
@@ -172,22 +172,22 @@ static inline uint32_t sext(uint32_t v, unsigned bits) {
 // PC handling: while executing, r[15] = instruction address + 4 and c->npc
 // holds the next PC. Writing r15 goes through these.
 
-static inline void branch_to(Core *c, uint32_t a) { (void)c; c->npc = a & ~1u; }
-static inline void bx_to(Core *c, uint32_t a) {
+VX_OPS_INLINE void branch_to(Core *c, uint32_t a) { (void)c; c->npc = a & ~1u; }
+VX_OPS_INLINE void bx_to(Core *c, uint32_t a) {
     if (a & 1) { c->thumb = 1; c->npc = a & ~1u; }
     else { c->thumb = 0; c->npc = a & ~3u; }
 }
-static inline void wreg(Core *c, unsigned d, uint32_t v) {
+VX_OPS_INLINE void wreg(Core *c, unsigned d, uint32_t v) {
     if (d == 15) branch_to(c, v); else c->r[d] = v;
 }
-static inline void wreg_load(Core *c, unsigned d, uint32_t v) {
+VX_OPS_INLINE void wreg_load(Core *c, unsigned d, uint32_t v) {
     if (d == 15) bx_to(c, v); else c->r[d] = v;
 }
 
 #define UNDEF() vx_undef(hw1, hw2, pc)
 
 // Data-processing core shared by modified-immediate and shifted-register forms.
-static inline void dp_op(Core *c, unsigned op, unsigned s, unsigned rn, unsigned rd,
+VX_OPS_INLINE void dp_op(Core *c, unsigned op, unsigned s, unsigned rn, unsigned rd,
                          uint32_t a, uint32_t b, uint32_t carry, uint32_t hw1, uint32_t hw2, uint32_t pc) {
     uint32_t r;
     switch (op) {

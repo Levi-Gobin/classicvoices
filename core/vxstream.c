@@ -2,6 +2,7 @@
 #include "vxengine.h"
 #include "mt/mtengine.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <os/log.h>
 #include <pthread.h>
@@ -1094,6 +1095,43 @@ void vxs_cancel(VxStream *s) {
     pthread_mutex_unlock(&s->mu);
 }
 
+// Vocalizer commands typed as plain text, "\toi=lhp\" (as people write them,
+// and as Apple's voices took them): the engine only knows them after an ESC,
+// so "\name=value\" becomes ESC\name=value\, the name lowercased, and toi's
+// and tn's value too (the engine ignores "LHP"). Commands already after an
+// ESC are left as they are.
+static char *typed_commands(const char *t) {
+    size_t n = strlen(t);
+    char *o = malloc(n + n / 3 + 2), *w = o;  // each command (at least 5 bytes) grows by 1
+    if (!o) return NULL;
+    for (size_t i = 0; i < n;) {
+        size_t a = i + 1, k = a;
+        if (t[i] == '\\' && (i == 0 || t[i - 1] != 0x1b)) {
+            while (k < n && k - a < 12 && isalpha((unsigned char)t[k])) k++;
+            size_t name = k - a, v = k + 1, e = v;
+            if (name >= 2 && k < n && t[k] == '=') {
+                while (e < n && e - v < 24 && (isalnum((unsigned char)t[e]) || strchr("_.+-", t[e]))) e++;
+                if (e > v && e < n && t[e] == '\\') {
+                    char nm[4] = {0};
+                    for (size_t j = 0; j < name && j < 3; j++) nm[j] = (char)tolower((unsigned char)t[a + j]);
+                    int lower_value = (name == 3 && !strcmp(nm, "toi")) || (name == 2 && !strcmp(nm, "tn"));
+                    *w++ = 0x1b;
+                    *w++ = '\\';
+                    for (size_t j = a; j < k; j++) *w++ = (char)tolower((unsigned char)t[j]);
+                    *w++ = '=';
+                    for (size_t j = v; j < e; j++) *w++ = lower_value ? (char)tolower((unsigned char)t[j]) : t[j];
+                    *w++ = '\\';
+                    i = e + 1;
+                    continue;
+                }
+            }
+        }
+        *w++ = t[i++];
+    }
+    *w = 0;
+    return o;
+}
+
 void vxs_start(VxStream *s, const char *lang, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms) {
     vxs_start_with_fallback(s, lang, NULL, utf8_text, rate, pitch, volume, trailing_pause_ms);
@@ -1106,7 +1144,7 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     snprintf(s->job_lang, sizeof s->job_lang, "%s", lang);
     snprintf(s->job_fallback, sizeof s->job_fallback, "%s", fallback_key && !is_mt_key(lang) ? fallback_key : "");
     snprintf(s->job_pack, sizeof s->job_pack, "%s", is_mt_key(lang) ? "" : s->next_pack);
-    s->job_text = strdup(utf8_text);
+    s->job_text = is_mt_key(lang) ? strdup(utf8_text) : typed_commands(utf8_text);
     s->job_rate = rate < 10 ? 10 : rate > 400 ? 400 : rate;  // Vocalizer's floor is 50; MacinTalk's modern curve goes lower
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;
     s->job_volume = volume < 0 ? 80 : volume > 100 ? 100 : volume;  // 80 = engine default

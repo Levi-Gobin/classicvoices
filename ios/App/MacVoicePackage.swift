@@ -141,15 +141,18 @@ enum MacVoicePackage {
                 try chunk.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
                     stream.pointee.src_ptr = src.bindMemory(to: UInt8.self).baseAddress ?? UnsafePointer(out)
                     stream.pointee.src_size = src.count
+                    // finalizing, the decoder can hand out what it holds over
+                    // several calls with no input left: keep going while it does
+                    var produced = 0
                     repeat {
                         stream.pointee.dst_ptr = out
                         stream.pointee.dst_size = outSize
                         let status = compression_stream_process(stream, flags)
                         if status == COMPRESSION_STATUS_ERROR { throw PackageError.corrupt("inflate") }
-                        let produced = outSize - stream.pointee.dst_size
+                        produced = outSize - stream.pointee.dst_size
                         if produced > 0 { try sink(UnsafeRawBufferPointer(start: out, count: produced)) }
                         if status == COMPRESSION_STATUS_END { finished = true; return }
-                    } while stream.pointee.src_size > 0 || stream.pointee.dst_size == 0
+                    } while stream.pointee.src_size > 0 || stream.pointee.dst_size == 0 || (flags != 0 && produced > 0)
                 }
                 if finished { break }
                 if left == 0 && chunk.isEmpty { throw PackageError.corrupt("payload truncated") }

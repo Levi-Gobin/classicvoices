@@ -206,6 +206,11 @@ int x86_rt_call(X86 *c, uint32_t ret) {
     return run(c, 1, ret, c->r[ESP] + 4);
 }
 
+void x86_rt_trap(X86 *c) {
+    c->icount++;
+    do_trap(c);
+}
+
 // What recompiled code polls for an engine shutdown when the X86 has no abort flag.
 const int x86_rt_never = 0;
 

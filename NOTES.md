@@ -1347,3 +1347,50 @@ and premium, Siri compacts and enhanced). Mac, rate 190, first audio of a
 70-character sentence, before -> after: iOS 3 25 -> 20 ms, iOS 6 27 -> 21,
 iOS 7 37 -> 29, iOS 6 enhanced 57 -> 41, iOS 7 enhanced 53 -> 38, Mountain
 Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
+
+## Fast code: tiny leaves inlined, decoder helpers forced inline; MacinTalk imports direct (2026-11-01)
+
+- A recompiled function that passes its register copy K's address to a real
+  function keeps K in memory: every register access is a load or store, and
+  every guest store (a char store through c->mem) forces K to be reloaded.
+  Two things leaked it: calls to leaves (lf_*(&K)) and shift_c(..., &K.c),
+  which clang left out of line in large functions. Now thumb_ops.h's small
+  helpers (g32 ... dp_op) are VX_OPS_INLINE (always_inline in generated code,
+  plain static inline in the interpreter), and leaves of at most TINY_LEAF
+  (24) instructions are also written as always-inlined lfi_* in the shared
+  declarations, used by direct calls (lf_* stays for the icall switch).
+  Indirect calls to leaves still pass &K; giving them a copy instead helped
+  Ava (51 -> 46 ms) but slowed enhanced Aaron (150 -> 162), so it isn't done.
+  Turning off clang's machine outliner or the stack protector made no
+  difference. Android's Recompiler.java writes the same (diff -r empty, all
+  seven engines); 195/195 cases bit-identical to the interpreter.
+  Mac, rate 190, whole 70-character sentence (busy machine, before -> after):
+  iOS 3 137 -> 80 ms, iOS 5 204 -> 88, iOS 6 187 -> 86, iOS 7 177 -> 120,
+  iOS 6 enhanced 233 -> 175 (inlined leaves alone; 330 -> 220 with both, in
+  a busier run), Ava 81 -> 72,
+  Siri Aaron compact 230 -> 184; first audio 5-20% lower.
+- MacinTalk: calls to imports went through the image's stub (Leopard's
+  self-modifying `jmp rel32` jump tables, 10.6+'s `jmp [pointer]` stubs),
+  which recompiled code can't run: each call left it, interpreted the jmp
+  and trapped. Leopard Alex made ~45,000 such calls per sentence (vDSP_svemg
+  and friends, its unit selection). recomp_x86.py stub_target resolves a
+  stub as the loader bound it and calls the host function (x86_rt_trap, the
+  interpreter's do_trap) or the target's recompiled function directly; the
+  stub and pointer sections join the hashed ranges. 790 / 915 / 1113 calls in
+  Leopard / Snow Leopard / Lion; Tiger's PIC stubs aren't matched (its voices
+  were fast already). Alex: whole sentence 205-227 -> 148-176 ms; no
+  interpreter left in its profile (AAC decoding, vDSP_svemg's serial sum,
+  which stays serial: reordering it would change the audio). Speech is
+  sample-identical; as before, Alex, Vicki and in long runs a few others
+  differ from the interpreter only in pause lengths (MacinTalk sizes pauses
+  against its audio clock, and faster code runs further ahead: Leopard
+  Victoria's four longest corpus lines now do too; their speech segments are
+  identical).
+- Zip downloads on iPhone/Mac (ZipExtractor, MacVoicePackage): when
+  finalizing, Compression can hand out what it holds over several calls with
+  no input left; the loop stopped after the first and reported "inflate:
+  unexpected end". Every Siri voice zip hit it (compact and enhanced).
+- Typed commands: "\toi=lhp\ ... \toi=orth\" written as plain text (no ESC)
+  becomes ESC\toi=lhp\ in vxs_start (typed_commands) for Vocalizer voices on
+  every platform; toi's and tn's values are lowercased (the engine ignores
+  "LHP"). Text that already has ESC before the backslash is left alone.

@@ -417,6 +417,13 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     return name, resume
 
 
+# Leaves of at most this many instructions (the fixed-point multiplies and
+# the like) are also written as always-inlined functions that direct calls
+# use: a caller that passes its registers' address to a real function must
+# keep them in memory, and reload them after every guest store.
+TINY_LEAF = 24
+
+
 def leaf_region(fn, root, limit=96):
     """The instructions reachable from `root` if they make a leaf: no calls,
     no branches out of the function, no VFP/NEON, at most `limit` of them;
@@ -446,14 +453,15 @@ def leaf_region(fn, root, limit=96):
     return seen
 
 
-def emit_leaf(fn, root, region, out, prefix):
+def emit_leaf(fn, root, region, out, prefix, inline=False):
     """lf_<prefix>_<root>(Core *): the leaf on the caller's registers, with no
     copies in or out. 0 when it returned (K->r[15] = the return address),
-    1 when it left any other way (K->r[15] = where; the caller hands over)."""
-    name = f"lf_{prefix}_{root:06x}"
+    1 when it left any other way (K->r[15] = where; the caller hands over).
+    inline: lfi_<prefix>_<root>, always inlined (TINY_LEAF)."""
+    name = f"{'lfi' if inline else 'lf'}_{prefix}_{root:06x}"
     labels = sorted(region)
     w = out.append
-    w(f"int {name}(Core *Kp) {{")
+    w(f"static inline __attribute__((always_inline)) int {name}(Core *Kp) {{" if inline else f"int {name}(Core *Kp) {{")
     w("#define K (*Kp)")
     w("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];")
     w(f"    goto L_{root:x};")
@@ -572,7 +580,7 @@ def main(argv=None):
                     continue
                 region = leaf_region(f, e)
                 if region:
-                    leaf_of[e] = f"lf_{a.prefix}_{e:06x}"
+                    leaf_of[e] = f"{'lfi' if len(region) <= TINY_LEAF else 'lf'}_{a.prefix}_{e:06x}"
                     leaves.append((f, e, region))
 
     os.makedirs(a.outdir, exist_ok=True)
@@ -596,6 +604,9 @@ def main(argv=None):
         decls.append("    default: return 0;")
         decls.append("    }")
         decls.append("}")
+    for f, e, region in leaves:
+        if len(region) <= TINY_LEAF:
+            emit_leaf(f, e, region, decls, a.prefix, inline=True)
     decl_text = "\n".join(decls)
     total = 0
     for f in order:
@@ -612,7 +623,10 @@ def main(argv=None):
             cur, cur_n = [], 0
     for f, e, region in leaves:
         body = []
-        emit_leaf(f, e, region, body, a.prefix)
+        if len(region) <= TINY_LEAF:
+            body.append(f"int lf_{a.prefix}_{e:06x}(Core *Kp) {{ return lfi_{a.prefix}_{e:06x}(Kp); }}")
+        else:
+            emit_leaf(f, e, region, body, a.prefix)
         cur.extend(body)
         cur.append("")
         cur_n += len(region)

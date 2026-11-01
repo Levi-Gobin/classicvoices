@@ -97,20 +97,24 @@ enum ZipExtractor {
             let chunk = left > 0 ? (try fh.read(upToCount: Int(min(left, 1 << 20))) ?? Data()) : Data()
             left -= UInt64(chunk.count)
             let flags = left == 0 ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0
+            var progressed = false
             try chunk.withUnsafeBytes { (src: UnsafeRawBufferPointer) in
                 stream.pointee.src_ptr = src.bindMemory(to: UInt8.self).baseAddress ?? UnsafePointer(outBuf)
                 stream.pointee.src_size = chunk.count
+                // Once finalizing, the decoder can hand out what it holds over
+                // several calls with no input left: keep going while it does.
+                var produced = 0
                 repeat {
                     stream.pointee.dst_ptr = outBuf
                     stream.pointee.dst_size = outSize
                     let status = compression_stream_process(stream, flags)
-                    let produced = outSize - stream.pointee.dst_size
-                    if produced > 0 { try w.write(contentsOf: Data(bytes: outBuf, count: produced)) }
+                    produced = outSize - stream.pointee.dst_size
+                    if produced > 0 { progressed = true; try w.write(contentsOf: Data(bytes: outBuf, count: produced)) }
                     if status == COMPRESSION_STATUS_END { finished = true; return }
                     if status == COMPRESSION_STATUS_ERROR { throw ZipError.corrupt("inflate") }
-                } while stream.pointee.src_size > 0 || stream.pointee.dst_size == 0
+                } while stream.pointee.src_size > 0 || stream.pointee.dst_size == 0 || (flags != 0 && produced > 0)
             }
-            if left == 0 && chunk.isEmpty && !finished { throw ZipError.corrupt("inflate: unexpected end") }
+            if left == 0 && chunk.isEmpty && !finished && !progressed { throw ZipError.corrupt("inflate: unexpected end") }
         }
     }
 }

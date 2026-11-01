@@ -232,6 +232,36 @@ def pc_thunk(dump, t):
     return None
 
 
+# An import stub (a symbol-stubs section's `jmp rel32`, the 10.4/10.5 jump
+# tables, or `jmp [pointer]`, 10.6+) as the loader bound it: where a call to
+# it really goes, a host function in the trap region or another image's code.
+# None if t isn't one. The stub and pointer sections are part of the hashed
+# ranges, so this is only used with the same binding.
+S_SYMBOL_STUBS, S_NON_LAZY_SYMBOL_POINTERS, S_LAZY_SYMBOL_POINTERS = 8, 6, 7
+
+
+def stub_target(dump, t, depth=0):
+    if depth > 3 or not any(s["flags"] & 0xFF == S_SYMBOL_STUBS and s["addr"] <= t < s["addr"] + s["size"]
+                            for s in dump.sects):
+        return None
+    try:
+        b = dump.read(t, 6)
+    except ValueError:
+        return None
+    if b[0] == 0xE9:
+        d = (t + 5 + s32(struct.unpack_from("<I", b, 1)[0])) & 0xFFFFFFFF
+    elif b[0] == 0xFF and b[1] == 0x25:
+        try:
+            d = struct.unpack("<I", dump.read(struct.unpack_from("<I", b, 2)[0], 4))[0]
+        except ValueError:
+            return None
+    else:
+        return None
+    if dump.trap[0] <= d < dump.trap[1] or dump.text_of(d):
+        return d
+    return stub_target(dump, d, depth + 1)
+
+
 # ---------------------------------------------------------------- functions
 
 class Function:
@@ -344,6 +374,17 @@ def emit_function(dump, fn, entries_of, prefix, debug_calls=False, part_size=600
             elif ins.kind == "call" and pc_thunk(dump, ins.target):
                 t0, t1 = pc_thunk(dump, ins.target)
                 w(f"    {insn_fn(defs, f't_{a:x}_0', t0)} K.eip = {ins.target + 3:#x}; {insn_fn(defs, f't_{a:x}_1', t1)}")
+            elif ins.kind == "call" and stub_target(dump, ins.target) is not None and not debug_calls:
+                # through an import stub: straight to where it goes
+                d = stub_target(dump, ins.target)
+                w(f"    K.eip = {d:#x}; c->k = K;")
+                if dump.trap[0] <= d < dump.trap[1]:
+                    w("    x86_rt_trap(c);")
+                    w("    K = c->k;")
+                else:
+                    w(f"    rc = {entries_of[d]}(c, {d:#x});" if d in entries_of else f"    rc = x86_rt_call(c, {nxt:#x});")
+                    w("    K = c->k; if (rc) return 1;")
+                w(f"    if (K.eip != {nxt:#x}) goto dyn;")
             elif ins.kind in ("call", "icall"):
                 t = ins.target
                 w("    c->k = K;")
@@ -522,10 +563,12 @@ def main():
         with open(os.path.join(a.outdir, f"{a.prefix}_{i:03d}.c"), "w") as fh:
             fh.write("\n".join(header + [decls, ""] + body))
 
-    # the code ranges this was made from: the __text of every image it uses
+    # the code ranges this was made from: the __text of every image it uses,
+    # and the import stubs and pointers (stub_target) as they were bound
     used = sorted({dump.text_of(f.start)["image"] for f in order})
     ranges = []
-    for s in dump.texts:
+    for s in dump.texts + [s for s in dump.sects if s["flags"] & 0xFF in
+                           (S_SYMBOL_STUBS, S_NON_LAZY_SYMBOL_POINTERS, S_LAZY_SYMBOL_POINTERS)]:
         if s["image"] in used:
             from_dump = dump.read(s["addr"], s["size"])
             h = 0xcbf29ce484222325

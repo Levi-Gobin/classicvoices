@@ -115,3 +115,6 @@ void x86_atomic_end(void);
 // turn).
 #define X86_CALLEE_POP 256u
 int x86_rt_call(X86 *c, uint32_t ret);
+// A call into a host function (c->eip in the trap region, return address pushed),
+// as the interpreter makes it.
+void x86_rt_trap(X86 *c);
