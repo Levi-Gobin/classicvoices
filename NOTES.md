@@ -1477,3 +1477,10 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   in the interpreter (1.0-1.2x on a loaded Mac, all languages alike) and
   36-43x with fast code; below real time it stutters. No Monica-specific
   cause.
+- The worker may run at most LEAD_FRAMES (3 s) ahead of playback (vxstream.c
+  ring_write; a reader idle for a second lifts it, so writing to a file never
+  stalls). With the old 47 s ring an enhanced voice raced through a long
+  post's sentences, each with its silent unit search, and a swipe landed in
+  one. A long post played in real time and interrupted after 1-8 s, next
+  phrase (enhanced Aaron): 10-68 ms before, mostly 4-9 ms now (a stop still
+  waits when it lands in a search).

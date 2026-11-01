@@ -14,6 +14,14 @@
 #include <unistd.h>
 
 #define RING_FRAMES (1u << 20)  // ~47 s at 22.05 kHz
+// How far the engine may run ahead of playback. Enhanced voices make a long
+// text's audio many times faster than real time, in silent unit searches
+// for one sentence after another; a stop that lands in one waits for it.
+// Kept this close, the engine mostly waits for playback, where a stop is
+// immediate, and its searches (well under a second) still never run dry. A
+// reader that isn't playing in real time (it stops reading for a second)
+// lifts the limit.
+#define LEAD_FRAMES (3u * 22050u)
 #define WORD_RING 1024u          // word positions kept for the reader
 #define MARK_RING 1024u          // bookmarks kept for the reader
 #ifndef MAX_ENGINES
@@ -333,6 +341,10 @@ typedef struct {
     // diagnostics: silent runs (>= 40 ms) inside the output, as heard
     uint64_t out_pos, quiet_out, heard;
     char gaplog[256];
+    // LEAD_FRAMES: where the reader was when the engine got that far ahead
+    int lead_set;
+    uint64_t lead_r;
+    double lead_t;
     // Word positions. The engine says which sample of its call a word starts
     // at; that sample may be trimmed, held in a silent run that is shortened
     // later, or resampled, so a word waits here until its sample is placed.
@@ -494,7 +506,9 @@ static int ring_write(Sink *k, const float *out, size_t n) {
         uint64_t w = atomic_load_explicit(&s->write_pos, memory_order_relaxed);
         uint64_t r = atomic_load_explicit(&s->read_pos, memory_order_acquire);
         size_t space = RING_FRAMES - (size_t)(w - r);
-        if (space == 0) {  // reader is behind: wait for playback to catch up
+        int ahead = w - r >= LEAD_FRAMES;
+        if (ahead && (!k->lead_set || r != k->lead_r)) { k->lead_set = 1; k->lead_r = r; k->lead_t = now_ms(); }
+        if (space == 0 || (ahead && now_ms() - k->lead_t < 1000)) {  // wait for playback to catch up
             struct timespec ts = {0, 2000000};
             nanosleep(&ts, NULL);
             continue;
