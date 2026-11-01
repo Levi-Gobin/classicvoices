@@ -1453,3 +1453,12 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   ve_ttsStop / vauto_ttsStop on its thread, as iOS did from another thread.
   The engine checks between stages (not inside the search itself): next
   phrase after interrupting 48-83 ms. Other voices were already 8-20 ms.
+- Mavericks premium voices (iOS 10's engine): tools/profiles/ios10.txt came
+  from a few voices with English text; Petra ran 38 M interpreted
+  instructions a sentence (first audio 403 ms), Samantha 14 M, Audrey and
+  Zuzana 9 M, others 1-8 M. All 51 downloaded premium voices profiled with
+  the corpus plus a phrase in each language: 11,500 -> 19,118 block starts,
+  none interpreted now (Petra 94 ms, Samantha 75, Tom 26). recomp.py
+  ICALL_COPY_BUILDS (ios10 only): indirect calls to leaves pass a copy of
+  the registers (Ava 51 -> 46 ms; slower for 7.0.6). 221/221 bit-identical;
+  Recompiler.java the same.

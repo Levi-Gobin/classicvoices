@@ -482,8 +482,14 @@ final class Recompiler {
                     if (!leafOf.isEmpty()) {
                         // a leaf target runs on these registers; anything else through the dispatcher
                         body.add("{ LeafFn lf = K.thumb ? " + prefix + "_leaf(K.npc) : 0;");
-                        body.add("  if (lf) { K.r[15] = K.npc; if (lf(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
-                                + hx(nxt | 1) + "); " + load + " if (rc) return 1; } }");
+                        if (ICALL_COPY_BUILDS.contains(prefix)) {
+                            body.add("  if (lf) { K.r[15] = K.npc; Core T; memcpy(&T, &K, RT_INT_PART); int lr = lf(&T); memcpy(&K, &T, RT_INT_PART);");
+                            body.add("    if (lr) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, " + hx(nxt | 1) + "); " + load
+                                    + " if (rc) return 1; } }");
+                        } else {
+                            body.add("  if (lf) { K.r[15] = K.npc; if (lf(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
+                                    + hx(nxt | 1) + "); " + load + " if (rc) return 1; } }");
+                        }
                         body.add("  else { " + store + " rc = rt_icall(c, " + hx(nxt | 1) + "); " + load + " if (rc) return 1; } }");
                     } else {
                         body.add(store + " rc = rt_icall(c, " + hx(nxt | 1) + "); " + load + " if (rc) return 1;");
@@ -555,6 +561,9 @@ final class Recompiler {
      * always-inlined functions that direct calls use (recomp.py TINY_LEAF).
      */
     static final int TINY_LEAF = 24;
+
+    /** Builds whose indirect calls to leaves pass a copy of the registers (recomp.py ICALL_COPY_BUILDS). */
+    static final java.util.List<String> ICALL_COPY_BUILDS = java.util.Arrays.asList("ios10");
 
     /**
      * The instructions reachable from root if they make a leaf: no calls, no

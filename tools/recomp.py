@@ -360,7 +360,13 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
                 if leaf_of and not debug_calls:
                     # a leaf target runs on these registers; anything else through the dispatcher
                     body.append(f"{{ LeafFn lf = K.thumb ? {prefix}_leaf(K.npc) : 0;")
-                    body.append(f"  if (lf) {{ K.r[15] = K.npc; if (lf(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
+                    if prefix in ICALL_COPY_BUILDS:
+                        # on a copy of the integer registers: handing over K's
+                        # own address keeps K in memory for the whole function
+                        body.append(f"  if (lf) {{ K.r[15] = K.npc; Core T; memcpy(&T, &K, RT_INT_PART); int lr = lf(&T); memcpy(&K, &T, RT_INT_PART);")
+                        body.append(f"    if (lr) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
+                    else:
+                        body.append(f"  if (lf) {{ K.r[15] = K.npc; if (lf(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
                     body.append(f"  else {{ {store} rc = rt_icall(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
                 else:
                     body.append(f"{store} rc = rt_icall(c, {nxt | 1:#x}); {load} if (rc) return 1;")
@@ -416,6 +422,12 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     w("}")
     return name, resume
 
+
+# Builds whose indirect calls to leaves pass a copy of the registers: the
+# copies cost less than keeping the caller's registers in memory where its
+# hot loops make few such calls (iOS 10's unit selection: Ava 51 -> 46 ms);
+# 7.0.6's makes a million a sentence and runs slower that way.
+ICALL_COPY_BUILDS = ("ios10",)
 
 # Leaves of at most this many instructions (the fixed-point multiplies and
 # the like) are also written as always-inlined functions that direct calls
