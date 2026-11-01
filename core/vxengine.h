@@ -59,6 +59,10 @@ const char *vx_last_error(Vx *vx);
 // halfword below guest 4 MB) and installing recompiled code tables.
 void vx_enable_profile(Vx *vx, uint8_t *bitmap);
 void vx_set_native(Vx *vx, const void *entries, size_t n);
+// Fast code compiled for a guest space of `limit` bytes (older builds: 1 GB)
+// checks addresses against it: a voice whose files are mapped past it (only
+// Mavericks Anna) runs interpreted instead. 0: no limit.
+void vx_set_native_limit(Vx *vx, uint32_t limit);
 void vx_set_budget(Vx *vx, long long n);  // debug builds of recompiled code only
 uint32_t vx_budget_exit_pc(Vx *vx);
 

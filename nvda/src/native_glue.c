@@ -46,6 +46,10 @@ CV_EXPORT void cv_native_bind(CvRtCall rc, CvRtImport ri, CvFaultMem fm, CvUndef
 
 CV_EXPORT void cv_native_bind_icall(CvRtCall ic) { p_rt_icall = ic; }
 
+// The guest space this was compiled for, which its address checks use (none
+// before 0.4.1, when it was always 1 GB).
+CV_EXPORT unsigned cv_native_guest_mem(void) { return GUEST_MEM_SIZE; }
+
 CV_EXPORT const NativeEntry *cv_native_table(size_t *count) {
     *count = CV_CAT(CV_CAT(vx_native_, CV_BUILD), _count);
     return CV_CAT(vx_native_, CV_BUILD);

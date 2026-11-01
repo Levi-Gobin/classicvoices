@@ -19,6 +19,7 @@ typedef void (*CvBind)(int (*)(Cpu *, uint32_t), int (*)(Cpu *, uint32_t, uint32
                        void (*)(uint32_t, uint32_t, uint32_t));
 typedef const NativeEntry *(*CvTable)(size_t *);
 typedef void (*CvBindIcall)(int (*)(Cpu *, uint32_t));
+typedef unsigned (*CvGuestMem)(void);
 
 void vx_fault_mem(const char *kind, uint32_t addr, uint32_t pc);
 void vx_undef(uint32_t hw1, uint32_t hw2, uint32_t pc);
@@ -31,6 +32,7 @@ typedef struct {
     char build[16];
     const NativeEntry *table;  // NULL if the library was tried and not usable
     size_t count;
+    unsigned guest_mem;  // the guest space the fast code was compiled for
     int tried;
 } Slot;
 static Slot g_slots[16];
@@ -65,6 +67,8 @@ int vx_try_native_dll(Vx *vx, const char *build) {
                 bind(rt_call, rt_import, vx_fault_mem, vx_undef);
                 CvBindIcall bic = (CvBindIcall)dlsym(m, "cv_native_bind_icall");  // fast code built before 0.4.1 has none
                 if (bic) bic(rt_icall);
+                CvGuestMem gm = (CvGuestMem)dlsym(m, "cv_native_guest_mem");  // none before 0.4.1: 1 GB
+                slot->guest_mem = gm ? gm() : 0x40000000u;
                 slot->table = table(&slot->count);
                 vx_posix_log(1, "native engine code for %s: %zu functions", build, slot->count);
             } else {
@@ -76,7 +80,10 @@ int vx_try_native_dll(Vx *vx, const char *build) {
         }
     }
     int ok = slot && slot->table && slot->count;
-    if (ok) vx_set_native(vx, slot->table, slot->count);
+    if (ok) {
+        vx_set_native(vx, slot->table, slot->count);
+        vx_set_native_limit(vx, slot->guest_mem);
+    }
     pthread_mutex_unlock(&g_lock);
     return ok;
 }

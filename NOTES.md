@@ -1465,3 +1465,15 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   ICALL_COPY_BUILDS (ios10 only): indirect calls to leaves pass a copy of
   the registers (Ava 51 -> 46 ms; slower for 7.0.6). 221/221 bit-identical;
   Recompiler.java the same.
+- Guest space 1.06 GB (herwigfelix, PR #2) so Mavericks Anna's mappings fit.
+  Fast code checks addresses against the GUEST_MEM_SIZE it was compiled
+  with: fast code built on users' machines before 0.4.1 (NVDA, the Windows
+  and Linux app, Android) faulted on Anna (read8 0x4038b381). native_glue.c
+  now exports cv_native_guest_mem; the loaders take a library without it as
+  1 GB and call vx_set_native_limit, and an engine whose files are mapped
+  past that limit (only Anna) runs interpreted until the fast code is
+  rebuilt. Rebuilt fast code: 221/221 identical, Anna 9 ms to first audio.
+- Issue #1's stutter (Monica, iOS 5/6): every voice runs at about real time
+  in the interpreter (1.0-1.2x on a loaded Mac, all languages alike) and
+  36-43x with fast code; below real time it stutters. No Monica-specific
+  cause.

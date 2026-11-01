@@ -96,6 +96,7 @@ struct Vx {
     FILE *files[MAX_FILES];
     int fds[MAX_FILES];
     uint32_t map_next;
+    uint32_t native_limit;  // fast code built for a smaller guest space: none past this (0: no limit)
     Mapping maps[MAX_MAPS];
 
     // pthread TLS / keys
@@ -833,6 +834,7 @@ static uint32_t map_file_fd(Vx *vx, int fd, uint64_t off, uint32_t len) {
         if (p == MAP_FAILED) cpu_fault(&vx->cpu, "mmap failed: %s", strerror(errno));
     }
     vx->map_next = a + (uint32_t)span;
+    if (vx->native_limit && vx->map_next > vx->native_limit) vx_set_native(vx, NULL, 0);
     return a;
 }
 static void h_mmap(Vx *vx) {
@@ -1687,5 +1689,9 @@ void vx_set_native(Vx *vx, const void *entries, size_t n) {
     vx->cpu.native = entries;
     vx->cpu.nnative = n;
     memset(vx->cpu.ncache, 0, sizeof vx->cpu.ncache);
+}
+void vx_set_native_limit(Vx *vx, uint32_t limit) {
+    vx->native_limit = limit;
+    if (limit && vx->map_next > limit) vx_set_native(vx, NULL, 0);
 }
 const char *vx_last_error(Vx *vx) { return vx->err; }
