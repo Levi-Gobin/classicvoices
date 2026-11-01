@@ -1431,3 +1431,8 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   ranges are clamped. Engine and common files byte-identical, 51 MB read,
   18 s. remote.py uses it for ios7 (ENGINE_ONLY), falling back to the full
   stream on any error; NVDA's "Get from Apple" now includes 7.1.2.
+- Fast code: the 28 Siri downloads profiled on 7.1.2 (corpus at VoiceOver's
+  settings, as for ios70): tools/profiles/ios7.txt 14,304 -> 25,420 block
+  starts. 221/221 cases bit-identical (the usual 195 plus Aaron, Arthur,
+  Hattori, Li-mu, Martha on 7.1.2). Enhanced Aaron's first audio on 7.1.2
+  matches 7.0.6's.
