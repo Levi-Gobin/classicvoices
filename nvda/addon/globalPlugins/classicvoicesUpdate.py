@@ -3,7 +3,6 @@
 # publishes for it, and handed to NVDA's own add-on installer (which asks, and
 # restarts NVDA).
 import os
-import tempfile
 import threading
 import time
 
@@ -28,6 +27,7 @@ ASSET = "classicvoices.nvda-addon"
 def _check():
     time.sleep(30)  # not while NVDA is starting
     try:
+        cv_update.remove_downloads(ASSET)
         found = cv_update.newer(cv_paths.data_root())
     except Exception:
         log.debugWarning("Classic Voices: update check failed", exc_info=True)
@@ -56,7 +56,7 @@ def _offer(version, url, assets):
 
 
 def _download(version, url, asset):
-    path = os.path.join(tempfile.gettempdir(), "classicvoices-%s.nvda-addon" % version)
+    path = cv_update.download_path(version, ASSET)
     try:
         cv_update.download(asset, path)
     except Exception as e:

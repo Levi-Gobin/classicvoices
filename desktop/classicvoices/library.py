@@ -367,10 +367,8 @@ class Library:
     def get_update(self, version, asset, on_ready):
         """Download a new version's file (a job with its progress bar), then
         on_ready(path) on the worker thread."""
-        import tempfile
         from _classicvoices import update
-        name = system.update_asset()
-        path = os.path.join(tempfile.gettempdir(), "classicvoices-%s-%s" % (version, name))
+        path = update.download_path(version, system.update_asset())
 
         def run(job):
             update.download(asset, path, lambda f: job.progress(None, f))

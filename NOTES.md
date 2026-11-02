@@ -1484,3 +1484,48 @@ Lion Daniel 34 -> 24, Mavericks Ava 72 -> 43; "Home button" 7-14 -> 5-10.
   one. A long post played in real time and interrupted after 1-8 s, next
   phrase (enhanced Aaron): 10-68 ms before, mostly 4-9 ms now (a stop still
   waits when it lands in a search).
+
+## Windows self-update: closing the app, voices in use (2026-11-01)
+
+Tested on the ARM64 VM (an x64 app under emulation) with a 0.4.1-labelled build
+updating to a 0.4.2-labelled one through a local releases.json.
+
+- The app used to close itself as soon as the setup started, before UAC was
+  answered: a No left nothing running. Now it Popens the setup
+  (`/SILENT /SUPPRESSMSGBOXES /CVUPDATE=1`), stays, and waits. A declined UAC
+  ends the setup with code 2 in about 0.5 s, and the app says it wasn't
+  updated and offers to try again. Code 0 with the app still running means
+  the new one is open, so the app closes.
+- Not the Restart Manager: on Windows on Arm, XtaCache (the x64 translation
+  cache service) holds `Classic Voices.exe` open while the app runs. The
+  Restart Manager lists it, can't stop it (it stopped the service and left it
+  stopped), and the setup aborted: "Some applications could not be shut
+  down", then Abort for the suppressed box. So `CloseApplications=no`, and
+  PrepareToInstall (elevated, after UAC) closes the app itself: taskkill /IM
+  (WM_CLOSE; `frame.updating` skips the "quit anyway?" question), then /F
+  after 5 s. The app closed about 1 s after UAC Yes, and the new one opened
+  2.6 s after that.
+- The reopen line runs only with `/CVUPDATE=1`: an admin's /VERYSILENT install
+  from a service session used to open the app in session 0 and hang
+  `Start-Process -Wait`.
+- A SAPI program (a screen reader) with cvsapi64/32.dll loaded is never
+  closed. Each DLL has its own [Files] entry with `BeforeInstall: MoveAside`,
+  which renames it to `*.<time>.old` (Windows allows renaming a loaded DLL)
+  just before the new copy goes in. After ssPostInstall the renamed copies are
+  deleted if free; one still loaded stays until the next install or the
+  uninstall ([UninstallDelete]). No RestartReplace: each one added a
+  PendingFileRenameOperations entry. If the setup stops partway, rollback
+  deletes the new copies and DeinitializeSetup renames the old ones back.
+  This was tested by aborting on a locked file while the 32-bit DLL was
+  loaded.
+  - The renaming used to happen at ssInstall, before the Restart Manager
+    abort, so an aborted setup left SAPI with no DLL.
+- A SAPI client that reuses a voice token it got before the update gets
+  0x800703FA (ERROR_KEY_DELETED), because regsvr32 recreates the tokens.
+  Enumerating again works, even with the old DLL still loaded. Any reinstall
+  does this.
+- `[InstallDelete] {app}\_internal`: files a new build no longer ships go.
+- Downloaded updates (`%TEMP%\classicvoices-<version>-<asset>`) are deleted
+  at the next start, retried every 10 s while the setup that opened the new
+  app is still ending. The NVDA add-on does the same for its downloads,
+  including 0.4.0's `classicvoices-<version>.nvda-addon`.

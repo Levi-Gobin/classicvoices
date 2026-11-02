@@ -41,13 +41,14 @@ def linux_prefix():
 
 
 def install_update(path):
-    """Hand a downloaded update to its installer. Windows: the setup program
-    (Windows asks for permission), which closes this app and opens the new
-    one. Linux: unpack the tarball and run its install.sh into this copy's
-    prefix, then start the new app in place of this one."""
+    """Hand a downloaded update to its installer. Windows: start the setup
+    program and return it (a Popen): Windows asks for permission, then the
+    setup closes this app and opens the new one; if permission isn't given it
+    ends and this app stays. Linux: unpack the tarball and run its install.sh
+    into this copy's prefix, then start the new app in place of this one."""
     if IS_WIN:
-        os.startfile(path, "open", "/SILENT /SUPPRESSMSGBOXES /CLOSEAPPLICATIONS")
-        return
+        # /CVUPDATE=1: the setup opens the app again when it's done
+        return subprocess.Popen([path, "/SILENT", "/SUPPRESSMSGBOXES", "/CVUPDATE=1"])
     import tarfile
     import tempfile
     tmp = tempfile.mkdtemp(prefix="classicvoices-update-")

@@ -4,6 +4,7 @@ before you press it), with native controls only so screen readers read
 everything."""
 import os
 import threading
+import time
 import webbrowser
 
 import wx
@@ -653,6 +654,7 @@ class Frame(wx.Frame):
         self.Bind(wx.EVT_CHAR_HOOK, self.on_key)
         self.status = self.CreateStatusBar()
         self.Bind(wx.EVT_CLOSE, self.on_close)
+        self.updating = False  # the setup program may close the app without asking
         self.Centre()
 
     def on_key(self, e):
@@ -811,7 +813,7 @@ class Frame(wx.Frame):
                 self.lib.import_file(d.GetPath())
 
     def on_close(self, e):
-        if self.lib.jobs and e.CanVeto():
+        if self.lib.jobs and e.CanVeto() and not self.updating:
             if wx.MessageBox("Something is still downloading or importing. Quit anyway? It will stop.", APP,
                              wx.YES_NO | wx.NO_DEFAULT, self) != wx.YES:
                 e.Veto()
@@ -840,6 +842,10 @@ def check_for_update(frame):
     found = update.newer(system.data_root())
     if found:
         wx.CallAfter(offer_update, frame, *found)
+    for _ in range(6):  # the setup that opened this version may still be ending
+        if not system.update_asset() or not update.remove_downloads(system.update_asset()):
+            break
+        time.sleep(10)
 
 
 def offer_update(frame, version, url, assets):
@@ -864,10 +870,29 @@ def offer_update(frame, version, url, assets):
 
 def install_update(frame, path, url):
     try:
-        system.install_update(path)  # Linux doesn't return: the new app takes over
+        setup = system.install_update(path)  # Linux doesn't return: the new app takes over
     except Exception as e:
         if wx.MessageBox("Classic Voices couldn't install the update: %s. Open its download page?" % e, APP,
                          wx.YES_NO | wx.ICON_ERROR, frame) == wx.YES:
             webbrowser.open(url)
         return
-    frame.Close()  # Windows: the setup program replaces it, then opens the new one
+    # Windows: once permission is given the setup closes this app (it never
+    # asks: frame.updating), replaces it and opens the new one; until then
+    # this app stays, so a No leaves it running
+    frame.updating = True
+    threading.Thread(target=lambda: wx.CallAfter(update_ended, frame, setup.wait(), path, url),
+                     name="update", daemon=True).start()
+
+
+def update_ended(frame, code, path, url):
+    """The setup ended and this app is still here: it was installed but didn't
+    close this one, or permission wasn't given, or it failed."""
+    if not frame:
+        return
+    frame.updating = False
+    if code == 0:
+        frame.Close(True)  # the new version is open
+        return
+    if wx.MessageBox("Classic Voices wasn't updated: Windows didn't give the setup permission, or it stopped "
+                     "(code %d). Try again?" % code, APP, wx.YES_NO | wx.ICON_WARNING, frame) == wx.YES:
+        install_update(frame, path, url)

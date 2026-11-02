@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 import time
 import urllib.request
 
@@ -63,6 +64,27 @@ def newer(state_dir, timeout=10):
     except OSError:
         pass
     return found
+
+
+def download_path(version, name):
+    """Where an update's file is downloaded: the temp folder."""
+    return os.path.join(tempfile.gettempdir(), "classicvoices-%s-%s" % (version, name))
+
+
+def remove_downloads(name):
+    """Delete the update files earlier versions downloaded: installed or
+    declined by now. One still in use (the setup that just opened this
+    version is still ending) stays: True if any did. By extension: 0.4.0
+    named the add-on classicvoices-<version>.nvda-addon."""
+    ext = name[name.index("."):]
+    left = False
+    for f in os.listdir(tempfile.gettempdir()):
+        if f.startswith("classicvoices-") and f.endswith((ext, ext + ".part")):
+            try:
+                os.remove(os.path.join(tempfile.gettempdir(), f))
+            except OSError:
+                left = True
+    return left
 
 
 class UpdateError(Exception):
