@@ -1593,7 +1593,7 @@ void vx_close(Vx *vx) {
     free(vx);
 }
 
-void vx_request_stop(Vx *vx) { atomic_store(&vx->stop_req, 1); }
+void vx_request_stop(Vx *vx) { atomic_store(&vx->stop_req, 1); vx->cpu.interrupt = 1; }
 
 int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb, void *ctx) {
     GUARD(vx);
@@ -1602,6 +1602,7 @@ int vx_speak_utf16(Vx *vx, const uint16_t *text, size_t units, VxPcmCallback cb,
     vx->cancelled = 0;
     vx->stop_sent = 0;
     atomic_store(&vx->stop_req, 0);
+    vx->cpu.interrupt = 0;
     uint32_t bytes = (uint32_t)(units * 2);
     uint32_t buf = heap_alloc(vx, bytes + 2);
     memcpy(vx->mem + buf, text, bytes);

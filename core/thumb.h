@@ -35,6 +35,11 @@ struct Cpu {
     // pointer for every candidate, millions of times a sentence, and each
     // call would binary-search ~37,000 entries. Emptied when the table is set.
     struct { uint32_t pc; NativeFn fn; } ncache[512];
+    // Set while a stop is pending (vx_request_stop): fast code answers some
+    // of the engine's slow steps at once (recomp.py INTERRUPT_FUNCS), so a
+    // long sentence's parse ends early. Last, so fast code built before it
+    // never looks.
+    volatile int interrupt;
 };
 
 void cpu_init(Cpu *cpu, uint8_t *mem);

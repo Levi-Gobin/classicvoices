@@ -39,6 +39,31 @@ HOST_FUNCS = {
     "_fxd_S32ShMultRndS32S32": "rt_fxd_mult_rnd(&K);",
 }
 HOST_FUNC_BUILDS = ("ios70", "ios7")
+# While a stop is pending (Cpu.interrupt, vx_request_stop), these functions
+# are answered by host code instead of being called: a long sentence's parse
+# (Vocalizer 5.2's mosynt) takes up to 210 ms and the engine looks at its stop
+# only after it. Every unification failing at once, as mosyntknowl_Unif2's own
+# failure path does (the bindings it recorded undone, "no match" written
+# through its seventh argument, 0 returned), leaves the parse nothing to build
+# on: it ends within a few hundred steps, through its normal path, and frees
+# what it made. (The engine's interrupt hooks, mosyntpal_CheckInterrupt, end
+# it through the error path, which leaks ~100 KB a sentence.) Checked against
+# 7.0.6's and 7.1.2's code (HOST_FUNC_BUILDS); Mavericks' differs.
+INTERRUPT_FUNCS = {
+    "_mosyntknowl_Unif2": [
+        "{   // recomp.py INTERRUPT_FUNCS: mosyntknowl_Unif2 failing",
+        "    uint32_t w = K.r[3];",
+        "    if (w && (int32_t)g32(&K, w + 0x258) >= 1) {",
+        "        uint32_t i = 0, v;",
+        "        do { v = g32(&K, w + 0x25c + 4 * i); i++; s32(&K, w + 4 * v, v); } while ((int32_t)i < (int32_t)g32(&K, w + 0x258));",
+        "    }",
+        "    if (w) s32(&K, w + 0x258, 0);",
+        "    s8(&K, g32(&K, K.r[13] + 0x18), 0);",
+        "    K.r[0] = 0;",
+        "}",
+    ],
+}
+interrupt_at = {}  # guest address -> host code while a stop is pending
 host_at = {}  # guest address -> host code, for the build being translated
 leaf_of = {}  # guest address -> its leaf function's name (emit_leaf)
 
@@ -293,6 +318,7 @@ def uses_vfp(ins):
 
 def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budget=False):
     name = f"nf_{prefix}_{fn.start:06x}"
+    copy_here = fn.start in copy_funcs
     labels = sorted(fn.insns)
     labelset = set(labels)
     resume = sorted((fn.roots | fn.return_sites | fn.branch_targets) & labelset)
@@ -324,17 +350,32 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
         w(f"L_{a:x}:")
         if debug_budget and ins.cond is None:
             w(f"    if (c->budget_on && --c->budget < 0) {{ {store} c->k.r[15] = {a:#x}; c->budget_exit_pc = {a:#x}; return 1; }}")
+        loop = None if debug_calls or debug_budget else host_loop_at(fn, a, labelset)
+        if loop:
+            for line in loop[0]:
+                w("    " + line)
+            w(f"    goto L_{loop[1]:x};")
+            continue
         if ins.kind == "it":
             pass
         else:
             ind = "    "
             body = []
+            if ins.kind == "bl" and ins.target in interrupt_at and ins.cond in (None, 14) and not debug_calls:
+                w(f"    if (c->interrupt) {{ K.r[14] = {nxt | 1:#x};")
+                for line in interrupt_at[ins.target]:
+                    w("        " + line)
+                w(f"        goto L_{nxt:x}; }}")
             if ins.kind == "bl" and ins.target in host_at:
                 body.append(f"K.r[14] = {nxt | 1:#x};")
                 body.append(host_at[ins.target])
             elif ins.kind == "bl" and ins.target in leaf_of and not debug_calls:
                 body.append(f"K.r[14] = {nxt | 1:#x};")
-                body.append(f"if ({leaf_of[ins.target]}(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }}")
+                if copy_here and not leaf_of[ins.target].startswith("lfi_"):
+                    body.append(f"{{ Core T; memcpy(&T, &K, RT_INT_PART); int lr = {leaf_of[ins.target]}(&T); memcpy(&K, &T, RT_INT_PART);")
+                    body.append(f"  if (lr) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }} }}")
+                else:
+                    body.append(f"if ({leaf_of[ins.target]}(&K)) {{ {store} c->k.npc = K.r[15]; rc = rt_call(c, {nxt | 1:#x}); {load} if (rc) return 1; }}")
                 body.append(f"if (K.r[15] != {nxt:#x}) {{ K.npc = K.r[15]; goto dyn; }}")
             elif ins.kind == "bl":
                 t = ins.target
@@ -360,7 +401,7 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
                 if leaf_of and not debug_calls:
                     # a leaf target runs on these registers; anything else through the dispatcher
                     body.append(f"{{ LeafFn lf = K.thumb ? {prefix}_leaf(K.npc) : 0;")
-                    if prefix in ICALL_COPY_BUILDS:
+                    if prefix in ICALL_COPY_BUILDS or copy_here:
                         # on a copy of the integer registers: handing over K's
                         # own address keeps K in memory for the whole function
                         body.append(f"  if (lf) {{ K.r[15] = K.npc; Core T; memcpy(&T, &K, RT_INT_PART); int lr = lf(&T); memcpy(&K, &T, RT_INT_PART);")
@@ -422,6 +463,64 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     w("}")
     return name, resume
 
+
+# Hot loops run as host code: where a function's code is exactly one of these
+# instruction sequences (so in any build that has it), the loop runs on host
+# variables and goes on at the instruction after it, with the registers and
+# flags the guest code leaves there. Inside a function whose registers stay
+# in memory (an indirect call or a non-leaf call anywhere in it), each guest
+# instruction otherwise costs several stores.
+#
+# iOS 7's activeprompt_Consult, for each text position: the first of r0
+# 24-byte records at r2 (from index r4, 16 bits) whose type (+0) is 0x22 and
+# whose position (+0xc) is r1. Most of Siri enhanced voices' prompt lookup,
+# which grows with the text's length times the records: Nicky's first sound
+# on a 140-character path 646 ms, 29% of it in activeprompt_Consult.
+HOST_LOOPS = [
+    ((0xb2a3, 0x005d, (0xfa15, 0xf584), (0xf852, 0x5035), 0x2d22, 0xd106, (0xeb03, 0x0343),
+      (0xeb02, 0x03c3), 0x68db, 0x428b, 0xd003, 0x3401, 0xb2a3, 0x4283, 0xd3ec), [
+        "{   // recomp.py HOST_LOOPS: the first type-0x22 record at position r1",
+        "    const uint32_t n = K.r[0], want = K.r[1], base = K.r[2];",
+        "    uint32_t i = K.r[4], t = K.r[5], h, x, y;",
+        "    for (;;) {",
+        "        h = i & 0xffffu;",
+        "        t = g32(&K, base + h * 24u);",
+        "        if (t == 0x22u) { h = g32(&K, base + h * 24u + 12u); if (h == want) { x = h; y = want; break; } }",
+        "        i++;",
+        "        h = i & 0xffffu;",
+        "        if (h >= n) { x = h; y = n; break; }",
+        "    }",
+        "    K.r[3] = h; K.r[4] = i; K.r[5] = t;",
+        "    { uint32_t d = x - y; K.n = d >> 31; K.z = d == 0; K.c = x >= y; K.v = ((x ^ y) & (x ^ d)) >> 31; }",
+        "}",
+    ]),
+]
+
+
+def host_loop_at(fn, a, labelset):
+    """(host code, the address after the loop) if one of HOST_LOOPS is at a."""
+    for pattern, code in HOST_LOOPS:
+        at = a
+        for p in pattern:
+            ins = fn.insns.get(at)
+            hw1, hw2 = p if isinstance(p, tuple) else (p, None)
+            if ins is None or ins.in_it or ins.hw1 != hw1 or ins.size != (4 if hw2 is not None else 2) or \
+                    (hw2 is not None and ins.hw2 != hw2):
+                break
+            at += ins.size
+        else:
+            if at in labelset:
+                return code, at
+    return None
+
+
+# Functions whose leaf calls, direct and indirect, pass a copy of the
+# registers, in HOST_FUNC_BUILDS: with no call taking K's address left (the
+# recomp_rt.h helpers are always inlined) K stays in host registers. iOS 7's
+# prompt lookup, its own registers otherwise stored at every instruction:
+# Nicky's first sound on a 140-character path 578 -> 517 ms.
+COPY_FUNCS = ("_activeprompt_Consult",)
+copy_funcs = set()  # their addresses, in the build being translated
 
 # Builds whose indirect calls to leaves pass a copy of the registers: the
 # copies cost less than keeping the caller's registers in memory where its
@@ -529,6 +628,8 @@ def main(argv=None):
     mo = MachO(a.voiced)
     if a.prefix in HOST_FUNC_BUILDS:
         host_at.update({addr: HOST_FUNCS[nm] for addr, nm in mo.syms if nm in HOST_FUNCS})
+        interrupt_at.update({addr: INTERRUPT_FUNCS[nm] for addr, nm in mo.syms if nm in INTERRUPT_FUNCS})
+        copy_funcs.update(addr for addr, nm in mo.syms if nm in COPY_FUNCS)
     if a.profile.endswith(".txt"):
         # tools/profiles/*.txt: one hex address per line (block starts seen while profiling)
         seen = sorted({int(ln, 16) for ln in (l.split("#")[0].strip() for l in open(a.profile)) if ln})

@@ -1529,3 +1529,56 @@ updating to a 0.4.2-labelled one through a local releases.json.
   at the next start, retried every 10 s while the setup that opened the new
   app is still ending. The NVDA add-on does the same for its downloads,
   including 0.4.0's `classicvoices-<version>.nvda-addon`.
+
+## Siri enhanced voices: long sentences start sooner and stop at once (2026-11-01)
+
+Nicky, rate 190, on the user's example, a 140-character line with a long
+path ("the release notes draft at /private/tmp/claude-501/-Users-...md"),
+which spells out to well over 100 words. The earlier measurements counted
+only audio already playing, so they missed the real problem.
+- First sound 638 ms (Aaron 776, compact Aaron 430, iOS 6's voice 59): the
+  engine prepares the whole sentence first. Before Nicky's first sound:
+  ~40% the sentence parse (fe_pos: mosyntsentana_DoParse, sgram_*,
+  mosyntknowl_Unif*), 29% the prompt lookup (fe_prompt:
+  activeprompt_Consult), 11% pcre (tokenizer, subtagging), 7% INFERENCE,
+  2% unit selection.
+- A swipe made in that time: Vocalizer's stop reaches the engine at once
+  (vx_request_stop at the next trap), but the engine looks at it only
+  between its stages. A swipe 80-150 ms in waited up to 212 ms for the
+  parse to end, then the next phrase; 400 ms in, up to 155 ms for the prompt
+  lookup and unit selection, which make no library calls for that long.
+  The iOS 6 voices stop in 0-1 ms.
+
+Changes (tools/recomp.py and Recompiler.java, identical output):
+- HOST_LOOPS: activeprompt_Consult's search, per text position, for the
+  first record of type 0x22 there (24-byte records), runs as host code,
+  matched by its exact instructions (7.0.6 and 7.1.2). The bullet: 1.43 M
+  scans of ~8 records. 638 -> 578 ms.
+- COPY_FUNCS: inside activeprompt_Consult, leaf calls (direct and through
+  pointers) get a copy of the registers. With the recomp_rt.h helpers now
+  always inlined (RT_INLINE), no call takes K's address, and K stays in host
+  registers. Neither change alone helps (584, and the earlier 481 ms); both:
+  578 -> 517 ms (Aaron 729 -> 670). The same for the parser's hot functions
+  gained ~10 ms for Nicky and cost Aaron 5 ms, so it was not kept.
+- INTERRUPT_FUNCS: while a stop is pending (Cpu.interrupt, set by
+  vx_request_stop, cleared when vx_speak starts) a call to
+  mosyntknowl_Unif2 fails at once, as its own failure path does: the
+  recorded bindings are undone, 0 is written through its seventh argument,
+  and it returns 0. With nothing unifying, the parse ends within a few
+  hundred steps through its normal path. A swipe during the parse:
+  212 -> 5-12 ms (next phrase 26-38 ms after the swipe).
+  - Nuance's own hooks, mosyntpal_CheckInterrupt (every 1000 parse steps;
+    negative = abort) and IsAborted, are stubs answering no in Apple's
+    build. Answering yes stops the parse in 0 ms, but through its error path,
+    which leaks ~100 KB of guest heap per sentence (high-water 13 -> 41 MB
+    over 300 cut-off parses, then the engine reopened). With Unif2 instead:
+    flat at 13.0 MB over 600.
+  - After 40 cut-off sentences (random 20-420 ms, both the path and a long
+    prose sentence), phrases are sample-identical to a fresh engine's
+    (Nicky, Aaron, compact Aaron).
+  - Mavericks' Unif2 is compiled differently, so it isn't included.
+- Interrupting a sentence already playing: Nicky's stop takes 2-9 ms. The
+  ~58 ms to the next audible sound is "Home button." itself: 28 ms of work
+  plus 26 ms of silence at the start of her recording. Aaron's stop took
+  36-55 ms there; an earlier measurement that seemed faster counted the old
+  sentence's leftover audio.

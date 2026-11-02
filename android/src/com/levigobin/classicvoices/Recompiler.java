@@ -61,6 +61,70 @@ final class Recompiler {
     }
     private static final List<String> HOST_FUNC_BUILDS = Arrays.asList("ios70", "ios7");
 
+    // While a stop is pending (Cpu.interrupt) these functions are answered by
+    // host code instead of being called, in HOST_FUNC_BUILDS (recomp.py
+    // INTERRUPT_FUNCS): mosyntknowl_Unif2 failing, so a long parse ends.
+    private static final Map<String, String[]> INTERRUPT_FUNCS = new HashMap<>();
+    static {
+        INTERRUPT_FUNCS.put("_mosyntknowl_Unif2", new String[] {
+            "{   // recomp.py INTERRUPT_FUNCS: mosyntknowl_Unif2 failing",
+            "    uint32_t w = K.r[3];",
+            "    if (w && (int32_t)g32(&K, w + 0x258) >= 1) {",
+            "        uint32_t i = 0, v;",
+            "        do { v = g32(&K, w + 0x25c + 4 * i); i++; s32(&K, w + 4 * v, v); } while ((int32_t)i < (int32_t)g32(&K, w + 0x258));",
+            "    }",
+            "    if (w) s32(&K, w + 0x258, 0);",
+            "    s8(&K, g32(&K, K.r[13] + 0x18), 0);",
+            "    K.r[0] = 0;",
+            "}",
+        });
+    }
+
+    // Functions whose leaf calls pass a copy of the registers, in
+    // HOST_FUNC_BUILDS (recomp.py COPY_FUNCS).
+    private static final List<String> COPY_FUNCS = Arrays.asList("_activeprompt_Consult");
+
+    // Hot loops run as host code, by their exact instructions (recomp.py
+    // HOST_LOOPS): each pattern entry is {hw1} or {hw1, hw2}.
+    private static final int[][][] HOST_LOOP_PATTERNS = {
+        {{0xb2a3}, {0x005d}, {0xfa15, 0xf584}, {0xf852, 0x5035}, {0x2d22}, {0xd106}, {0xeb03, 0x0343},
+         {0xeb02, 0x03c3}, {0x68db}, {0x428b}, {0xd003}, {0x3401}, {0xb2a3}, {0x4283}, {0xd3ec}},
+    };
+    private static final String[][] HOST_LOOP_CODE = {
+        {
+            "{   // recomp.py HOST_LOOPS: the first type-0x22 record at position r1",
+            "    const uint32_t n = K.r[0], want = K.r[1], base = K.r[2];",
+            "    uint32_t i = K.r[4], t = K.r[5], h, x, y;",
+            "    for (;;) {",
+            "        h = i & 0xffffu;",
+            "        t = g32(&K, base + h * 24u);",
+            "        if (t == 0x22u) { h = g32(&K, base + h * 24u + 12u); if (h == want) { x = h; y = want; break; } }",
+            "        i++;",
+            "        h = i & 0xffffu;",
+            "        if (h >= n) { x = h; y = n; break; }",
+            "    }",
+            "    K.r[3] = h; K.r[4] = i; K.r[5] = t;",
+            "    { uint32_t d = x - y; K.n = d >> 31; K.z = d == 0; K.c = x >= y; K.v = ((x ^ y) & (x ^ d)) >> 31; }",
+            "}",
+        },
+    };
+
+    /** Index into HOST_LOOP_* of the loop at a, its end in end[0]; -1 if none (recomp.py host_loop_at). */
+    static int hostLoopAt(Function fn, long a, Set<Long> labelset, long[] end) {
+        for (int p = 0; p < HOST_LOOP_PATTERNS.length; p++) {
+            long at = a;
+            boolean ok = true;
+            for (int[] hw : HOST_LOOP_PATTERNS[p]) {
+                Insn ins = fn.insns.get(at);
+                if (ins == null || ins.inIt != 0 || ins.hw1 != hw[0] || ins.size != (hw.length == 2 ? 4 : 2)
+                        || (hw.length == 2 && ins.hw2 != hw[1])) { ok = false; break; }
+                at += ins.size;
+            }
+            if (ok && labelset.contains(at)) { end[0] = at; return p; }
+        }
+        return -1;
+    }
+
     private Recompiler() {}
 
     static final class BadAddress extends Exception {
@@ -414,8 +478,10 @@ final class Recompiler {
     }
 
     static List<Long> emitFunction(Function fn, Map<Long, String> entriesOf, List<String> w, String prefix,
-                                   Map<Long, String> hostAt, Map<Long, String> leafOf) {
+                                   Map<Long, String> hostAt, Map<Long, String> leafOf,
+                                   Map<Long, String[]> interruptAt, Set<Long> copyFuncs) {
         String name = fname(prefix, fn.start);
+        boolean copyHere = copyFuncs.contains(fn.start);
         List<Long> labels = new ArrayList<>(fn.insns.keySet());
         Collections.sort(labels);
         Set<Long> labelset = fn.insns.keySet();
@@ -442,17 +508,35 @@ final class Recompiler {
             Insn ins = fn.insns.get(a);
             long nxt = a + ins.size;
             w.add("L_" + Long.toHexString(a) + ":");
+            long[] loopEnd = new long[1];
+            int loop = hostLoopAt(fn, a, labelset, loopEnd);
+            if (loop >= 0) {
+                for (String line : HOST_LOOP_CODE[loop]) w.add("    " + line);
+                w.add("    goto L_" + Long.toHexString(loopEnd[0]) + ";");
+                continue;
+            }
             boolean always = ins.cond == null || ins.cond == 14;
             if (!ins.kind.equals("it")) {
                 String ind = "    ";
                 List<String> body = new ArrayList<>();
+                if (ins.kind.equals("bl") && interruptAt.containsKey(ins.target) && always) {
+                    w.add("    if (c->interrupt) { K.r[14] = " + hx(nxt | 1) + ";");
+                    for (String line : interruptAt.get(ins.target)) w.add("        " + line);
+                    w.add("        goto L_" + Long.toHexString(nxt) + "; }");
+                }
                 if (ins.kind.equals("bl") && hostAt.containsKey(ins.target)) {
                     body.add("K.r[14] = " + hx(nxt | 1) + ";");
                     body.add(hostAt.get(ins.target));
                 } else if (ins.kind.equals("bl") && leafOf.containsKey(ins.target)) {
                     body.add("K.r[14] = " + hx(nxt | 1) + ";");
-                    body.add("if (" + leafOf.get(ins.target) + "(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
-                            + hx(nxt | 1) + "); " + load + " if (rc) return 1; }");
+                    if (copyHere && !leafOf.get(ins.target).startsWith("lfi_")) {
+                        body.add("{ Core T; memcpy(&T, &K, RT_INT_PART); int lr = " + leafOf.get(ins.target) + "(&T); memcpy(&K, &T, RT_INT_PART);");
+                        body.add("  if (lr) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, " + hx(nxt | 1) + "); " + load
+                                + " if (rc) return 1; } }");
+                    } else {
+                        body.add("if (" + leafOf.get(ins.target) + "(&K)) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, "
+                                + hx(nxt | 1) + "); " + load + " if (rc) return 1; }");
+                    }
                     body.add("if (K.r[15] != " + hx(nxt) + ") { K.npc = K.r[15]; goto dyn; }");
                 } else if (ins.kind.equals("bl")) {
                     long t = ins.target;
@@ -482,7 +566,7 @@ final class Recompiler {
                     if (!leafOf.isEmpty()) {
                         // a leaf target runs on these registers; anything else through the dispatcher
                         body.add("{ LeafFn lf = K.thumb ? " + prefix + "_leaf(K.npc) : 0;");
-                        if (ICALL_COPY_BUILDS.contains(prefix)) {
+                        if (ICALL_COPY_BUILDS.contains(prefix) || copyHere) {
                             body.add("  if (lf) { K.r[15] = K.npc; Core T; memcpy(&T, &K, RT_INT_PART); int lr = lf(&T); memcpy(&K, &T, RT_INT_PART);");
                             body.add("    if (lr) { " + store + " c->k.npc = K.r[15]; rc = rt_call(c, " + hx(nxt | 1) + "); " + load
                                     + " if (rc) return 1; } }");
@@ -670,10 +754,15 @@ final class Recompiler {
                                        boolean scanBl) throws IOException, BadAddress {
         MachO mo = new MachO(engine);
         Map<Long, String> hostAt = new HashMap<>();  // guest address -> host code, for this build
+        Map<Long, String[]> interruptAt = new HashMap<>();  // guest address -> host code while a stop is pending
+        Set<Long> copyFuncs = new HashSet<>();  // COPY_FUNCS' addresses
         if (HOST_FUNC_BUILDS.contains(prefix)) {
             for (Object[] sym : mo.symNames) {
                 String code = HOST_FUNCS.get((String) sym[1]);
                 if (code != null) hostAt.put((Long) sym[0], code);
+                String[] lines = INTERRUPT_FUNCS.get((String) sym[1]);
+                if (lines != null) interruptAt.put((Long) sym[0], lines);
+                if (COPY_FUNCS.contains((String) sym[1])) copyFuncs.add((Long) sym[0]);
             }
         }
         List<Long> starts = new ArrayList<>();
@@ -785,7 +874,7 @@ final class Recompiler {
         List<String> cur = new ArrayList<>();
         int curN = 0;
         for (Function f : order) {
-            List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf);
+            List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf, interruptAt, copyFuncs);
             for (long r : resume) {
                 table.add(new long[] {r, tableNames.size()});
                 tableNames.add(fname(prefix, f.start));
