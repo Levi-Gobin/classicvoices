@@ -1711,3 +1711,17 @@ on the 147-character path line 516 -> ~390 ms (Mac, rate 190).
   next utterance (vx_has_native + install_native on reuse; the loader stats
   the library again when it was missing). MacinTalk: cv_mt_native_refresh
   before each engine opens.
+- Tested on this Mac 2026-11-02: the released app imported all seven
+  firmwares (13 MB/s) and all four MacinTalk releases, built every
+  engine's fast code in 16.5 min (seven iPhone engines ~9 min), and
+  updated itself 0.4.0 -> 0.4.1 from a local feed in 4 s
+  (`-updateFeed http://localhost:8765/releases.json -updateNow YES`;
+  ATS refuses http://127.0.0.1 but allows localhost) without rebuilding
+  anything: the libraries' stamp is a hash of FastCode/ (semantics headers,
+  glue, profiles) plus flagsVersion, not the app's version.
+- Leopard's MacinTalk code uses x86_atomic_begin/end (lock prefixes):
+  mt_native_glue.c ABI 2 hands them in. One engine failing no longer stops
+  the others' builds. Compiles stop when the app quits (orphaned zig
+  processes otherwise kept running). MacinTalk files compile in ~15 s each
+  (inlining, jump threading, CSE, SROA; no single pass to blame): ~3 min a
+  release.

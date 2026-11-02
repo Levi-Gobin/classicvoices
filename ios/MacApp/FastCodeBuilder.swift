@@ -35,11 +35,37 @@ enum FastCodeBuilder {
     /// app's version are the same (the semantics headers change with the app).
     static func stamp(_ engine: URL) -> String {
         let a = (try? FileManager.default.attributesOfItem(atPath: engine.path)) ?? [:]
-        return "\(UpdateCheck.current) \(flagsVersion) \((a[.size] as? Int) ?? 0) \(((a[.modificationDate] as? Date)?.timeIntervalSince1970) ?? 0)"
+        return "\(sourcesHash) \(flagsVersion) \((a[.size] as? Int) ?? 0) \(((a[.modificationDate] as? Date)?.timeIntervalSince1970) ?? 0)"
     }
 
-    /// Bumped when the compiler flags change what's built (2: no SLP vectorizer, NewGVN).
+    /// What the libraries are built from besides the engine: the instruction
+    /// semantics, the glue and the profiles in the app (FastCode/). An update
+    /// that leaves them alone keeps the fast code; one that changes them (the
+    /// interpreter's semantics must match it) rebuilds it.
+    static let sourcesHash: String = {
+        guard let src = sources, let files = FileManager.default.enumerator(atPath: src.path) else { return "none" }
+        var hash = SHA256Stream()
+        for case let rel as String in files.allObjects.compactMap({ $0 as? String }).sorted() {
+            guard let d = try? Data(contentsOf: src.appendingPathComponent(rel)) else { continue }
+            hash.update(Data(rel.utf8))
+            hash.update(d)
+        }
+        return String(hash.hex.prefix(16))
+    }()
+
+    /// Bumped when the compiler flags or the recompilers (RecompARM/RecompX86)
+    /// change what's built (f2: no SLP vectorizer, NewGVN).
     static let flagsVersion = "f2"
+
+    /// Compiles running now, stopped when the app quits (they would go on
+    /// writing into a folder the next launch deletes).
+    nonisolated(unsafe) private static var live: Set<Process> = []
+    private static let liveLock = NSLock()
+
+    static func stopAll() {
+        liveLock.lock(); let all = live; liveLock.unlock()
+        all.forEach { $0.terminate() }
+    }
 
     static func isBuilt(_ build: String, engine: URL, in dir: URL) -> Bool {
         let lib = library(build, in: dir)
@@ -222,6 +248,8 @@ enum FastCodeBuilder {
         env["ZIG_LOCAL_CACHE_DIR"] = cache.appendingPathComponent("zig-cache").path
         p.environment = env
         p.qualityOfService = .utility
+        p.terminationHandler = { done in liveLock.lock(); live.remove(done); liveLock.unlock() }
+        liveLock.lock(); live.insert(p); liveLock.unlock()
         try p.run()
         return (p, pipe)
     }

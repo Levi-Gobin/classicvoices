@@ -60,6 +60,11 @@ final class MacUpdater {
     }
 
     /// The new app, downloaded, checked and unpacked beside the old updates folder.
+    /// What an update left behind (the folder it was unpacked in).
+    nonisolated static func cleanUp() {
+        try? FileManager.default.removeItem(at: FastCodeBuilder.cache.appendingPathComponent("Update"))
+    }
+
     nonisolated private static func fetch(_ a: UpdateCheck.Asset, version: String,
                                           progress: @escaping (Double) -> Void) throws -> URL {
         let fm = FileManager.default
@@ -135,6 +140,7 @@ final class MacUpdater {
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
         p.arguments = ["-c", script, "sh", app.path]
         try? p.run()
+        FastCodeBuilder.stopAll()
         NSApp.terminate(nil)
     }
 

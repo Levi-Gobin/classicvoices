@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import Observation
@@ -18,6 +19,7 @@ final class MacSetup {
     private(set) var error: String?
     private(set) var running = false
     private(set) var finished = false
+    @ObservationIgnored private var observing = false
 
     /// Steps still to do, for the page to say what's left.
     var remaining: [String] {
@@ -36,6 +38,13 @@ final class MacSetup {
 
     func start() {
         #if CV_PUBLIC
+        if !observing {
+            observing = true
+            MacUpdater.cleanUp()
+            // compiles stop with the app
+            NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
+                                                   queue: nil) { _ in FastCodeBuilder.stopAll() }
+        }
         guard !running, let root = VoiceCatalog.importedRoot, let native = VoiceCatalog.nativeDir else { return }
         guard needed else { finished = true; return }
         running = true
@@ -75,10 +84,17 @@ final class MacSetup {
                 let report: EngineImport.Progress = { message, fraction in Task { @MainActor in self?.report(message, fraction) } }
                 do {
                     let zig = try FastCodeBuilder.zig(progress: report)
+                    // one engine that fails doesn't keep the others slow
+                    var failed: [String] = []
                     for b in builds {
-                        try FastCodeBuilder.build(b, root: root, native: native, zig: zig, progress: report)
-                        try? VoiceStore.shared.reloadEngines()
+                        do {
+                            try FastCodeBuilder.build(b, root: root, native: native, zig: zig, progress: report)
+                            try? VoiceStore.shared.reloadEngines()
+                        } catch {
+                            failed.append("\(b): \(error.localizedDescription)")
+                        }
                     }
+                    if !failed.isEmpty { failure = "Fast code: " + failed.joined(separator: "; ") }
                 } catch {
                     failure = "Fast code: \(error.localizedDescription)"
                 }

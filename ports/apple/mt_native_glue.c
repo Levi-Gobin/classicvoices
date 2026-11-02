@@ -14,10 +14,12 @@
 typedef void (*CvKFault)(const char *, ...);
 typedef int (*CvRtCall)(X86 *, uint32_t);
 typedef void (*CvRtTrap)(X86 *);
+typedef void (*CvAtomic)(void);
 
 static CvKFault p_kfault;
 static CvRtCall p_rt_call;
 static CvRtTrap p_rt_trap;
+static CvAtomic p_atomic_begin, p_atomic_end;
 static const MtNativeSet *g_set;
 
 const int x86_rt_never = 0;
@@ -34,13 +36,19 @@ void x86_kfault(const char *fmt, ...) {
 
 int x86_rt_call(X86 *c, uint32_t ret) { return p_rt_call(c, ret); }
 void x86_rt_trap(X86 *c) { p_rt_trap(c); }
+// lock-prefixed instructions (Leopard's code has some): the host's one lock
+void x86_atomic_begin(void) { p_atomic_begin(); }
+void x86_atomic_end(void) { p_atomic_end(); }
 void mt_native_register(const MtNativeSet *s) { g_set = s; }
 
-CV_EXPORT int cv_mt_native_abi(void) { return 1; }
+CV_EXPORT int cv_mt_native_abi(void) { return 2; }
 
-CV_EXPORT const MtNativeSet *cv_mt_native_bind(CvKFault kfault, CvRtCall call, CvRtTrap trap) {
+CV_EXPORT const MtNativeSet *cv_mt_native_bind(CvKFault kfault, CvRtCall call, CvRtTrap trap, CvAtomic begin,
+                                               CvAtomic end) {
     p_kfault = kfault;
     p_rt_call = call;
     p_rt_trap = trap;
+    p_atomic_begin = begin;
+    p_atomic_end = end;
     return g_set;
 }

@@ -11,7 +11,8 @@
 
 typedef void (*CvKFault)(const char *, ...);
 typedef int (*CvAbi)(void);
-typedef const MtNativeSet *(*CvMtBind)(CvKFault, int (*)(X86 *, uint32_t), void (*)(X86 *));
+typedef const MtNativeSet *(*CvMtBind)(CvKFault, int (*)(X86 *, uint32_t), void (*)(X86 *), void (*)(void),
+                                       void (*)(void));
 
 void vx_posix_log(int level, const char *fmt, ...);
 
@@ -35,7 +36,8 @@ __attribute__((visibility("default"))) void cv_mt_load_native(const char *dir) {
         if (!m) continue;
         CvAbi abi = (CvAbi)dlsym(m, "cv_mt_native_abi");
         CvMtBind bind = (CvMtBind)dlsym(m, "cv_mt_native_bind");
-        const MtNativeSet *set = abi && bind && abi() == 1 ? bind(x86_kfault, x86_rt_call, x86_rt_trap) : NULL;
+        const MtNativeSet *set = abi && bind && abi() == 2
+            ? bind(x86_kfault, x86_rt_call, x86_rt_trap, x86_atomic_begin, x86_atomic_end) : NULL;
         if (set) {
             mt_native_register(set);
             snprintf(g_loaded[g_nloaded++], 16, "%s", gens[i]);
