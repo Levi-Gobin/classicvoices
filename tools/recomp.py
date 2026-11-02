@@ -319,6 +319,7 @@ def uses_vfp(ins):
 def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budget=False):
     name = f"nf_{prefix}_{fn.start:06x}"
     copy_here = fn.start in copy_funcs
+    icall_copy = prefix in ICALL_COPY_BUILDS and fn.start not in nocopy_funcs
     labels = sorted(fn.insns)
     labelset = set(labels)
     resume = sorted((fn.roots | fn.return_sites | fn.branch_targets) & labelset)
@@ -354,8 +355,9 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
         if loop:
             for line in loop[0]:
                 w("    " + line)
-            w(f"    goto L_{loop[1]:x};")
-            continue
+            if loop[1] is not None:
+                w(f"    goto L_{loop[1]:x};")
+                continue
         if ins.kind == "it":
             pass
         else:
@@ -401,7 +403,7 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
                 if leaf_of and not debug_calls:
                     # a leaf target runs on these registers; anything else through the dispatcher
                     body.append(f"{{ LeafFn lf = K.thumb ? {prefix}_leaf(K.npc) : 0;")
-                    if prefix in ICALL_COPY_BUILDS or copy_here:
+                    if icall_copy or copy_here:
                         # on a copy of the integer registers: handing over K's
                         # own address keeps K in memory for the whole function
                         body.append(f"  if (lf) {{ K.r[15] = K.npc; Core T; memcpy(&T, &K, RT_INT_PART); int lr = lf(&T); memcpy(&K, &T, RT_INT_PART);")
@@ -477,40 +479,160 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
 # which grows with the text's length times the records: Nicky's first sound
 # on a 140-character path 646 ms, 29% of it in activeprompt_Consult.
 HOST_LOOPS = [
-    ((0xb2a3, 0x005d, (0xfa15, 0xf584), (0xf852, 0x5035), 0x2d22, 0xd106, (0xeb03, 0x0343),
-      (0xeb02, 0x03c3), 0x68db, 0x428b, 0xd003, 0x3401, 0xb2a3, 0x4283, 0xd3ec), [
-        "{   // recomp.py HOST_LOOPS: the first type-0x22 record at position r1",
-        "    const uint32_t n = K.r[0], want = K.r[1], base = K.r[2];",
-        "    uint32_t i = K.r[4], t = K.r[5], h, x, y;",
-        "    for (;;) {",
-        "        h = i & 0xffffu;",
-        "        t = g32(&K, base + h * 24u);",
-        "        if (t == 0x22u) { h = g32(&K, base + h * 24u + 12u); if (h == want) { x = h; y = want; break; } }",
-        "        i++;",
-        "        h = i & 0xffffu;",
-        "        if (h >= n) { x = h; y = n; break; }",
-        "    }",
-        "    K.r[3] = h; K.r[4] = i; K.r[5] = t;",
-        "    { uint32_t d = x - y; K.n = d >> 31; K.z = d == 0; K.c = x >= y; K.v = ((x ^ y) & (x ^ d)) >> 31; }",
-        "}",
-    ]),
+    {   # the record search above; replaces the loop, goes on after it
+        "chunks": [(0, (0xb2a3, 0x005d, (0xfa15, 0xf584), (0xf852, 0x5035), 0x2d22, 0xd106, (0xeb03, 0x0343),
+                        (0xeb02, 0x03c3), 0x68db, 0x428b, 0xd003, 0x3401, 0xb2a3, 0x4283, 0xd3ec))],
+        "after": True,
+        "code": lambda a: [
+            "{   // recomp.py HOST_LOOPS: the first type-0x22 record at position r1",
+            "    const uint32_t n = K.r[0], want = K.r[1], base = K.r[2];",
+            "    uint32_t i = K.r[4], t = K.r[5], h, x, y;",
+            "    for (;;) {",
+            "        h = i & 0xffffu;",
+            "        t = g32(&K, base + h * 24u);",
+            "        if (t == 0x22u) { h = g32(&K, base + h * 24u + 12u); if (h == want) { x = h; y = want; break; } }",
+            "        i++;",
+            "        h = i & 0xffffu;",
+            "        if (h >= n) { x = h; y = n; break; }",
+            "    }",
+            "    K.r[3] = h; K.r[4] = i; K.r[5] = t;",
+            "    { uint32_t d = x - y; K.n = d >> 31; K.z = d == 0; K.c = x >= y; K.v = ((x ^ y) & (x ^ d)) >> 31; }",
+            "}",
+        ],
+    },
+    {   # 7.1.2's activeprompt_Consult, trying one phrase at each word of the
+        # text: 58,000 phrases a sentence, ~19 words each, nearly all failing
+        # at the first character (a post: 225 M guest instructions, a third
+        # of its first sound). Each such try runs here: the phrase's first
+        # character against the word, then on past the word and the
+        # separators after it (a strchr set at a + 0x14cae0), as the guest
+        # code does, ending at a again with the registers, flags and stack
+        # slots it leaves. Any other case (a match, a record of type 0x22 at
+        # the position, the text's end, a bound) leaves at that try's start,
+        # where the guest code below runs it (redoing the same stores).
+        "chunks": [
+            (0x0, (0x4621, 0x9818, 0x9121, (0xfa10, 0xf081), (0xf8cd, 0x8088), 0xb280, 0x901a, 0xb288, 0x902e, 0x2000,
+                   0x2800, (0xf041, 0x8126), 0x981b, 0x9a1a, 0x6800, 0x4440, 0x4282, (0xf201, 0x82bd), (0xf8db, 0x0000),
+                   0x2300, 0x9a2e, (0xf04f, 0x0b00), 0x9132, 0x5c80, 0x2800, (0xf001, 0x82d0), 0x9d32, 0x9330, 0xe00a)),
+            (0x5e, (0x9836, 0xb2ae, 0x4286, (0xf080, 0x8095), (0xf64f, 0x70ff), (0xea1b, 0x0f00), 0xd018, 0x1c70, 0x9936,
+                    0x4288, 0xd214, 0x9934, 0x6809, 0x5d8a, 0x2a20, 0xd10f, (0xf241, 0x0848), 0x180c, (0xf2c0, 0x0814),
+                    0x44f8, 0x4640, (0xf765, 0xf8c1), 0x4602, 0x4620, 0x4641, (0xf765, 0xf8de), 0x2800, 0xd0d1, 0x46a8,
+                    0x68bd, (0xf64f, 0x70ff), (0xea18, 0x0f00), 0xd011, 0x9834, 0x882c, 0x6800, 0x4430, (0xf910, 0x1c01),
+                    (0xf64c, 0x2016), (0xf2c0, 0x0014), 0x4478, (0xf765, 0xf87e), 0xb918, (0xf8cd, 0x80c8), 0x882a,
+                    0xe01e, 0x8828, 0x2200, 0x2400, (0xf8cd, 0x80c8), 0xb1c0)),
+            (0x114, ((0xf8dd, 0x80d4), 0xb2a3, 0x4293, 0xd218)),
+            (0x150, (0x9b30, 0x9824, 0xb299, 0x4281, 0xd21a, 0x9834, 0x2400, (0xf8d8, 0x201c), 0x3301, 0x6800, 0x5c51,
+                     0x5d80, 0x4281, 0xbf08, 0x2401, 0x9a32, 0x4281, (0xf102, 0x0201), 0x9232, (0xf43f, 0xaf62), 0x9832,
+                     0x4646, 0x992e, (0xf8dd, 0xb0d0), 0xb280, 0x1a40, 0x901e, 0xe1c5)),
+            (0x51c, (0x9831, 0x6900, (0xf761, 0xfef0), 0x2801, 0xd174)),
+            (0x612, (0x2c01, (0xf040, 0x84d3))),
+            (0xfbe, ((0xf8dd, 0x8088), 0x4621, 0x4608, 0x9921, (0xf64b, 0x350a), 0x2801, (0xf2c0, 0x0514), 0x447d,
+                     (0xf000, 0x8149), 0x2800, (0xf47f, 0xa81d), 0xe126)),
+            (0x122e, ((0xf8db, 0x0000), 0x460c, 0xb2a1, 0x5c40, 0xb140, 0xb241, 0x4628, (0xf763, 0xffc3), 0x1c61, 0x2800,
+                      0xd0f2, 0xe000, 0x3401, (0xf8db, 0x0000), 0xb2a1, 0x5c40, 0x2800, 0xb241, (0xf43e, 0xaed2), 0x4628,
+                      (0xf763, 0xffb3), 0x2800, (0xf43e, 0xaecc), 0xe7ef)),
+        ],
+        "after": False,
+        "code": lambda a: [
+            "{   // recomp.py HOST_LOOPS: a phrase against each word, until a character differs",
+            f"    const uint32_t sp = K.r[13], cntp = g32(&K, K.r[7] + 8), D = {a + 0x14cae0:#x};",
+            "    uint32_t r4 = K.r[4], r8 = K.r[8], r11 = K.r[11], lr = K.r[14];",
+            "    for (;;) {",
+            "        const uint32_t pos = r4, p16 = pos & 0xffffu, t16 = (g32(&K, sp + 0x60) + p16) & 0xffffu;",
+            "        s32(&K, sp + 0x84, pos); s32(&K, sp + 0x88, r8); s32(&K, sp + 0x68, t16); s32(&K, sp + 0xb8, p16);",
+            "        if (t16 > g32(&K, g32(&K, sp + 0x6c)) + r8) break;",
+            "        const uint32_t t0 = g32(&K, r11);",
+            "        s32(&K, sp + 0xc8, pos);",
+            "        if (!g8(&K, t0 + p16)) break;",
+            "        uint32_t k = 0, cur = pos, prompt;",
+            "        int other = 0;",
+            "        for (;; k++, cur++) {  // compare k, at text position cur",
+            "            s32(&K, sp + 0xc0, k);",
+            "            const uint32_t c16 = cur & 0xffffu;",
+            "            if (c16 >= g32(&K, sp + 0xd8)) { other = 1; break; }",
+            "            const uint32_t text = g32(&K, g32(&K, sp + 0xd0));",
+            "            int scan = 1;",
+            f"            if (c16) {{ lr = {a + 0xcc | 1:#x}; scan = rt_in_str(&K, D, (uint8_t)g8(&K, text + c16 - 1)); }}",
+            "            if (scan) {",
+            "                const uint32_t n = g16(&K, cntp);",
+            "                if (n) {",
+            "                    const uint32_t base = g32(&K, g32(&K, sp + 0xcc)), want = g32(&K, sp + 0xb4) + c16;",
+            "                    uint32_t i = 0;",
+            "                    while (i < n && !(g32(&K, base + i * 24u) == 0x22u && g32(&K, base + i * 24u + 12u) == want)) i++;",
+            "                    if (i < n) { other = 1; break; }",
+            "                }",
+            "            }",
+            "            prompt = g32(&K, sp + 0xd4);",
+            "            if ((k & 0xffffu) >= g32(&K, sp + 0x90)) { other = 1; break; }",
+            "            const uint32_t pc = g8(&K, g32(&K, prompt + 0x1c) + (k & 0xffffu)), tc = g8(&K, text + c16);",
+            "            s32(&K, sp + 0xc8, cur + 1);",
+            "            if (pc != tc) break;",
+            "        }",
+            "        if (other) break;",
+            "        s32(&K, sp + 0x78, ((cur + 1) & 0xffffu) - p16);",
+            "        r11 = g32(&K, sp + 0xd0);",
+            f"        g32(&K, g32(&K, sp + 0xc4) + 0x10); lr = {a + 0x524 | 1:#x};",
+            "        const uint32_t tx = g32(&K, r11);",
+            "        uint32_t b;",
+            f"        for (;;) {{ b = g8(&K, tx + (r4 & 0xffffu)); if (!b) break; lr = {a + 0x1242 | 1:#x}; if (rt_in_str(&K, D, (uint8_t)b)) break; r4++; }}",
+            f"        for (;;) {{ b = g8(&K, tx + (r4 & 0xffffu)); if (!b) break; lr = {a + 0x1262 | 1:#x}; if (!rt_in_str(&K, D, (uint8_t)b)) break; r4++; }}",
+            "        K.r[0] = 0; K.r[1] = (uint32_t)(int32_t)(int8_t)b; K.r[2] = cur + 1; K.r[3] = k + 1; K.r[4] = r4;",
+            "        K.r[5] = D; K.r[6] = prompt; K.r[8] = r8; K.r[11] = r11; K.r[14] = lr;",
+            "        K.n = 0; K.z = 1; K.c = 1; K.v = 0;",
+            "    }",
+            "}",
+        ],
+    },
+    {   # Vocalizer 5.2's sentence parser (mosyntsentana_DoParse): a walk
+        # down one of its hash table's 37 chains for the entry with a key
+        # (+0x10, 16 bits signed) equal to [sp + 0x94]; long chains on a long
+        # sentence (2.4 M steps for a 140-character line). Two ways out: the
+        # end of the chain (a + 0x9e) or the entry (a + 0x10). a - 4 steps on.
+        "chunks": [(-4, ((0xf8db, 0xb000),)), (0, ((0xf1bb, 0x0f00), 0xd04b, 0x9825, (0xf9bb, 0x1010), 0x4281, 0xd1f5))],
+        "after": False,
+        "exits": (0x9e, 0x10),
+        "code": lambda a: [
+            "{   // recomp.py HOST_LOOPS: the parser's hash chain, to the entry with a key",
+            "    uint32_t n = K.r[11];",
+            "    for (;;) {",
+            f"        if (!n) {{ K.r[11] = 0; K.n = 0; K.z = 1; K.c = 1; K.v = 0; goto L_{a + 0x9e:x}; }}",
+            "        const uint32_t key = g32(&K, K.r[13] + 0x94), f = (uint32_t)(int32_t)(int16_t)g16(&K, n + 0x10);",
+            "        K.r[0] = key; K.r[1] = f;",
+            f"        if (f == key) {{ K.r[11] = n; K.n = 0; K.z = 1; K.c = 1; K.v = 0; goto L_{a + 0x10:x}; }}",
+            "        n = g32(&K, n);",
+            "    }",
+            "}",
+        ],
+    },
 ]
 
 
 def host_loop_at(fn, a, labelset):
-    """(host code, the address after the loop) if one of HOST_LOOPS is at a."""
-    for pattern, code in HOST_LOOPS:
-        at = a
-        for p in pattern:
-            ins = fn.insns.get(at)
-            hw1, hw2 = p if isinstance(p, tuple) else (p, None)
-            if ins is None or ins.in_it or ins.hw1 != hw1 or ins.size != (4 if hw2 is not None else 2) or \
-                    (hw2 is not None and ins.hw2 != hw2):
-                break
-            at += ins.size
+    """(host code, the address it goes on at, or None to go on with the guest
+    code at a) if one of HOST_LOOPS is at a. Its IT instructions are in the
+    pattern, so the ones inside IT blocks are too."""
+    for loop in HOST_LOOPS:
+        end = None
+        for rel, pattern in loop["chunks"]:
+            at = a + rel
+            for p in pattern:
+                ins = fn.insns.get(at)
+                hw1, hw2 = p if isinstance(p, tuple) else (p, None)
+                if ins is None or ins.hw1 != hw1 or ins.size != (4 if hw2 is not None else 2) or \
+                        (hw2 is not None and ins.hw2 != hw2):
+                    break
+                at += ins.size
+            else:
+                end = end if end is not None else at
+                continue
+            break
         else:
-            if at in labelset:
-                return code, at
+            if not all(a + e in labelset for e in loop.get("exits", ())):
+                continue
+            if not loop["after"]:
+                return loop["code"](a), None
+            if end in labelset:
+                return loop["code"](a), end
     return None
 
 
@@ -521,18 +643,21 @@ def host_loop_at(fn, a, labelset):
 # Nicky's first sound on a 140-character path 578 -> 517 ms.
 COPY_FUNCS = ("_activeprompt_Consult",)
 copy_funcs = set()  # their addresses, in the build being translated
+nocopy_funcs = set()  # unit selection's, which call through pointers ~1 M times a sentence
 
-# Builds whose indirect calls to leaves pass a copy of the registers: the
-# copies cost less than keeping the caller's registers in memory where its
-# hot loops make few such calls (iOS 10's unit selection: Ava 51 -> 46 ms);
-# 7.0.6's makes a million a sentence and runs slower that way.
-ICALL_COPY_BUILDS = ("ios10",)
+# Builds whose indirect calls to leaves pass a copy of the registers: one
+# such call taking K's address keeps all of a function's registers in memory
+# (pcre_exec2 has one), and the copies cost less, except where a hot loop
+# makes the calls themselves (unit selection's distance functions, ~1 M a
+# sentence: nocopy_funcs). Post-length sentence, first sound: iOS 3 32 -> 26
+# ms, Nicky 170 -> 160, the others the same or better.
+ICALL_COPY_BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10")
 
 # Leaves of at most this many instructions (the fixed-point multiplies and
 # the like) are also written as always-inlined functions that direct calls
 # use: a caller that passes its registers' address to a real function must
 # keep them in memory, and reload them after every guest store.
-TINY_LEAF = 24
+TINY_LEAF = 160
 
 
 def leaf_region(fn, root, limit=96):
@@ -630,6 +755,7 @@ def main(argv=None):
         host_at.update({addr: HOST_FUNCS[nm] for addr, nm in mo.syms if nm in HOST_FUNCS})
         interrupt_at.update({addr: INTERRUPT_FUNCS[nm] for addr, nm in mo.syms if nm in INTERRUPT_FUNCS})
         copy_funcs.update(addr for addr, nm in mo.syms if nm in COPY_FUNCS)
+    nocopy_funcs.update(addr for addr, nm in mo.syms if nm.startswith("_uselect_"))
     if a.profile.endswith(".txt"):
         # tools/profiles/*.txt: one hex address per line (block starts seen while profiling)
         seen = sorted({int(ln, 16) for ln in (l.split("#")[0].strip() for l in open(a.profile)) if ln})

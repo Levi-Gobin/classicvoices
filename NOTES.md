@@ -1582,3 +1582,49 @@ Changes (tools/recomp.py and Recompiler.java, identical output):
   plus 26 ms of silence at the start of her recording. Aaron's stop took
   36-55 ms there; an earlier measurement that seemed faster counted the old
   sentence's leftover audio.
+
+## Fast code: the prompt lookup's word loop native, more leaves inlined, copies at indirect calls (2026-11-02)
+
+Nicky's first sound on a 253-character post sentence went 225 -> 160 ms, and
+on the 147-character path line 516 -> ~390 ms (Mac, rate 190).
+- activeprompt_Consult runs once per phrase in the prompt database (58,532
+  a sentence, longest first; activeprompt_db_Consult), and each run walks
+  the whole text word by word: 225 M guest instructions for the post. The
+  second HOST_LOOPS entry (7.1.2 only: 7.0.6's code differs) runs a whole
+  try natively: the phrase against one word until a character differs, then
+  on past the word and its separators. A try that does anything else (the
+  whole phrase matching, a record of type 0x22 at a position, the text's end
+  or a bound) is left to the guest code from that try's start, which redoes
+  the same stack stores before it reads any. Patterns are now chunks
+  (several byte ranges, IT blocks included) and may fall through to the
+  guest code. 225 M -> 9 M instructions; 36/36 Siri 7.1.2 lines identical
+  to the interpreter (Nicky and Aaron: the bitcheck lines, the post, the
+  path line, numbers and times, directions).
+- TINY_LEAF 24 -> 160: every leaf up to 160 instructions is inlined at
+  its direct calls, so they no longer take K's address. Code +2.4%. Every
+  engine the same or faster (iOS 5 28 -> 22 ms on the post; Nicky 186 -> 167).
+  Above 160 nothing changes.
+- ICALL_COPY_BUILDS: every build. One indirect call site handing K's
+  address to a leaf keeps a whole function's registers in memory (pcre_exec2
+  had exactly one; its compiled code stored the PC twice per instruction and
+  reloaded it after every guest store). Copies at those sites, except in
+  unit selection's functions (nocopy_funcs, "_uselect_"), whose distance
+  functions are called ~1 M times a sentence. Including uselect cost enhanced
+  Aaron 7 ms on the path line. Post: iOS 3 32 -> 26 ms, Nicky 170 -> 160,
+  the rest the same or better.
+- A third HOST_LOOPS entry, in 7.0.6 and 7.1.2: the sentence parser's
+  hash-chain walk (37 buckets; 2.4 M steps on the path line), with two
+  exits ("exits": labels the code jumps to). 2-7 ms on long lines.
+- Tried and dropped:
+  - A switch per TBB/TBH over its own table's targets, instead of the
+    dispatcher: no change (40,000 slow dispatches a sentence).
+  - Native PCRE: the engine's is Nuance's own (pcre_exec2, frame blocks), so
+    the same results couldn't be promised.
+- What's left before the post's first sound (193 M guest instructions):
+  PCRE 63 M (the tokenizer and the subtagging rules), unit selection 28 M,
+  INFERENCE 22 M (and most of the host memmove time), the parser ~25 M.
+  Siri's voices use Vocalizer's large front end (clc cfg4, with the parser);
+  Mavericks' compacts on the same engine use cfg1 (46 ms).
+- Bounds checks on guest memory cost ~9% (162 -> 147 ms without them, as a
+  measurement only). Dropping them would need a 4 GB reservation with guard
+  pages and fault handling on every platform; not done.

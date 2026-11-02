@@ -54,6 +54,15 @@ RT_INLINE void rt_strchr(Core *k) {  // mostly asked of short strings (punctuati
         if (!b) { k->r[0] = 0; return; }
     }
 }
+// Would cstdlib_strchr(s, ch) find it (nonzero)? (rt_strchr's answer, for
+// host loops)
+RT_INLINE int rt_in_str(Core *k, uint32_t s, uint8_t ch) {
+    for (;; s++) {
+        uint8_t b = (uint8_t)g8(k, s);
+        if (b == ch) return 1;
+        if (!b) return 0;
+    }
+}
 // cstdlib_strcmp: -1, 0 or 1 by the first differing unsigned byte
 RT_INLINE void rt_strcmp(Core *k) {
     uint32_t a = k->r[0], b = k->r[1];
