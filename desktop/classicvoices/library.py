@@ -10,6 +10,7 @@ import traceback
 from . import crashlog, system
 from _classicvoices import download as cv_download
 from _classicvoices import firmware as cv_firmware
+from _classicvoices import maccompacts as cv_compacts
 from _classicvoices import pronunciation as cv_pron
 from _classicvoices import remote as cv_remote
 from _classicvoices import voices as cv_voices
@@ -184,6 +185,7 @@ class Library:
         self._wake = threading.Condition(self._lock)
         threading.Thread(target=self._worker, daemon=True).start()
         self.refresh()
+        self.get_compacts()  # firmware imported before the app got the Mac compacts
         self.start_fast_code()  # firmware imported before the app built fast code by itself
         if system.get_setting("NewerPronunciation"):
             self.get_pronunciation()  # turned on before, and the download didn't finish
@@ -235,6 +237,17 @@ class Library:
             items.append(Item("%s/%s" % (era, e["name"]), VERSION[era], e["name"], "premium and compact",
                               e.get("locale", ""), "needs" if needs else "available", e["size"],
                               entry=("mac", e), needs=needs))
+        # the compacts each Mac OS X release installed with the system: one download per release
+        for era, _label in cv_voices.MAC_ERAS:
+            left = cv_compacts.missing(era, dr, lambda loc: cv_firmware.language_wanted(loc, wanted))
+            ready = self.compacts_ready(era)
+            needs = [suggested(f) for f in cv_download.MAC_FIRMWARE[era] if not self.firmware_imported(f)]
+            if not left or not ready and not needs:
+                continue
+            for folder in left:
+                items.append(Item("%s/%s" % (era, folder), VERSION[era], folder[:-7], "compact",
+                                  cv_compacts.locale(era, folder), "needs" if needs else "available",
+                                  cv_compacts.download_size(era), entry=("compacts", {"era": era}), needs=needs))
         for e in cv_voices.siri_catalog():
             folder = cv_voices.siri_folder(e)
             key = "%s/%s" % (cv_voices.SIRI, folder)
@@ -246,7 +259,7 @@ class Library:
                               "needs" if needs else "available", e["size"], entry=("siri", e), needs=needs))
         with self._lock:
             for it in items:
-                it.job = next((j for j in self.jobs if j.key == it.id), None)
+                it.job = next((j for j in self.jobs if j.key == self._job_key(it)), None)
                 if it.job:
                     it.state = "downloading"
             self.items = items
@@ -284,6 +297,11 @@ class Library:
         if version.platform == "mac":
             return os.path.isdir(os.path.join(system.voices_root(), version.id, "common"))
         return True
+
+    def compacts_ready(self, era):
+        """A Mac OS X release's compacts can speak: their engine and common files are here."""
+        return (all(self.firmware_imported(f) for f in cv_download.MAC_FIRMWARE[era])
+                and os.path.isdir(os.path.join(system.voices_root(), era, "common")))
 
     def item(self, id):
         return next((i for i in self.items if i.id == id), None)
@@ -333,14 +351,39 @@ class Library:
         self.refresh()
         self.on_change()
 
+    @staticmethod
+    def _job_key(item):
+        """A release's compacts come in one download, whichever of them is chosen."""
+        if item.entry and item.entry[0] == "compacts":
+            return "compacts:" + item.entry[1]["era"]
+        return item.id
+
     def toggle_download(self, item):
-        if self.job_for(item.id):
-            self.cancel(item.id)
+        key = self._job_key(item)
+        if self.job_for(key):
+            self.cancel(key)
             return
         kind, entry = item.entry
+        if kind == "compacts":
+            self._queue_compacts(entry["era"])
+            return
         dr = system.downloads_root()
         run = lambda job: cv_download.download(kind, entry, dr, job.progress)  # noqa: E731
         self._queue(Job("download", item.id, item.title, item.size, run))
+
+    def _queue_compacts(self, era):
+        label = "Mac OS X %s compact voices" % VERSION[era].name
+        self._queue(Job("compacts", "compacts:" + era, label, cv_compacts.download_size(era),
+                        lambda job: cv_download.download_compacts(era, system.downloads_root(), job.progress)))
+
+    def get_compacts(self):
+        """The compacts of every Mac OS X release whose firmware is here, as
+        the Mac had them with the system; once (voices removed stay removed)."""
+        dr = system.downloads_root()
+        for era, _label in cv_voices.MAC_ERAS:
+            if (self.compacts_ready(era) and not cv_compacts.fetched_before(era, dr)
+                    and not self.job_for("compacts:" + era)):
+                self._queue_compacts(era)
 
     def import_firmware(self, key):
         """Stream a firmware's speech files from Apple."""
@@ -360,7 +403,7 @@ class Library:
         for key in item.needs:
             if not self.job_for("fw:" + key):
                 self._queue_firmware(key)
-        if not self.job_for(item.id):
+        if not self.job_for(self._job_key(item)):
             item.state = "available"
             self.toggle_download(item)
 
@@ -478,6 +521,7 @@ class Library:
                     except OSError:
                         pass
                 elif ok and job.kind in ("firmware", "copy"):
+                    self.get_compacts()
                     self.start_fast_code()
                 self.refresh()
             except Exception as e:

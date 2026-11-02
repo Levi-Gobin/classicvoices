@@ -135,6 +135,17 @@ final class Library {
                 boolean compact = d.name.endsWith("Compact");
                 out.add(new Item("siri7/" + d.name, version("siri7"), compact ? d.name.substring(0, d.name.length() - 7) : d.name,
                         compact ? "compact" : "enhanced", d.locale, false, false, d.size, d));
+            } else if (d.kind.equals("compacts")) {  // one download brings all of them
+                Map<String, String> locales;
+                try {
+                    locales = MacCompacts.voices(c, d.build);
+                } catch (IOException e) {
+                    continue;
+                }
+                for (String folder : d.folders) {
+                    out.add(new Item(d.build + "/" + folder, version(d.build), folder.substring(0, folder.length() - 7),
+                            "compact", locales.get(folder), false, false, d.size, d));
+                }
             } else {
                 out.add(new Item(d.build + "/" + d.name, version(d.build), d.name, "premium and compact", d.locale,
                         false, false, d.size, d));

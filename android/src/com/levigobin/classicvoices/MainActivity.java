@@ -156,6 +156,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
         // debuggable builds only: the activity is exported, and a pack can bring native code
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) testHooks();
         // fast code for firmware imported before it could be built here, or by an older version of the app
+        MacCompacts.startIfNeeded(this);
         if (!FastCode.autoOff(this)) FastCode.startIfNeeded(this);
         Pronunciation.startIfNeeded(this);
 

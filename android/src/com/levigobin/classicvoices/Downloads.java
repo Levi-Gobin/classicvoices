@@ -36,13 +36,14 @@ import java.util.zip.ZipInputStream;
  */
 final class Downloads {
     static final class Item {
-        final String kind;   // "enhanced", "siri" or "mac"
+        final String kind;   // "enhanced", "siri", "mac" or "compacts" (a Mac OS X release's, MacCompacts)
         final String label;  // "Samantha, enhanced (iOS 6, en-US)"
         final String build;  // ios5 / ios6 / ios70, siri7, or the Mac era
         final String name;   // language for enhanced, the folder for Siri ("AaronCompact"), voice name for Mac
         final String locale, url, sha1;
         final long size;
         final List<String> needs = new ArrayList<>();  // firmware keys to get before it can be downloaded
+        final List<String> folders = new ArrayList<>();  // "compacts": the voices it brings ("AgataCompact")
 
         Item(String kind, String label, String build, String name, String locale, String url, long size, String sha1) {
             this.kind = kind;
@@ -135,6 +136,19 @@ final class Downloads {
                 }
                 // firmware here but not the common files: an import assembles them
                 if (it.needs.isEmpty() && !new File(voices, era + "/common").isDirectory()) continue;
+                out.add(it);
+            }
+            // the compacts each Mac OS X release installed with the system: one download per release
+            for (String[] info : ERAS) {
+                List<String> left = MacCompacts.missing(c, info[0], wanted);
+                if (left.isEmpty()) continue;
+                Item it = new Item("compacts", "Compact voices (Mac OS X " + info[1] + ", " + left.size() + ")", info[0],
+                        "compacts", "", "", MacCompacts.downloadSize(c, info[0]), null);
+                it.folders.addAll(left);
+                for (int f = 2; f < info.length; f++) {
+                    if (!Library.firmwareImported(c, info[f])) it.needs.add(Library.suggested(info[f]));
+                }
+                if (it.needs.isEmpty() && !new File(voices, info[0] + "/common").isDirectory()) continue;
                 out.add(it);
             }
             for (int i = 0; i < siri.length(); i++) {
@@ -504,7 +518,7 @@ final class Downloads {
     }
 
     /** A tar stream whose member names are ROT13: regular files into dest. */
-    private static void untarRot13(InputStream in, File dest) throws IOException {
+    static void untarRot13(InputStream in, File dest) throws IOException {
         byte[] h = new byte[512];
         String longName = null;
         while (true) {

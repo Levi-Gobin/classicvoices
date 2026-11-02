@@ -78,6 +78,15 @@ def _mac_locales():
     return locales
 
 
+def _locale_file(voice_dir):
+    """The language written beside a voice (Siri voices, the Mac compacts)."""
+    try:
+        with open(os.path.join(voice_dir, "locale"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
 def has_engine(voices_root, build):
     """build: a firmware key, or a tuple of them of which any will do."""
     if isinstance(build, tuple):
@@ -135,13 +144,15 @@ def scan(voices_root, downloads_root, include_hidden=False):
         engines = MAC_ENGINES[era]
         dl = os.path.join(downloads_root, era)
         for folder in sorted(os.listdir(dl)) if os.path.isdir(dl) else []:
+            if folder.startswith(".") or not os.path.isdir(os.path.join(dl, folder)):
+                continue  # the compacts' marker, a download being unpacked
             compact = folder.endswith("Compact")
             base = folder[:-7] if compact else folder
             engine = engines[0] if (compact or era != "mac109") else engines[-1]
             if not has_engine(voices_root, engine):
                 continue
             name = broker_voice_name(os.path.join(dl, folder, "broker.hdr")) or base
-            lang = locales.get((era, base.lower()), "")
+            lang = locales.get((era, base.lower()), "") or _locale_file(os.path.join(dl, folder))
             kind = "compact" if compact else "premium"
             out.append(Voice("%s/%s" % (era, folder),
                              "%s (Mac OS X %s, %s)" % (name, label, kind), lang))

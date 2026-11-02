@@ -35,6 +35,13 @@ enum MacVoicePackage {
         return sink.written
     }
 
+    /// A PCMWave (the voice's data, a ustar archive with ROT13 names) into `dir`.
+    static func unpackPCMWave(_ data: Data, into dir: URL) throws {
+        let tar = TarSink(dir: dir)
+        try data.withUnsafeBytes { try tar.feed($0) }
+        try tar.close()
+    }
+
     /// Positions `fh` at the start of a xar package's Payload; returns its length.
     static func seekToPayload(_ fh: ByteReader) throws -> UInt64 {
         let (offset, length) = try member("Payload", of: fh)

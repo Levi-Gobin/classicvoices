@@ -84,6 +84,18 @@ def _listing(voices_root, downloads_root):
         era_label = dict(cv_voices.MAC_ERAS)[era]
         label = "%s (%s, Mac OS X %s)" % (v["name"], v["locale"], era_label)
         out.append(("mac", v, label, v["size"], needs))
+    from . import maccompacts
+    for era, era_label in cv_voices.MAC_ERAS:
+        # the compacts the release installed with the system, all in one download
+        keep = lambda loc: firmware.language_wanted(loc, wanted)  # noqa: E731
+        left = maccompacts.missing(era, downloads_root, keep)
+        if not left:
+            continue
+        needs = [suggested(f) for f in MAC_FIRMWARE[era] if not cv_voices.has_engine(voices_root, f)]
+        if not needs and not os.path.isdir(os.path.join(voices_root, era, "common")):
+            continue
+        label = "Compact voices of Mac OS X %s (%d)" % (era_label, len(left))
+        out.append(("compacts", {"era": era}, label, maccompacts.download_size(era), needs))
     for s in cv_voices.siri_catalog():
         if not firmware.language_wanted(s["locale"], wanted):
             continue
@@ -173,12 +185,22 @@ def download_siri(entry, downloads_root, progress):
         f.write(entry["locale"] + "\n")
 
 
+def download_compacts(era, downloads_root, progress):
+    """A Mac OS X release's compact voices (maccompacts) -> Downloads/<era>/<Name>Compact/,
+    in the languages firmware imports take."""
+    from . import firmware, maccompacts
+    wanted = firmware.wanted_languages(os.path.dirname(os.path.normpath(downloads_root)))
+    return maccompacts.fetch(era, downloads_root, progress, keep=lambda loc: firmware.language_wanted(loc, wanted))
+
+
 def download(kind, entry, downloads_root, progress):
     """A download from available()/needing(), by its kind."""
     if kind == "enhanced":
         download_enhanced(entry, downloads_root, progress)
     elif kind == "siri":
         download_siri(entry, downloads_root, progress)
+    elif kind == "compacts":
+        download_compacts(entry["era"], downloads_root, progress)
     else:
         download_mac_voice(entry, downloads_root, progress)
 

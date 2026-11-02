@@ -53,6 +53,9 @@ jobs:
       - name: Fetch Tiger, Leopard and Snow Leopard's MacinTalk from archive.org
         run: python3 tools/fetch_old_macintalk.py --keep-going
 
+      - name: Fetch the Lion, Mountain Lion and Mavericks compact voices
+        run: python3 tools/mac_compacts.py fetch extracted
+
       - name: Generate the fast engines
         env:
           PYTHON: .venv/bin/python
@@ -127,6 +130,9 @@ jobs:
 
       - name: Fetch Tiger, Leopard and Snow Leopard's MacinTalk from archive.org
         run: python3 tools/fetch_old_macintalk.py --keep-going
+
+      - name: Fetch the Lion, Mountain Lion and Mavericks compact voices
+        run: python3 tools/mac_compacts.py fetch extracted
 
       - name: Generate the fast engines
         env:
@@ -206,12 +212,13 @@ jobs:
         run: |
           python3 -c "import sys; sys.path.insert(0, 'nvda/addon/synthDrivers'); from _classicvoices import firmware; firmware.import_extracted('extracted', 'build/nvda-data/Voices', lambda m, f: None)"
           python3 nvda/build_native.py --source extracted --out build/nvda-data/Native
+          python3 tools/mac_compacts.py fetch build/nvda-data/Downloads
       - name: Protect the download
         env:
           IPA_PASSWORD: ${{ secrets.IPA_PASSWORD }}
         run: |
           cd build/nvda-data
-          zip -q -r -P "$IPA_PASSWORD" ../ClassicVoicesNVDA-data.zip Voices Native
+          zip -q -r -P "$IPA_PASSWORD" ../ClassicVoicesNVDA-data.zip Voices Native Downloads
       - uses: actions/upload-artifact@v4
         with:
           name: ClassicVoicesNVDAData

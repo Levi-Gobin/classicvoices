@@ -1725,3 +1725,48 @@ on the 147-character path line 516 -> ~390 ms (Mac, rate 190).
   processes otherwise kept running). MacinTalk files compile in ~15 s each
   (inlining, jump threading, CSE, SROA; no single pass to blame): ~3 min a
   release.
+
+## The Mac OS X compact voices from Apple's installers, everywhere (2026-11-02)
+
+- Lion, Mountain Lion and Mavericks installed their Nuance compacts with the
+  system: they are in the installer's Essentials.pkg (Lion: 24, plus Kyoko,
+  Ting-Ting, Virginie and Yannick only in BaseSystem.dmg; Mountain Lion 33;
+  Mavericks 36 = 97). Apple's swcdn voice packages mostly hold only the
+  premium voice (Ellen, Agata: no compact; Mavericks Diego: compact last in the
+  gzip). extracted/mac10x had them from local installers, so only builds made
+  here carried them; the released Mac app, CI builds, NVDA, Windows, Linux and
+  Android had only compacts that came with a premium download. The released Mac
+  app lost them on the user's Mac (VoiceOver kept the old entries: a name-less
+  "English" row that does nothing).
+- Sources: Lion and Mountain Lion are Apple's 2021 InstallMacOSX.dmg links
+  (same files as macOS Installers/), Mavericks archive.org
+  macos-tutoriais-mac-os-x-mavericks-10-9-5 (6.5 GB ISO, same size as the local
+  one, different MD5 in the HFS journal; the voices are identical).
+- Each Essentials.pkg keeps the compacts together near the end of its payload
+  (Lion gzip, ML/Mavericks bzip2), so `tools/mac_compacts.py recipe` writes
+  MacCompacts.json (ios/Shared and nvda/.../_classicvoices, Android assets):
+  the installer byte ranges to fetch (Lion 30.4 MB, ML 36.7, Mavericks 42.5),
+  the chain of streams over them (UDIF zlib chunks, HFS file runs, xar offsets
+  folded in; only the chunks used), the payload entry and a SHA-256 + locale
+  per voice. Nothing of Apple's is in it.
+- Entering a gzip stream mid-way: a deflate block boundary is found by trial
+  (bit shift 0-7 at each byte), and decoded with a 32 KB dictionary; decoding
+  with two complementary dictionaries proves the voices don't depend on the
+  unseen window (they don't: the boundary is 0.5 MB before them), so clients
+  use zeros. bzip2: the block magics (48-bit, bit-aligned) bound the blocks;
+  they're rewrapped as "BZh9" + blocks + end marker + combined CRC (rotl1 ^
+  block CRC), as bzip2recover does.
+- Clients: nvda/.../maccompacts.py (NVDA "Get voices" list, Linux
+  classicvoices-data `all-compacts`, the desktop app fetches each release once
+  when its firmware is there, `.compacts` marker so removed voices stay
+  removed), ios/MacApp/MacCompacts.swift (released Mac app setup, into the App
+  Group Voices root like the bundled ones: same identifiers), android
+  MacCompacts.java + Bzip2.java (Android has no bzip2; auto-queued like the
+  pronunciation packs). CI (build.yml) fetches them into extracted/ for the
+  iPhone/Mac builds and into the NVDA data zip's Downloads/.
+- Verified: all 97 byte-identical to extracted/ (Python from the real servers,
+  17 s); Java decoder output = Python's for all three, cpio + SHA-256 all match;
+  the released Mac app fetched 110 MB on launch and the system lists them.
+  `say -v "X (Mavericks Compact)"` gives the same audio for every Mac compact
+  (old ones too: a `say` name lookup quirk); AVSpeechSynthesizer by voice gives
+  each its own.

@@ -26,6 +26,7 @@ final class MacSetup {
         guard let root = VoiceCatalog.importedRoot, let native = VoiceCatalog.nativeDir else { return [] }
         return EngineImport.firmware.filter { !EngineImport.isImported($0.build, in: root) }.map(\.name)
             + Self.macinTalkTodo(root).map { "MacinTalk \($0)" }
+            + MacCompacts.todo(root).map { "the \(MacCompacts.recipe[$0]?.name ?? $0) compact voices" }
             + FastCodeBuilder.todo(root: root, native: native).map { "fast code for \($0)" }
     }
 
@@ -73,6 +74,20 @@ final class MacSetup {
                         }
                     } catch {
                         failure = "MacinTalk (\(gen)): \(error.localizedDescription)"
+                        break
+                    }
+                    Self.reloadVoices()
+                }
+            }
+            // the compact voices Lion, Mountain Lion and Mavericks had with the system
+            if failure == nil {
+                for era in MacCompacts.todo(root) {
+                    do {
+                        try MacCompacts.fetch(era, into: root) { message, fraction in
+                            Task { @MainActor in self?.report(message, fraction) }
+                        }
+                    } catch {
+                        failure = "\(MacCompacts.recipe[era]?.name ?? era) compact voices: \(error.localizedDescription)"
                         break
                     }
                     Self.reloadVoices()

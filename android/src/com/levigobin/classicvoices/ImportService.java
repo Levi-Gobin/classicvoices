@@ -218,7 +218,10 @@ public class ImportService extends Service {
                 currentJob = null;  // done: the screen shows it as such when it hears
             }
             if (j.kind.equals(FastCode.JOB)) FastCode.autoOff(this, error != null);
-            else if (error == null && !cancelAll && !FastCode.autoOff(this)) FastCode.startIfNeeded(this);
+            else if (error == null && !cancelAll) {
+                MacCompacts.startIfNeeded(this);
+                if (!FastCode.autoOff(this)) FastCode.startIfNeeded(this);
+            }
             Data.refresh(this);
             tell(true, error != null ? error : j.label + " " + getString(R.string.import_done_suffix), -1,
                     error == null ? j.label : null, error);
@@ -279,6 +282,7 @@ public class ImportService extends Service {
                 for (Downloads.Item it : Downloads.available(this)) {
                     if (!it.id().equals(j.arg)) continue;
                     if (it.kind.equals("enhanced") || it.kind.equals("siri")) Downloads.downloadEnhanced(this, it, p);
+                    else if (it.kind.equals("compacts")) MacCompacts.fetch(this, it.build, p);
                     else Downloads.downloadMac(this, it, p);
                     return;
                 }
