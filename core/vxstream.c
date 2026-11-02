@@ -31,6 +31,7 @@
 // Recompiled engine code (build/gen*/) is linked in when available; each table
 // is weak so a build without it falls back to the interpreter.
 #include "thumb.h"
+#ifndef VX_NO_STATIC_NATIVE  // the released Mac app has only the loaded kind (Mach-O can't leave weak symbols undefined)
 #define NATIVE_TABLE(b) \
     extern const NativeEntry vx_native_##b[] __attribute__((weak)); \
     extern const size_t vx_native_##b##_count __attribute__((weak));
@@ -41,14 +42,21 @@ NATIVE_TABLE(ios6)
 NATIVE_TABLE(ios7)
 NATIVE_TABLE(ios70)
 NATIVE_TABLE(ios10)
+#endif
+
+// The engine build install_native was last given on this thread: which fast
+// code an engine takes (open_engine may pick 7.0.6's for a 7.1.2 voice).
+static __thread char g_native_build[16];
 
 static void install_native(Vx *vx, const char *build) {
+    snprintf(g_native_build, sizeof g_native_build, "%s", build);
 #ifdef VX_DYNAMIC_NATIVE
     // Windows: recompiled code arrives as per-firmware DLLs built on the
     // user's machine (nvda/build_native.py) rather than linked in.
     extern int vx_try_native_dll(Vx *vx, const char *build);
     if (vx_try_native_dll(vx, build)) return;
 #endif
+#ifndef VX_NO_STATIC_NATIVE
     struct { const char *name; const NativeEntry *t; const size_t *n; } tabs[] = {
         {"ios3", vx_native_ios3, &vx_native_ios3_count}, {"ios4", vx_native_ios4, &vx_native_ios4_count},
         {"ios5", vx_native_ios5, &vx_native_ios5_count}, {"ios6", vx_native_ios6, &vx_native_ios6_count},
@@ -58,6 +66,9 @@ static void install_native(Vx *vx, const char *build) {
     for (size_t i = 0; i < sizeof tabs / sizeof tabs[0]; i++)
         if (strcmp(build, tabs[i].name) == 0 && tabs[i].t && tabs[i].n)
             vx_set_native(vx, tabs[i].t, *tabs[i].n);
+#else
+    (void)vx; (void)build;
+#endif
 }
 
 #define OUT_RATE 22050
@@ -65,6 +76,7 @@ static void install_native(Vx *vx, const char *build) {
 typedef struct {
     char key[96];  // "<build>/<lang>" ("ios3/en-US") or "<mac era>/<voice>" ("mac107/KarenCompact")
     char pack[1024];  // pronunciation pack loaded into it (vxs_set_rules_pack), or empty
+    char build[16];   // the engine it runs on, for its fast code ("ios70")
     Vx *vx;
     uint64_t last_used;
     int failures;  // utterances in a row the engine refused
@@ -259,7 +271,15 @@ static Vx *engine_for_opt(VxStream *s, const char *key, const char *pack, int ev
     for (int i = 0; i < MAX_ENGINES; i++) {
         EngineSlot *e = &s->engines[i];
         if (e->vx && strcmp(e->key, key) == 0) {
-            if (strcmp(e->pack, pack) == 0) { e->last_used = ++s->tick; return e->vx; }
+            if (strcmp(e->pack, pack) == 0) {
+                e->last_used = ++s->tick;
+#ifdef VX_DYNAMIC_NATIVE
+                // Opened before its fast code was built (the Mac app builds it
+                // while the voices are in use): take it now, between utterances.
+                if (!vx_has_native(e->vx) && e->build[0]) install_native(e->vx, e->build);
+#endif
+                return e->vx;
+            }
             // The pack was switched on or off: this engine starts again with it.
             vx_close(e->vx); e->vx = NULL; e->key[0] = 0; e->pack[0] = 0;
         }
@@ -286,6 +306,7 @@ static Vx *engine_for_opt(VxStream *s, const char *key, const char *pack, int ev
         if (!vx) return NULL;
     }
     if (pack[0]) load_pack(vx, key, pack);
+    snprintf(lru->build, sizeof lru->build, "%s", g_native_build);
     snprintf(lru->key, sizeof lru->key, "%s", key);
     snprintf(lru->pack, sizeof lru->pack, "%s", pack);
     lru->vx = vx;
@@ -909,6 +930,10 @@ static MtEngine *mt_for(VxStream *s, const char *key) {
         if (s->engines[i].vx) { vx_close(s->engines[i].vx); s->engines[i].vx = NULL; s->engines[i].key[0] = 0; }
     char root[1100];
     mt_engine_dir(s->root, s->asset_root, gen, root, sizeof root);
+#ifdef VX_MT_DYNAMIC_NATIVE
+    extern void cv_mt_native_refresh(void);  // ports/apple/mt_native_dl.c: fast code built since
+    cv_mt_native_refresh();
+#endif
     s->mt = mte_open(root, s->err, sizeof s->err);
     if (s->mt) {
         snprintf(s->mt_gen, sizeof s->mt_gen, "%s", gen);

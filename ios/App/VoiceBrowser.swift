@@ -311,6 +311,8 @@ final class VoiceLibrary {
 
 struct RootView: View {
     @State private var library = VoiceLibrary.shared
+    @State private var updates = UpdateCheck.shared
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         TabView {
@@ -322,6 +324,23 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .environment(library)
+        .task { await updates.check() }
+        #if CV_PUBLIC
+        .task { MacSetup.shared.start() }
+        #endif
+        .alert(updates.available.map { "Classic Voices \($0.version) is available" } ?? "",
+               isPresented: Binding(get: { updates.available != nil }, set: { if !$0 { updates.available = nil } }),
+               presenting: updates.available) { release in
+            #if CV_PUBLIC
+            if MacUpdater.canInstall(release) { Button("Update Now") { MacUpdater.shared.install(release) } }
+            #elseif os(macOS)
+            Button("Copy Command") { updates.copyCommand() }
+            #endif
+            Button("What's New") { openURL(release.page) }
+            Button("Later", role: .cancel) {}
+        } message: { _ in
+            Text(updates.message)
+        }
     }
 }
 
@@ -435,6 +454,10 @@ struct PlatformTab: View {
         }
         let found = library.search(query)
         return Page {
+            #if CV_PUBLIC
+            MacUpdateSection()
+            MacSetupSection()
+            #endif
             PageSection(nil) {
                 SearchField(text: $query)
             }
@@ -630,12 +653,46 @@ private struct VoiceRow: View {
         .accessibilityActions {
             if state.isAvailable, let entry = item.entry {
                 Button("Play sample") {
+                    SamplePlayer.shared.stop()
                     DirectPlayer.shared.speak(item.greeting, voiceKey: entry.key, rate: 100, rules: library.rules(for: item),
                                               rulesPack: library.rulesPack(for: item), settings: library.settings)
+                }
+            } else if let sample = SamplePlayer.url(for: item.id) {
+                Button("Play sample") {
+                    DirectPlayer.shared.stop()
+                    SamplePlayer.shared.play(sample)
                 }
             }
         }
     }
+}
+
+/// The greeting of a voice that isn't downloaded yet, recorded beforehand
+/// (tools/make_samples.py), as iOS plays samples of voices it hasn't got.
+@MainActor
+final class SamplePlayer {
+    static let shared = SamplePlayer()
+    private var player: AVAudioPlayer?
+
+    /// Samples/<identifier without com.levigobin.ClassicVoices.>.m4a in the app.
+    nonisolated static func url(for id: String) -> URL? {
+        let prefix = "com.levigobin.ClassicVoices."
+        guard id.hasPrefix(prefix) else { return nil }
+        return Bundle.main.url(forResource: String(id.dropFirst(prefix.count)), withExtension: "m4a",
+                               subdirectory: "Samples")
+    }
+
+    func play(_ url: URL) {
+        #if !os(macOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        player?.stop()
+        player = try? AVAudioPlayer(contentsOf: url)
+        player?.play()
+    }
+
+    func stop() { player?.stop() }
 }
 
 /// Where a voice stands, from the browser's point of view.

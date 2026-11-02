@@ -162,7 +162,7 @@ final class FastCode {
                         while (running.size() >= jobs) doneBytes += reap(running, p, doneBytes, totalBytes);
                         File o = new File(objDir, src.getName() + ".o");
                         objs.add(o.getPath());
-                        running.add(new Running(src.length(), z.start("cc", "-target", z.target, "-O2", "-std=gnu11",
+                        running.add(new Running(src.length(), z.start("cc", "-target", z.target, "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-std=gnu11",
                                 "-ffp-contract=off", "-fPIC", "-w", "-I", core.getPath(), "-DCV_BUILD=" + b.key,
                                 "-c", src.getPath(), "-o", o.getPath())));
                     }

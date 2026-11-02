@@ -209,8 +209,28 @@ enum VoiceCatalog {
                 return dir
             }
         }
+        #if CV_PUBLIC
+        // The released Mac app carries nothing of Apple's: the app imports the
+        // engines into the App Group (MacApp/EngineImport.swift).
+        if let dir = importedRoot {
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return dir
+        }
+        #endif
         return nil
     }()
+
+    #if os(macOS)
+    /// The released Mac app's engines and voices, as the app imported them:
+    /// <group>/Voices/<build>/..., laid out as the bundled ones are.
+    static var importedRoot: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?.appendingPathComponent("Voices")
+    }
+    /// The fast code the released Mac app builds on this Mac (cvnative_<build>.so).
+    static var nativeDir: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?.appendingPathComponent("Native")
+    }
+    #endif
 
     /// The speech extension's own voice store, in its container: the app fills
     /// it over the audio unit's message channel (FileChannel), so no App Group
@@ -338,7 +358,27 @@ enum VoiceCatalog {
         enhancedRoot?.appendingPathComponent(build).appendingPathComponent(language)
     }
 
-    static let builtIn: [Entry] = {
+    /// The voices of the engines in `root` (the app's own, or those the
+    /// released Mac app imported: reloadBuiltIn after an import).
+    static var builtIn: [Entry] {
+        // Imported engines arrive while the extension runs, and every process
+        // of it (the system's, the app's) has to notice: an engine is moved
+        // into the root when it's complete, which changes the root's date.
+        let stamp = root.flatMap { (try? FileManager.default.attributesOfItem(atPath: $0.path))?[.modificationDate] as? Date }
+        scanLock.lock()
+        if let builtInScan, builtInScan.stamp == stamp { scanLock.unlock(); return builtInScan.entries }
+        scanLock.unlock()
+        let found = scanBuiltIn()
+        scanLock.lock(); builtInScan = (stamp, found); lookups = [:]; scanLock.unlock()
+        return found
+    }
+    nonisolated(unsafe) private static var builtInScan: (stamp: Date?, entries: [Entry])?
+
+    static func reloadBuiltIn() {
+        scanLock.lock(); builtInScan = nil; lookups = [:]; scanLock.unlock()
+    }
+
+    private static func scanBuiltIn() -> [Entry] {
         guard let root else { return [] }
         var out: [Entry] = []
         for (build, buildName, version) in builds {
@@ -355,7 +395,7 @@ enum VoiceCatalog {
             }
         }
         return out + macVoices(in: root) + macinTalkVoices(in: root)
-    }()
+    }
 
     /// The extension's downloaded voices as it last reported them to the app
     /// (VoiceStore.refresh). nil in the extension itself.
@@ -754,6 +794,12 @@ final class VoiceEngine {
 
     private init() {
         if let root = VoiceCatalog.root {
+            #if CV_PUBLIC
+            if let native = VoiceCatalog.nativeDir {
+                cv_set_native_dir(native.path)
+                cv_mt_load_native(native.path)
+            }
+            #endif
             stream = vxs_create(root.path)
             if let enhanced = VoiceCatalog.enhancedRoot { vxs_set_asset_root(stream, enhanced.path) }
         } else {

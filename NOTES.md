@@ -1628,3 +1628,86 @@ on the 147-character path line 516 -> ~390 ms (Mac, rate 190).
 - Bounds checks on guest memory cost ~9% (162 -> 147 ms without them, as a
   measurement only). Dropping them would need a 4 GB reservation with guard
   pages and fault handling on every platform; not done.
+
+## Voice samples before download, update notice in the Apple apps (2026-11-02)
+
+- "Play sample" (the row's VoiceOver action) on a voice that isn't
+  downloaded plays ios/Samples/<identifier without
+  com.levigobin.ClassicVoices.>.m4a, bundled as a folder (project.yml).
+  tools/make_samples.py makes them: each Siri, enhanced and Mac voice is
+  downloaded from Apple with the NVDA add-on's download code, says the row's
+  greeting (VoiceItem.greeting) through linux/cvsay.c built for the Mac, is
+  encoded as 40 kbps AAC (~25 KB, 4-5 s) and deleted again. The engines come
+  from the installed app's Synth.appex/Contents/Resources/Voices. Resumable;
+  WORKERS=6 downloads at once. Build cvsay on the Mac without
+  -Iports/posix/compat (its runetype.h breaks the SDK's ctype.h).
+- Downloaded Siri voices never played their sample in the app:
+  DirectPlayer.readableHere took "siri7/..." for a built-in voice, so the app
+  ran the engine itself on files only the extension can read (silence).
+  They now go through the system, as the other downloaded voices do.
+- UpdateCheck.swift: once a day, each newer release offered once (as
+  update.py). These apps are built in each person's GitHub account, so the
+  alert says to build again; on the Mac, Copy Command copies the build
+  command. A Mac app that installs updates itself needs a published Mac
+  build with nothing of Apple's in it (engines imported in the app, fast code
+  built on the Mac, Developer ID signing and notarization).
+
+## The released Mac app: nothing of Apple's, updates itself (2026-11-02)
+
+- Target ClassicVoicesMacPublic (+ SynthMacPublic, EngineCodeMacPublic):
+  same bundle identifiers and App Group as ClassicVoicesMac, Developer ID
+  signed with the hardened runtime, CV_PUBLIC in Swift. No Voices folder and
+  no build/gen* in it; tools/release_mac.sh refuses to package if anything of
+  Apple's is inside, notarizes, and makes ClassicVoices-mac.dmg (first
+  install) and ClassicVoices-mac.zip (what the updater installs).
+- The app isn't sandboxed (it runs Zig and replaces itself); the extension
+  is, with disable-library-validation. Tested on this Mac: a sandboxed
+  hardened process loads a Zig-built library the unsandboxed app wrote; a
+  file a sandboxed process writes gets com.apple.quarantine (0086), which it
+  can't remove, and loading a quarantined library brings up a Gatekeeper
+  dialog. So every library is written by the app, into the App Group.
+- Engines: MacApp/EngineImport.swift (remote.py + firmware.py in Swift):
+  range requests on the IPSW's central directory, the root filesystem
+  inflated on the way, encrcdsa decrypted with The Apple Wiki's key, read with
+  DiskImage/HFSVolume (now with resource forks and decmpfs for iOS 10), into
+  <group>/Voices/<build>. All seven checked identical to the bundled ones
+  (iOS 3 30 s ... 7.0.6 7 min). 7.1.2 comes before 7.0.6 so the Mavericks
+  lid.dat is 7.1.2's. A dropped connection resumes from its byte.
+  VoiceCatalog.builtIn is now reloadable (store op "reload").
+- Fast code: MacApp/RecompARM.swift and RecompX86.swift write byte-identical
+  output to recomp.py / recomp_x86.py for every engine (0.1-0.3 s each).
+  FastCodeBuilder downloads Zig (ziglang.org index SHA-256), compiles with
+  the same flags as fastcode.py into <group>/Native/cvnative_<build>.so (iOS
+  6: 1 min 50 s on 8 cores; bit-identical speech, ~35x the interpreter) and
+  cvmtnative_<gen>.so for MacinTalk: the dump comes from MT_DUMP + mte_open
+  in the app; ports/apple/mt_native_glue.c and mt_native_dl.c hand the x86
+  runtime in and the set out (Mach-O can't leave the generated code's
+  references to the host undefined). A .stamp beside each library (app
+  version, engine size and date) rebuilds it after an update.
+- vxstream.c: VX_NO_STATIC_NATIVE leaves out the weak static tables (Mach-O
+  can't link weak undefined symbols).
+- MacUpdater.swift: Update Now downloads the release's
+  ClassicVoices-mac.zip, checks its size and GitHub's SHA-256 digest and its
+  signature (Developer ID, team 7WV49AN2BX, this bundle identifier), swaps it
+  in with replaceItemAt, quits, and a shell waits for the old process,
+  re-registers the app, restarts axassetsd and opens it.
+- Compile flags for the generated code (fastflags in ios/project.yml,
+  FastCodeBuilder, fastcode.py, build_native.py, Android FastCode.java):
+  `-fno-slp-vectorize -mllvm -enable-newgvn` (and -g0 for Zig, which adds
+  debug info otherwise). With -ftime-report: LLVM's SLP vectorizer spent
+  292 of 294 s on one iOS 7.1.2 file (ios7_061.c), and classic GVN 55 of
+  65 s on iOS 6's biggest. Whole-engine builds on the Mac (14 jobs): iOS 6
+  110 -> 28 s, 7.1.2 290 -> 53 s; Apple clang -O3 iOS 6 90 -> 30 s. And
+  the code is faster without the vectorizer: iOS 6 sentences 1.32 -> 1.10 s
+  (Apple clang -O3 and Zig -O2 alike), Nicky's first sound ~3% sooner.
+  Output bit-identical (WAV compares, full bitcheck). Libraries built before
+  are rebuilt (FastCodeBuilder.flagsVersion).
+- The Mac app's compiles: every core at utility QoS (still the performance
+  cores; gives way to speech), biggest files first, progress per finished
+  file (it was reaped in start order and seemed stuck at 51%).
+- Firmware comes in 16 MB parts over 6 connections (ParallelFetch), inflated
+  in order: 13 MB/s here against 2-3 on one connection.
+- vxstream: an engine opened before its fast code existed takes it at its
+  next utterance (vx_has_native + install_native on reuse; the loader stats
+  the library again when it was missing). MacinTalk: cv_mt_native_refresh
+  before each engine opens.

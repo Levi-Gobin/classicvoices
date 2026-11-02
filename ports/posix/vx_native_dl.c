@@ -8,6 +8,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "recomp_rt.h"
 #include "thumb.h"
@@ -34,6 +35,7 @@ typedef struct {
     size_t count;
     unsigned guest_mem;  // the guest space the fast code was compiled for
     int tried;
+    long long mtime;  // the library's when it was tried (0: there was none)
 } Slot;
 static Slot g_slots[16];
 
@@ -53,11 +55,21 @@ int vx_try_native_dll(Vx *vx, const char *build) {
         if (g_slots[i].tried && strcmp(g_slots[i].build, build) == 0) { slot = &g_slots[i]; break; }
         if (!slot && !g_slots[i].tried) slot = &g_slots[i];
     }
+    // Built since it was last looked for (the Mac app builds it while the
+    // voices are in use): look again.
+    if (slot && slot->tried && !slot->table && g_dir[0]) {
+        char path[1200];
+        struct stat st;
+        snprintf(path, sizeof path, "%s/cvnative_%s.so", g_dir, build);
+        if (stat(path, &st) == 0 && (long long)st.st_mtime != slot->mtime) slot->tried = 0;
+    }
     if (slot && !slot->tried && g_dir[0]) {
         slot->tried = 1;
         snprintf(slot->build, sizeof slot->build, "%s", build);
         char path[1200];
         snprintf(path, sizeof path, "%s/cvnative_%s.so", g_dir, build);
+        struct stat st;
+        slot->mtime = stat(path, &st) == 0 ? (long long)st.st_mtime : 0;
         void *m = dlopen(path, RTLD_NOW | RTLD_LOCAL);  // kept loaded for the process lifetime
         if (m) {
             CvAbi abi = (CvAbi)dlsym(m, "cv_native_abi");

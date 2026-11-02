@@ -501,15 +501,15 @@ final class DirectPlayer: ObservableObject {
     }
 
     /// Whether this process can read the voice's files: downloaded voices
-    /// live in the extension's store, and the app sees only those the App
-    /// Group holds (voices downloaded by earlier versions).
+    /// (Siri's too) live in the extension's store, and the app sees only
+    /// those the App Group holds (voices downloaded by earlier versions).
     private func readableHere(_ key: String) -> Bool {
         let parts = key.split(separator: "/", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return true }
         var build = parts[0]
         if build.hasPrefix("ios") && build.hasSuffix("e") {
             build.removeLast()
-        } else if !build.hasPrefix("mac") {
+        } else if !build.hasPrefix("mac") && build != VoiceCatalog.siri.build {
             return true  // built in (and MacinTalk, which has its own paths)
         }
         let fm = FileManager.default

@@ -1691,6 +1691,7 @@ void vx_set_native(Vx *vx, const void *entries, size_t n) {
     vx->cpu.nnative = n;
     memset(vx->cpu.ncache, 0, sizeof vx->cpu.ncache);
 }
+int vx_has_native(Vx *vx) { return vx->cpu.nnative > 0; }
 void vx_set_native_limit(Vx *vx, uint32_t limit) {
     vx->native_limit = limit;
     if (limit && vx->map_next > limit) vx_set_native(vx, NULL, 0);

@@ -134,6 +134,12 @@ final class VoiceStore: @unchecked Sendable {
         Task { @MainActor in change() }
     }
 
+    /// The released Mac app imported engines: the extension looks at them again.
+    func reloadEngines() throws {
+        try call(["op": "reload"])
+        try refresh()
+    }
+
     func read(_ rel: String) -> Data? { (try? call(["op": "read", "path": rel]))?["data"] as? Data }
 
     // MARK: - changing

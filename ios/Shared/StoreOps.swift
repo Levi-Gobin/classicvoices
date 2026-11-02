@@ -99,6 +99,19 @@ final class StoreOps {
             walk(root, "", 0)
             return ["paths": paths, "markers": markers]
 
+        // The released Mac app imported engines: look at them again.
+        case "reload":
+            VoiceCatalog.reloadBuiltIn()
+            VoiceCatalog.invalidateEnhanced()
+            #if CV_PUBLIC
+            // and at fast code built since (engines opened from now on use it)
+            if let native = VoiceCatalog.nativeDir {
+                cv_set_native_dir(native.path)
+                cv_mt_load_native(native.path)
+            }
+            #endif
+            return [:]
+
         // The voices the extension offers the system from this root.
         case "catalog":
             let engines = VoiceCatalog.macinTalkEras.map(\.0).filter {

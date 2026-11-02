@@ -30,12 +30,22 @@ targetTemplates:
       - path: ../core
         includes: ["thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c", "vxlang.c"]
       - path: ../build/gen
+        # LLVM's SLP vectorizer and classic GVN crawl through these huge
+        # functions (290 s on one iOS 7.1.2 file) and the vectorizer slowed
+        # the code: without it iOS 6 sentences are 17% faster, same output
+        compilerFlags: &fastflags ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
       - path: ../build/gen3
+        compilerFlags: *fastflags
       - path: ../build/gen4
+        compilerFlags: *fastflags
       - path: ../build/gen5
+        compilerFlags: *fastflags
       - path: ../build/gen7
+        compilerFlags: *fastflags
       - path: ../build/gen70
+        compilerFlags: *fastflags
       - path: ../build/gen10
+        compilerFlags: *fastflags
       # recompiled MacinTalk (tools/build_mt_native.sh); only the generations
       # whose engines the build had
       - path: ../build/mtgen104
@@ -62,6 +72,28 @@ targetTemplates:
         # No C debug info: for this much generated code it takes gigabytes of
         # memory per file
         GCC_GENERATE_DEBUGGING_SYMBOLS: NO
+  # The Mac app as released: no generated code (it's made from Apple's
+  # engines, so the app builds it on each Mac and loads it from the App Group).
+  EngineCodePublic:
+    type: library.static
+    sources:
+      - path: ../core
+        includes: ["thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c", "vxlang.c"]
+      - path: ../ports/posix
+        includes: ["vx_native_dl.c"]
+      - path: ../ports/apple
+        excludes: ["mt_native_glue.c"]  # built into each fast-code library on the Mac
+      - path: ../core/x86
+        includes: ["x86.c"]
+      - path: ../core/mt
+        excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
+      - path: ../third_party/glint
+        includes: ["aac_decoder.cpp"]
+    settings:
+      base:
+        PRODUCT_NAME: EngineCode
+        GCC_GENERATE_DEBUGGING_SYMBOLS: NO
+        GCC_PREPROCESSOR_DEFINITIONS: ["$(inherited)", "VX_DYNAMIC_NATIVE=1", "VX_NO_STATIC_NATIVE=1", "VX_MT_DYNAMIC_NATIVE=1"]
   Engine:  # what every app and extension carries
     sources: [Shared]
     dependencies:
@@ -77,7 +109,12 @@ targetTemplates:
   App:
     templates: [Engine]
     type: application
-    sources: [App]
+    sources:
+      - App
+      # the greetings of voices not downloaded yet (tools/make_samples.py)
+      - path: Samples
+        type: folder
+        optional: true
     dependencies:
       - sdk: Accelerate.framework
       - sdk: AudioToolbox.framework
@@ -88,7 +125,7 @@ targetTemplates:
       base:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Classic Voices
-  Synth:
+  SynthBase:
     templates: [Engine]
     type: app-extension
     sources: [Synth]
@@ -100,6 +137,8 @@ targetTemplates:
       base:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Synth/Info.plist
+  Synth:
+    templates: [SynthBase]
     postBuildScripts:
       - name: Bundle firmware voices
         script: |
@@ -185,6 +224,12 @@ targets:
     templates: [App]
     templateAttributes: { engine: EngineCodeMac }
     platform: macOS
+    sources:
+      - App
+      - path: Samples
+        type: folder
+        optional: true
+      - MacApp
     dependencies:
       - target: SynthMac
     entitlements:
@@ -213,4 +258,74 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac.Synth
   EngineCodeMac:
     templates: [EngineCode]
+    platform: macOS
+
+  # The Mac app as released (tools/release_mac.sh): nothing of Apple's in it.
+  # It gets the engines from Apple's servers and archive.org itself, builds
+  # their fast code on the Mac, and updates itself. Not sandboxed (it runs the
+  # compiler and replaces itself); its extension is, and loads what the app
+  # leaves in the App Group. Same identifiers as ClassicVoicesMac.
+  ClassicVoicesMacPublic:
+    templates: [App]
+    templateAttributes: { engine: EngineCodeMacPublic }
+    platform: macOS
+    sources:
+      - App
+      - path: Samples
+        type: folder
+        optional: true
+      - MacApp
+    dependencies:
+      - target: SynthMacPublic
+    postBuildScripts:
+      - name: Fast code sources
+        # what the app compiles on the Mac (MacApp/FastCodeBuilder.swift): the
+        # instruction semantics, the libraries' glue and the profiles (addresses only)
+        script: |
+          set -e
+          D="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/FastCode"
+          rm -rf "$D"; mkdir -p "$D/core/x86" "$D/core/mt" "$D/profiles"
+          cp "$SRCROOT/../core/thumb.h" "$SRCROOT/../core/thumb_ops.h" "$SRCROOT/../core/recomp_rt.h" "$D/core/"
+          cp "$SRCROOT/../core/x86/x86.h" "$SRCROOT/../core/x86/x86_ops.h" "$D/core/x86/"
+          cp "$SRCROOT/../core/mt/mt_native.h" "$D/core/mt/"
+          cp "$SRCROOT/../nvda/src/native_glue.c" "$SRCROOT/../ports/apple/mt_native_glue.c" "$D/"
+          cp "$SRCROOT/../tools/profiles/"*.txt "$D/profiles/"
+        basedOnDependencyAnalysis: false
+    entitlements:
+      path: App/ClassicVoicesMacPublic.entitlements
+      properties:
+        com.apple.security.application-groups: [7WV49AN2BX.com.levigobin.ClassicVoices]
+    settings:
+      base:
+        PRODUCT_NAME: Classic Voices
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Developer ID Application
+        OTHER_CODE_SIGN_FLAGS: ["--timestamp"]  # notarization wants a secure timestamp
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO  # no get-task-allow: notarization refuses it
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", "CV_PUBLIC"]
+  SynthMacPublic:
+    templates: [SynthBase]
+    templateAttributes: { engine: EngineCodeMacPublic }
+    platform: macOS
+    entitlements:
+      path: Synth/SynthMacPublic.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups: [7WV49AN2BX.com.levigobin.ClassicVoices]
+        # the fast code the app compiles on this Mac
+        com.apple.security.cs.disable-library-validation: true
+    settings:
+      base:
+        PRODUCT_NAME: Synth
+        PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices.mac.Synth
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: Developer ID Application
+        OTHER_CODE_SIGN_FLAGS: ["--timestamp"]  # notarization wants a secure timestamp
+        CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO  # no get-task-allow: notarization refuses it
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: ["$(inherited)", "CV_PUBLIC"]
+  EngineCodeMacPublic:
+    templates: [EngineCodePublic]
     platform: macOS

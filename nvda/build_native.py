@@ -130,7 +130,7 @@ def compile_dll(build, bits, gen_dir, out_dll):
         objs, cmds = [], []
         for s in sources + [glue]:
             o = os.path.join(obj_dir, os.path.basename(s) + ".o")
-            cmds.append([clang, "--target=" + target, "-O2", "-std=gnu11",
+            cmds.append([clang, "--target=" + target, "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-std=gnu11",
                          "-ffp-contract=off", "-w", "-I", os.path.join(ROOT, "core"),
                          "-DCV_BUILD=" + build, "-c", s, "-o", o])
             objs.append(o)

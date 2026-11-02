@@ -328,13 +328,21 @@ final class DiskImage: RandomAccess {
 final class HFSVolume {
     struct Extent { let start: UInt32; let count: UInt32 }
     struct Fork { let size: UInt64; var extents: [Extent] }
-    struct File { let path: String; let id: UInt32; var fork: Fork }
+    struct File {
+        let path: String
+        let id: UInt32
+        var fork: Fork
+        var resource = Fork(size: 0, extents: [])  // where HFS+ compression keeps a file's data
+        var mode: UInt16 = 0  // BSD mode bits: 0o120000 for a symbolic link
+    }
 
     private let disk: DiskImage
     private let base: UInt64
     private let blockSize: UInt64
     private var catalog: Fork
     private let overflow: Fork
+    private let attributesFile: Fork
+    private var decmpfs: [UInt32: Data]?
 
     init(_ disk: DiskImage, at base: UInt64) throws {
         self.disk = disk
@@ -344,6 +352,7 @@ final class HFSVolume {
         guard blockSize >= 512 else { throw DiskImage.ImageError.unreadable("That disc\u{2019}s volume is damaged.") }
         catalog = Self.fork(vh, at: 272)
         overflow = Self.fork(vh, at: 192)
+        attributesFile = Self.fork(vh, at: 352)
         catalog.extents += try overflowExtents(fileID: 4, have: catalog)
         // All of it is read next, a node at a time: ask for it at once.
         disk.prefetch(diskRanges(catalog, at: 0, count: catalog.size))
@@ -432,7 +441,7 @@ final class HFSVolume {
     /// root, like "System/Installation/Packages/Essentials.pkg").
     func files(where want: (String) -> Bool) throws -> [File] {
         var folders: [UInt32: (UInt32, String)] = [:]
-        var files: [(UInt32, String, UInt32, Fork)] = []
+        var files: [(UInt32, String, UInt32, Fork, Fork, UInt16)] = []
         try walkLeaves(catalog) { rec in
             guard rec.count >= 8 else { return }
             let keyLength = Int(rec.be16(0))
@@ -450,7 +459,8 @@ final class HFSVolume {
             case 1 where o + 12 <= rec.count:  // folder
                 folders[rec.be32(o + 8)] = (parent, name)
             case 2 where o + 168 <= rec.count:  // file
-                files.append((parent, name, rec.be32(o + 8), Self.fork(rec, at: o + 88)))
+                let resource = o + 248 <= rec.count ? Self.fork(rec, at: o + 168) : Fork(size: 0, extents: [])
+                files.append((parent, name, rec.be32(o + 8), Self.fork(rec, at: o + 88), resource, rec.be16(o + 42)))
             default: break
             }
         }
@@ -467,15 +477,70 @@ final class HFSVolume {
             return parts.reversed().joined(separator: "/")
         }
         var out: [File] = []
-        for (parent, name, id, fork) in files {
+        for (parent, name, id, fork, resource, mode) in files {
             guard let dir = path(parent) else { continue }
             let p = dir.isEmpty ? name : dir + "/" + name
             guard want(p) else { continue }
-            var f = File(path: p, id: id, fork: fork)
+            var f = File(path: p, id: id, fork: fork, resource: resource, mode: mode)
             f.fork.extents += try overflowExtents(fileID: id, have: fork)
             out.append(f)
         }
         return out
+    }
+
+    /// A file stored with HFS+ compression (an empty data fork and a
+    /// com.apple.decmpfs attribute), as iOS 10's root filesystem keeps system
+    /// files: its contents, or nil when it isn't compressed.
+    func decompressed(_ file: File) throws -> Data? {
+        guard file.fork.size == 0 else { return nil }
+        if decmpfs == nil {
+            var found: [UInt32: Data] = [:]
+            if attributesFile.size > 0 {
+                try walkLeaves(attributesFile) { r in
+                    guard r.count >= 14 else { return }
+                    let keyLength = Int(r.be16(0)), id = r.be32(4), nameLength = Int(r.be16(12))
+                    guard 14 + 2 * nameLength <= r.count else { return }
+                    let name = String(decoding: (0..<nameLength).map { r.be16(14 + 2 * $0) }, as: UTF16.self)
+                    let o = 2 + keyLength
+                    guard name == "com.apple.decmpfs", o + 16 <= r.count, r.be32(o) == 0x10 else { return }
+                    let n = Int(r.be32(o + 12))
+                    found[id] = r.subdata(in: r.startIndex + o + 16 ..< r.startIndex + min(r.count, o + 16 + n))
+                }
+            }
+            decmpfs = found
+        }
+        guard let hdr = decmpfs?[file.id], hdr.count >= 16, hdr.prefix(4) == Data("fpmc".utf8) else { return nil }
+        let type = hdr.le32(4), size = Int(hdr.le64(8))
+        func expand(_ chunk: Data, _ want: Int) throws -> Data {
+            if chunk.first == 0xFF { return chunk.dropFirst().prefix(want) }
+            var out = Data(count: want)
+            var outLen = uLongf(want)
+            let rc = out.withUnsafeMutableBytes { o in
+                chunk.withUnsafeBytes { i in
+                    uncompress(o.bindMemory(to: Bytef.self).baseAddress, &outLen,
+                               i.bindMemory(to: Bytef.self).baseAddress, uLong(chunk.count))
+                }
+            }
+            guard rc == Z_OK || rc == Z_BUF_ERROR else { throw DiskImage.ImageError.unreadable("A compressed file is damaged.") }
+            return out.prefix(Int(outLen))
+        }
+        switch type {
+        case 3:  // zlib, inline in the attribute
+            return try expand(hdr.subdata(in: hdr.startIndex + 16 ..< hdr.endIndex), size)
+        case 4:  // zlib chunks in the resource fork
+            let rsrc = try read(file.resource, at: 0, count: Int(file.resource.size))
+            let head = Int(rsrc.be32(0))
+            let n = Int(rsrc.le32(head + 4))
+            var out = Data(capacity: size)
+            for i in 0..<n {
+                let off = Int(rsrc.le32(head + 8 + 8 * i)), len = Int(rsrc.le32(head + 12 + 8 * i))
+                let chunk = rsrc.subdata(in: rsrc.startIndex + head + 4 + off ..< rsrc.startIndex + head + 4 + off + len)
+                out.append(try expand(chunk, 65536))
+            }
+            return out.prefix(size)
+        default:
+            throw DiskImage.ImageError.unreadable("\(file.path) uses HFS+ compression type \(type), which can't be read here.")
+        }
     }
 
     /// Reads a file in order, for the package readers.

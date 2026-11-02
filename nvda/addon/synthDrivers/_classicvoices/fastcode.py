@@ -26,6 +26,11 @@ ZIG_INDEX = "https://ziglang.org/download/index.json"
 STRIPPED = ("ios3", "ios4", "ios5")  # function boundaries from the BL targets (recomp.py --scan-bl)
 # Windows: no console window for each compiler run (it would take the focus)
 NO_WINDOW = 0x08000000 if IS_WIN else 0
+# The generated functions are huge: LLVM's SLP vectorizer spent 290 s on one
+# iOS 7.1.2 file and made the code slower (iOS 6 sentences 17% faster
+# without it), and its classic GVN 85% of an iOS 6 file's time (NewGVN: a
+# sixth). Same output either way. -g0: Zig adds debug info otherwise.
+FAST_FLAGS = ["-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
 
 
 def cache_dir():
@@ -176,7 +181,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
                     break
                 o = os.path.join(objdir, os.path.basename(src) + ".o")
                 objs.append(o)
-                running.append(subprocess.Popen(cc + extra + ["-O2", "-std=gnu11", "-ffp-contract=off", "-w",
+                running.append(subprocess.Popen(cc + extra + ["-O2"] + FAST_FLAGS + ["-std=gnu11", "-ffp-contract=off", "-w",
                                                               "-I", core, "-DCV_BUILD=" + build, "-c", src, "-o", o],
                                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                                                 creationflags=NO_WINDOW))
