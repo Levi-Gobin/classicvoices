@@ -60,6 +60,12 @@ def _listing(voices_root, downloads_root):
     """[(kind, entry, label, size, firmware keys still to get)] of everything
     not installed yet."""
     from . import firmware
+    # firmware imported before its Mac OS X release could use it (0.4.0's
+    # Mountain Lion and Mavericks took iOS 7.1.2 only, not 7.0.6)
+    try:
+        firmware.assemble_mac_common(voices_root)
+    except OSError:
+        pass
     wanted = firmware.wanted_languages(os.path.dirname(os.path.normpath(voices_root)))
     out = []
     for e in enhanced_catalog():

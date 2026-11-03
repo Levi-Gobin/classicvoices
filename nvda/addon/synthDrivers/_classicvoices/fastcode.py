@@ -250,6 +250,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
                 try:
                     os.remove(out)
                 except OSError:  # a program has it loaded: the new one is used next time
+                    remove_old(native_dir)
                     os.replace(out, out + ".old")
             os.replace(tmp, out)
             if not IS_WIN:
@@ -258,9 +259,25 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
         for f in os.listdir(native_dir):
             if f.endswith(".c.lib"):
                 os.remove(os.path.join(native_dir, f))
+        remove_old(native_dir)
         write_stamp(native_dir, build, value)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def remove_old(native_dir):
+    """The fast code a build replaced while a program had it loaded, once no
+    program has it any more."""
+    try:
+        names = os.listdir(native_dir)
+    except OSError:
+        return
+    for f in names:
+        if f.endswith(".old"):
+            try:
+                os.remove(os.path.join(native_dir, f))
+            except OSError:
+                pass
 
 
 def _reap(running):

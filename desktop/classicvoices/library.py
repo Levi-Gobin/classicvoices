@@ -184,6 +184,12 @@ class Library:
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         threading.Thread(target=self._worker, daemon=True).start()
+        # firmware imported before its Mac OS X release could use it (0.4.0's
+        # Mountain Lion and Mavericks took iOS 7.1.2 only, not 7.0.6)
+        try:
+            cv_firmware.assemble_mac_common(system.voices_root())
+        except OSError:
+            pass
         self.refresh()
         self.get_compacts()  # firmware imported before the app got the Mac compacts
         self.start_fast_code()  # firmware imported before the app built fast code by itself
@@ -439,6 +445,7 @@ class Library:
         """Builds fast code for imported firmware that has none or an older
         version's (after an update), unless a build failed or was stopped
         (then the Speed up the voices page starts it)."""
+        system.remove_old_fast_code()
         if system.recompiler() and system.get_setting("FastCodeAuto") and self.fast_code_missing():
             self.build_fast_code(None)
 

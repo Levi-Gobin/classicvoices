@@ -131,6 +131,11 @@ def fast_code_current(build):
     return cv_fastcode.up_to_date(native_dir(), build, _recompiler_candidates())
 
 
+def remove_old_fast_code():
+    """Fast code a build replaced while a program (a screen reader) had it loaded."""
+    cv_fastcode.remove_old(native_dir())
+
+
 def nvda_data_root():
     """The NVDA add-on's own data folder (installed NVDA), if it has voices."""
     if not IS_WIN:
