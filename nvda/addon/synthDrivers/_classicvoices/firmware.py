@@ -431,7 +431,9 @@ def assemble_mac_common(voices_root):
         for p, f in srcs:
             dest = os.path.join(out, f)
             if not os.path.isfile(dest):
-                shutil.copyfile(p, dest)
+                # by way of a .part file: a copy cut short is never taken for a whole one
+                shutil.copyfile(p, dest + ".part")
+                os.replace(dest + ".part", dest)
 
 
 def _copy_build_dir(src, voices_root, build_key, progress):

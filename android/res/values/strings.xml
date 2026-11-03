@@ -150,6 +150,7 @@
     <string name="import_preparing">Preparing</string>
     <string name="import_starting">starting</string>
     <string name="import_cancelled">Cancelled</string>
+    <string name="import_no_memory">not enough memory for this on this device</string>
     <string name="import_done_suffix">done</string>
     <string name="import_not_available">That download is no longer available</string>
     <string name="import_cant_open">Couldn\'t open the file</string>

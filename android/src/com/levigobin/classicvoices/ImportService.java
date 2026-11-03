@@ -213,6 +213,11 @@ public class ImportService extends Service {
                 synchronized (ERRORS) {
                     ERRORS.add(error);
                 }
+            } catch (OutOfMemoryError e) {  // the job fails, not the app and its voices with it
+                error = j.label + ": " + getString(R.string.import_no_memory);
+                synchronized (ERRORS) {
+                    ERRORS.add(error);
+                }
             }
             synchronized (LOCK) {
                 currentJob = null;  // done: the screen shows it as such when it hears

@@ -1,7 +1,7 @@
 package com.levigobin.classicvoices;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStream;
 
 /**
  * A bzip2 decoder, for the Mac OS X installers' Essentials.pkg (MacCompacts):
@@ -33,16 +33,19 @@ final class Bzip2 {
         }
     }
 
-    static byte[] decompress(byte[] in) throws IOException {
-        if (in.length < 4 || in[0] != 'B' || in[1] != 'Z' || in[2] != 'h' || in[3] < '1' || in[3] > '9')
-            throw new IOException("not bzip2 data");
-        int max = (in[3] - '0') * 100000;
+    /**
+     * The blocks between bits from and to of in (a stream's, without its header and end) into
+     * out, block by block, read where they are: no copy of in, nor of all that comes out.
+     * level: the stream's block size, 1-9.
+     */
+    static void decompress(byte[] in, long from, long to, int level, OutputStream out) throws IOException {
+        if (level < 1 || level > 9) throw new IOException("not bzip2 data");
+        int max = level * 100000;
         Bits r = new Bits(in);
-        r.pos = 32;
-        ByteArrayOutputStream out = new ByteArrayOutputStream(in.length * 4);
+        r.pos = from;
         int[] tt = new int[max];
         byte[] ll = new byte[max];
-        while (true) {
+        while (r.pos < to) {
             long magic = r.bits(48);
             if (magic == END) break;
             if (magic != BLOCK) throw new IOException("bad bzip2 block");
@@ -77,7 +80,6 @@ final class Bzip2 {
             }
             out.write(blockOut, 0, o);
         }
-        return out.toByteArray();
     }
 
     /** One block's symbols into ll (before the inverse BWT); returns its length. */

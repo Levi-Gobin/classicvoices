@@ -463,9 +463,11 @@ final class Firmware {
         }
     }
 
+    /** By way of a .part file: a copy cut short is never taken for a whole one. */
     static void copy(File from, File to) throws IOException {
+        File part = new File(to.getPath() + ".part");
         InputStream in = new java.io.FileInputStream(from);
-        OutputStream out = new FileOutputStream(to);
+        OutputStream out = new FileOutputStream(part);
         try {
             byte[] buf = new byte[1 << 16];
             int n;
@@ -473,6 +475,11 @@ final class Firmware {
         } finally {
             in.close();
             out.close();
+        }
+        if (!part.renameTo(to)) {
+            //noinspection ResultOfMethodCallIgnored
+            part.delete();
+            throw new IOException("couldn't write " + to);
         }
     }
 

@@ -216,11 +216,24 @@ final class MacCompacts {
         }
     }
 
-    /** The voices' part of the payload, decompressed. */
-    private static byte[] decode(JSONObject e, byte[] raw) throws IOException, JSONException {
+    /**
+     * The voices' part of the payload, decompressed. bzip2 goes by way of a file: the 40 MB
+     * download and the 60 MB that come out of it together are already more than many phones
+     * give an app (Mountain Lion took about 300 MB, and the app was closed).
+     */
+    private static byte[] decode(Context c, JSONObject e, byte[] raw) throws IOException, JSONException {
         if (e.getString("codec").equals("gzip")) return gunzipFrom(raw, e.optInt("shift"));
         JSONArray bits = e.getJSONArray("bits");
-        return bunzipFrom(raw, bits.getInt(0), bits.getInt(1), e.getInt("level"), e.getLong("crc"));
+        File tmp = new File(c.getCacheDir(), "compacts.payload");
+        try {
+            try (OutputStream o = new FileOutputStream(tmp)) {
+                Bzip2.decompress(raw, bits.getLong(0), bits.getLong(1), e.getInt("level"), o);
+            }
+            return Recompiler.readAll(tmp);
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            tmp.delete();
+        }
     }
 
     /** A deflate block that starts `shift` bits into raw's first byte, to where raw ends. */
@@ -234,40 +247,6 @@ final class MacCompacts {
             }
         }
         return inflate(d, true, new byte[32768], 0);
-    }
-
-    /** The bzip2 blocks between bit offsets a and b of raw, made a stream of their own. */
-    static byte[] bunzipFrom(byte[] raw, int a, int b, int level, long crc) throws IOException {
-        ByteArrayOutputStream s = new ByteArrayOutputStream(raw.length + 16);
-        s.write('B');
-        s.write('Z');
-        s.write('h');
-        s.write('0' + level);
-        int whole = (b - a) / 8, r = a % 8, at = a / 8;
-        for (int j = 0; j < whole; j++) {
-            int v = r == 0 ? raw[at + j] & 0xFF : ((raw[at + j] & 0xFF) << r | (raw[at + j + 1] & 0xFF) >>> (8 - r)) & 0xFF;
-            s.write(v);
-        }
-        // the last few bits of the blocks, the end marker and the stream's CRC
-        long acc = 0;
-        int nbits = 0;
-        long[][] tail = new long[(b - a) % 8 + 2][];
-        int t = 0;
-        for (int bit = a + whole * 8; bit < b; bit++) tail[t++] = new long[]{(raw[bit >> 3] >> (7 - (bit & 7))) & 1, 1};
-        tail[t++] = new long[]{0x177245385090L, 48};
-        tail[t] = new long[]{crc, 32};
-        for (long[] x : tail) {
-            for (int i = (int) x[1] - 1; i >= 0; i--) {
-                acc = acc << 1 | ((x[0] >> i) & 1);
-                if (++nbits == 8) {
-                    s.write((int) acc & 0xFF);
-                    acc = 0;
-                    nbits = 0;
-                }
-            }
-        }
-        if (nbits > 0) s.write((int) (acc << (8 - nbits)) & 0xFF);
-        return Bzip2.decompress(s.toByteArray());
     }
 
     /** PCMWave of each *Compact.SpeechVoice entry of the cpio archive from `at` on. */
@@ -345,17 +324,28 @@ final class MacCompacts {
             Streams streams = new Streams(new Fetched(spans, data), r.getJSONArray("streams"));
             JSONObject e = r.getJSONObject("essentials");
             byte[] raw = streams.read(e.getInt("stream"), e.getLong("from"), (int) (e.getLong("to") - e.getLong("from")));
-            Map<String, byte[]> found = pcmWaves(decode(e, raw), e.getInt("skip"));
+            JSONArray files = r.getJSONArray("files");  // voices outside the payload (Lion's in BaseSystem.dmg)
+            Map<String, byte[]> own = new HashMap<>();
+            for (int i = 0; i < files.length(); i++) {
+                JSONObject x = files.getJSONObject(i);
+                own.put(x.getString("voice"), streams.read(x.getInt("stream"), 0, (int) x.getLong("size")));
+            }
+            // let the download go before decompressing, and each step's input after it (memory)
+            streams = null;
+            data = null;
+            byte[] payload = decode(c, e, raw);
+            raw = null;
+            Map<String, byte[]> found = pcmWaves(payload, e.getInt("skip"));
+            payload = null;
+            found.putAll(own);
             Map<String, String[]> want = new TreeMap<>();  // folder -> sha256, locale
             JSONObject v = r.getJSONObject("voices");
             for (java.util.Iterator<String> it = v.keys(); it.hasNext(); ) {
                 String k = it.next();
                 want.put(k, new String[]{v.getJSONObject(k).getString("sha256"), v.getJSONObject(k).getString("locale")});
             }
-            JSONArray files = r.getJSONArray("files");
             for (int i = 0; i < files.length(); i++) {
                 JSONObject x = files.getJSONObject(i);
-                found.put(x.getString("voice"), streams.read(x.getInt("stream"), 0, (int) x.getLong("size")));
                 want.put(x.getString("voice"), new String[]{x.getString("sha256"), x.getString("locale")});
             }
             for (Map.Entry<String, String[]> w : want.entrySet()) {

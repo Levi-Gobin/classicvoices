@@ -105,6 +105,9 @@ final class Downloads {
         load(c);
         List<Item> out = new ArrayList<>();
         File dl = Data.downloadsDir(c), voices = Data.voicesDir(c);
+        // firmware imported before its Mac OS X release could use it (0.4.0's
+        // Mountain Lion and Mavericks took iOS 7.1.2 only, not 7.0.6)
+        Firmware.assembleMacCommon(voices);
         java.util.Set<String> wanted = Languages.wanted(c);  // languages left out aren't offered
         try {
             for (int i = 0; i < enhanced.length(); i++) {
