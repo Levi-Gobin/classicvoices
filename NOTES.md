@@ -1770,3 +1770,31 @@ on the 147-character path line 516 -> ~390 ms (Mac, rate 190).
   `say -v "X (Mavericks Compact)"` gives the same audio for every Mac compact
   (old ones too: a `say` name lookup quirk); AVSpeechSynthesizer by voice gives
   each its own.
+
+## 0.5.0: fast code an older version built is built again (2026-11-02)
+
+Only the Mac app (FastCodeBuilder.stamp) rebuilt fast code after an update;
+the Windows and Linux app, NVDA and Android only checked that the files were
+there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
+(about 5x slower than 0.5.0's on a paragraph, measured on the Mac).
+- fastcode.stamp(): SHA-256 (16 hex) of FLAGS_VERSION ("f2", bump it when
+  FAST_FLAGS or anything else not hashed changes the output), recomp.py,
+  native_glue.c, thumb.h/thumb_ops.h/recomp_rt.h and the seven engine profiles
+  (by name, CRLF folded, so the add-on's copy, the repo and the Linux install
+  hash alike). A build writes Native/cvnative_<build>.stamp; up_to_date()
+  wants the files and a matching stamp (no recompiler here: whatever is there
+  counts).
+- Desktop app: fast_code_missing() is "not current", so start_fast_code at
+  launch rebuilds (FastCodeAuto, default on); the page says "fast code from an
+  older version" and offers "Update the fast code". NVDA: _update_fast_code
+  30 s after NVDA starts rebuilds outdated fast code in the background, only
+  when cv_paths.app_data_root() is None (the app shares that data and does it
+  itself), and says "fast engine code is updated". nvda/build_native.py stamps
+  the CI data zip's DLLs. Linux classicvoices-data: native stamps and now uses
+  FAST_FLAGS with clang (it had none), status lists outdated builds,
+  android-pack stamps too.
+- Android: android/build.sh writes assets/fastcode/stamp with fastcode.py's
+  stamp (Recompiler.java mirrors recomp.py: a change only to it needs a
+  FLAGS_VERSION bump); FastCode.current() compares; missing() includes
+  outdated, so startIfNeeded at launch rebuilds. A data pack's stamp is
+  read-only like its code: deleted before writing.
