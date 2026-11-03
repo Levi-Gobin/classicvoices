@@ -9,7 +9,7 @@ did and respond as quickly as the built-in system voices you may be used to.
 ## Contents of this repo
 
 The repo contains only the app and the tools to build it. No Apple software or voice data is
-stored here. The engines and voices are downloaded when you build, or by the app after you install it from a release: iPhone firmware (IPSW files) and the voice downloads Apple still offers come from Apple's own servers, and the older Mac OS X install discs (Tiger, Leopard and Snow Leopard) come from archive.org.
+stored here. The engines and voices are downloaded when you build, or by the app after you install it from a release: iPhone firmware (IPSW files) and the voice downloads Apple still offers come from Apple's own servers, and the older Mac OS X install discs (Tiger, Leopard and Snow Leopard) and a Mavericks installer come from archive.org.
 The fast engine code (code which allows for quicker response times) is generated from that firmware on your own device or during your build, and is
 never published.
 
@@ -33,13 +33,16 @@ You can install on to the following platforms with a release:
 
 - [ClassicVoices.apk](https://github.com/Levi-Gobin/classicvoices/releases/latest/download/ClassicVoices.apk): For Android 5 or later. Works as a system TTS engine so it can be used with screen readers like TalkBack or BackTalk. You may need to allow your browser or files app to install apps. Then open Classic Voices, get the firmware, pick your voices, and choose Classic Voices as your text to speech engine. The fast engine code is only on 64 bit phones.
 
+#### macOS
+- [ClassicVoices-mac.dmg](https://github.com/Levi-Gobin/classicvoices/releases/latest/download/ClassicVoices-mac.dmg): For macOS 14 or later. Open it and drag Classic Voices into Applications. It's signed and notarized by Apple, and has nothing of Apple's in it: when you first open it, it downloads the engines and voices from Apple and archive.org and builds its fast engine code, which takes a while, and the voices work in the meantime. It updates itself. Choose the voices in VoiceOver Utility or in System Settings, Accessibility, Spoken Content.
+
 #### Linux
 - [classicvoices-linux-x86_64.tar.gz](https://github.com/Levi-Gobin/classicvoices/releases/latest/download/classicvoices-linux-x86_64.tar.gz) (most PCs) and [classicvoices-linux-aarch64.tar.gz](https://github.com/Levi-Gobin/classicvoices/releases/latest/download/classicvoices-linux-aarch64.tar.gz) (64 bit ARM, like a Raspberry Pi 4 or 5): Acts as a Speech Dispatcher module and can be used with Orca. You need Speech Dispatcher 0.11 or later (Debian 12, Ubuntu 22.04, Fedora 36 or newer). Unpack it and run `classicvoices/install.sh`. It installs into your home folder, so you don't need root. Then open Classic Voices from your applications menu to get the voices (it needs wxPython: `sudo apt install python3-wxgtk4.0`), or run `classicvoices-data import ios6` in a terminal. After that, pick Classic Voices as Orca's speech synthesizer. More in [linux/README.md](linux/README.md).
 
 
 
 ### iOS/iPadOS
-The iPhone, iPad, Mac and Vision Pro apps have Apple's code in them, so they're never in a release. You build your own on GitHub instead, and the scripts below do that for you.
+The iPhone, iPad and Vision Pro apps have Apple's code in them, so they're never in a release. You build your own on GitHub instead, and the scripts below do that for you. You can build your own Mac app the same way, with its voices already in it, instead of downloading it.
 
 For iOS, you need a free GitHub account and a way to sideload apps ([Sideloadly](https://sideloadly.io), [AltStore](https://altstore.io) or [SideStore](https://sidestore.io). These work from Windows or a Mac). You don't need a Mac
 or Xcode.
@@ -157,6 +160,12 @@ developers, so you can't register that one.
 | iOS 7.0.6 (11B651, iPhone 4) | The iOS 7 voices, on iOS 7.0's own engine, and their enhanced voices (downloaded in the app) |
 | iOS 7.1.2 (11D257, iPhone 4) | Only its engine (read straight from Apple's server, about 50 MB), for iOS 7's Siri voices and the Mac OS X Mavericks voices |
 | iOS 10.3.4 (14G61, iPhone 5) | Only its engine, for the Mavericks premium voices |
+
+Every app also has the compact voices Mac OS X Lion, Mountain Lion and
+Mavericks came with (97 of them, like Samantha, Daniel and Karen), taken from
+those releases' installers: Apple's own Lion and Mountain Lion downloads and a
+Mavericks installer kept on archive.org. Only the part of each installer with
+the voices is downloaded, about 110 MB for all three.
 
 The app can also download the voices Mac OS X Lion, Mountain Lion and
 Mavericks offered in System Preferences, from Apple's software update servers,

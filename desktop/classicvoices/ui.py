@@ -548,14 +548,18 @@ class Browser(wx.Panel):
         if not imported:
             p.text("Import firmware first.")
         for f in imported:
-            p.text("%s: %s" % (L.FIRMWARE_NAMES[f], "fast code ready" if lib.fast_code(f) else "no fast code yet"))
+            p.text("%s: %s" % (L.FIRMWARE_NAMES[f], "fast code ready" if lib.fast_code_current(f)
+                               else "fast code from an older version" if lib.fast_code(f) else "no fast code yet"))
         job = lib.job_for("fast")
         if job:
             p.button("", lambda: lib.cancel("fast"), live=lambda: "Stop building, %s" % job.message, key="fast")
             job_gauge(p, job, "Building fast code")
         elif imported and system.recompiler():
-            todo = [f for f in imported if not lib.fast_code(f)]
-            if todo:
+            todo = [f for f in imported if not lib.fast_code_current(f)]
+            if todo and all(lib.fast_code(f) for f in todo):
+                p.button("Update the fast code",
+                         lambda: (system.set_setting("FastCodeAuto", True), lib.build_fast_code(None)))
+            elif todo:
                 p.button("Build fast code for %s" % ("the new firmware" if len(todo) < len(imported)
                                                      else "all imported firmware"),
                          lambda: (system.set_setting("FastCodeAuto", True), lib.build_fast_code(None)))

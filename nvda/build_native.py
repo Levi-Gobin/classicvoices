@@ -30,11 +30,15 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "addon", "synthDrivers"))
+from _classicvoices import fastcode  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "nvda", "src")
 WORK = os.path.join(ROOT, "build", "native")
 
 BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10")
+RECOMPILER = ((os.path.join(ROOT, "tools"), os.path.join(ROOT, "core"), os.path.join(SRC, "native_glue.c")),)
 STRIPPED = ("ios3", "ios4", "ios5")
 VSWHERE = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
                        "Microsoft Visual Studio", "Installer", "vswhere.exe")
@@ -217,6 +221,9 @@ def main():
             cc = compile_dll(build, bits, gen_dir, dll)
             print("  -> %s (%s, %.1f MB)" % (dll, cc, os.path.getsize(dll) / 1e6))
             done.append(dll)
+        if sorted(a.bits) == [32, 64]:
+            # what the add-on checks to know this version built it (else it builds it again)
+            fastcode.write_stamp(a.out, build, fastcode.stamp(RECOMPILER))
     for build, why in skipped:
         print("skipped %s: %s" % (build, why))
     if not done:

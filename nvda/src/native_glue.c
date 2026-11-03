@@ -23,7 +23,7 @@ static CvFaultMem p_fault_mem;
 static CvUndef p_undef;
 
 int rt_call(Cpu *c, uint32_t ret) { return p_rt_call(c, ret); }
-// calls through a register (recomp.py since 0.4.1); an older engine library
+// calls through a register (recomp.py since 0.5.0); an older engine library
 // doesn't hand rt_icall in, and rt_call does the same, only slower
 int rt_icall(Cpu *c, uint32_t ret) { return (p_rt_icall ? p_rt_icall : p_rt_call)(c, ret); }
 int rt_import(Cpu *c, uint32_t stub, uint32_t ret) { return p_rt_import(c, stub, ret); }
@@ -47,7 +47,7 @@ CV_EXPORT void cv_native_bind(CvRtCall rc, CvRtImport ri, CvFaultMem fm, CvUndef
 CV_EXPORT void cv_native_bind_icall(CvRtCall ic) { p_rt_icall = ic; }
 
 // The guest space this was compiled for, which its address checks use (none
-// before 0.4.1, when it was always 1 GB).
+// before 0.5.0, when it was always 1 GB).
 CV_EXPORT unsigned cv_native_guest_mem(void) { return GUEST_MEM_SIZE; }
 
 CV_EXPORT const NativeEntry *cv_native_table(size_t *count) {

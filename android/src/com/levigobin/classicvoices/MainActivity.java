@@ -934,7 +934,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         for (Firmware.Build b : Firmware.BUILDS) {
             if (!Library.firmwareImported(this, b.key)) continue;
             any = true;
-            text(getString(Library.fastCode(this, b.key) ? R.string.fast_ready : R.string.fast_missing, b.nice));
+            text(getString(FastCode.current(this, b.key) ? R.string.fast_ready
+                    : Library.fastCode(this, b.key) ? R.string.fast_old : R.string.fast_missing, b.nice));
         }
         if (!any) text(getString(R.string.fast_import_first));
         ImportService.Job j = currentOrQueued(FastCode.JOB, FastCode.JOB);
@@ -1008,7 +1009,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         for (Firmware.Build b : Firmware.BUILDS) {
             boolean have = Library.firmwareImported(this, b.key);
             s.append("  ").append(b.nice).append(" (").append(b.key).append("): ")
-                    .append(have ? (Library.fastCode(this, b.key) ? "imported, fast code" : "imported, no fast code")
+                    .append(have ? (FastCode.current(this, b.key) ? "imported, fast code"
+                            : Library.fastCode(this, b.key) ? "imported, older fast code" : "imported, no fast code")
                             : "not imported").append('\n');
         }
         int here = 0;

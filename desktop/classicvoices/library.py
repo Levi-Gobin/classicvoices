@@ -28,7 +28,7 @@ class Version:
 # The firmware each version needs: its own voices' (iOS), or the engine and
 # common files the Mac voices run on (firmware.MAC_COMMON, voices.MAC_ENGINES).
 # IOS7: either iOS 7 firmware; 7.0.6 is the one suggested, as it also has the
-# iOS 7 voices (7.1.2 was the only one before 0.4.1, and still works).
+# iOS 7 voices (7.1.2 was the only one before 0.5.0, and still works).
 IOS7 = cv_voices.IOS7
 VERSIONS = [
     Version("ios3", "iOS 3", "ios", ["ios3"], "3.1.3"),
@@ -325,6 +325,11 @@ class Library:
     def fast_code(self, build):
         return all(os.path.isfile(os.path.join(system.native_dir(), f)) for f in system.native_files(build))
 
+    def fast_code_current(self, build):
+        """Fast code built by this version (older fast code still runs, slower,
+        until it's built again)."""
+        return system.fast_code_current(build)
+
     # ---- work
     def job_for(self, key):
         with self._lock:
@@ -427,11 +432,13 @@ class Library:
         self._queue(Job("firmware", "file:" + path, os.path.basename(path), 0, run))
 
     def fast_code_missing(self):
-        return [f for f in FIRMWARE_NAMES if self.firmware_imported(f) and not self.fast_code(f)]
+        """Imported firmware without fast code, or with an older version's."""
+        return [f for f in FIRMWARE_NAMES if self.firmware_imported(f) and not self.fast_code_current(f)]
 
     def start_fast_code(self):
-        """Builds fast code for imported firmware that has none, unless a build
-        failed or was stopped (then the Speed up the voices page starts it)."""
+        """Builds fast code for imported firmware that has none or an older
+        version's (after an update), unless a build failed or was stopped
+        (then the Speed up the voices page starts it)."""
         if system.recompiler() and system.get_setting("FastCodeAuto") and self.fast_code_missing():
             self.build_fast_code(None)
 
@@ -536,7 +543,8 @@ def diagnostics(lib):
     for key, name in FIRMWARE_NAMES.items():
         state = "imported" if lib.firmware_imported(key) else "not imported"
         if lib.firmware_imported(key):
-            state += ", fast code" if lib.fast_code(key) else ", no fast code"
+            state += (", fast code" if lib.fast_code_current(key) else ", older fast code" if lib.fast_code(key)
+                      else ", no fast code")
         lines.append("  %s (%s): %s" % (name, key, state))
     lines.append("Voices: %d (%d hidden from the system)" % (
         sum(1 for i in lib.items if i.state in ("builtin", "installed")), len(system.hidden_keys())))

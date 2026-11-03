@@ -35,7 +35,7 @@ final class Library {
     }
 
     /** Either iOS 7 firmware: the Mavericks compacts run on 7.1.2's engine when it
-     *  was imported (the only one before 0.4.1), else on 7.0.6's (vxstream.c). */
+     *  was imported (the only one before 0.5.0), else on 7.0.6's (vxstream.c). */
     static final String IOS7 = "ios7|ios70";
 
     static final Version[] VERSIONS = {

@@ -68,13 +68,52 @@ final class FastCode {
         return out;
     }
 
-    /** Imported engines without fast code yet. */
+    /** Imported engines without fast code yet, or with an older version's. */
     static List<Firmware.Build> missing(Context c) {
         List<Firmware.Build> out = new ArrayList<>();
         for (Firmware.Build b : Firmware.BUILDS) {
-            if (Data.hasEngine(c, b.key) && !Library.fastCode(c, b.key)) out.add(b);
+            if (Data.hasEngine(c, b.key) && !current(c, b.key)) out.add(b);
         }
         return out;
+    }
+
+    private static String stamp;
+
+    /**
+     * What fast code is built from besides the engine (android/build.sh puts it in the app: the
+     * same stamp as fastcode.py's, of the recompiler, its profiles, the semantics and the glue).
+     * Fast code with another one was built by another version, and is built again. Null: none.
+     */
+    static synchronized String stamp(Context c) {
+        if (stamp == null) {
+            try (InputStream in = c.getAssets().open("fastcode/stamp")) {
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                byte[] buf = new byte[256];
+                for (int k; (k = in.read(buf)) > 0; ) b.write(buf, 0, k);
+                stamp = b.toString("UTF-8").trim();
+            } catch (IOException e) {
+                stamp = "";
+            }
+        }
+        return stamp.isEmpty() ? null : stamp;
+    }
+
+    static File stampFile(Context c, String build) {
+        return new File(Data.nativeDir(c), "cvnative_" + build + ".stamp");
+    }
+
+    /** The build's fast code is here and this version built it (older fast code still runs, slower). */
+    static boolean current(Context c, String build) {
+        if (!Library.fastCode(c, build)) return false;
+        String want = stamp(c);
+        if (want == null) return true;
+        try (InputStream in = new FileInputStream(stampFile(c, build))) {
+            byte[] buf = new byte[256];
+            int n = in.read(buf);
+            return n > 0 && new String(buf, 0, n, "UTF-8").trim().equals(want);
+        } catch (IOException e) {  // built before 0.5.0
+            return false;
+        }
     }
 
     /** Set when a build failed or was stopped: then it starts only from the Speed up the voices page. */
@@ -192,6 +231,10 @@ final class FastCode {
                     out.delete();
                 }
                 if (!tmp.renameTo(out)) throw new IOException(c.getString(R.string.fast_cant_save));
+                String st = stamp(c);
+                //noinspection ResultOfMethodCallIgnored
+                stampFile(c, b.key).delete();  // a data pack's is read-only, like its code
+                if (st != null) writeText(stampFile(c, b.key), st + "\n");
                 Firmware.deleteTree(objDir);
                 Native.reload();  // the engine picks it up at its next utterance
             }

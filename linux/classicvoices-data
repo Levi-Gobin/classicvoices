@@ -50,7 +50,7 @@ for cand in (os.path.join(HERE, "..", "lib", "classicvoices"), os.path.join(HERE
 else:
     sys.exit("classicvoices-data: can't find its _classicvoices library next to it")
 
-from _classicvoices import download, firmware, pronunciation, remote, voices  # noqa: E402
+from _classicvoices import download, fastcode, firmware, pronunciation, remote, voices  # noqa: E402
 
 
 FIRMWARE, PURPOSE = remote.FIRMWARE, remote.PURPOSE
@@ -108,8 +108,16 @@ def cmd_status(_args):
         print("  %-6s %-7s %s  (%s)" % (b, build, "imported" if have else "missing ", PURPOSE[b]))
     from_cv = voices.scan(VOICES, DOWNLOADS)
     print("Voices: %d" % len(from_cv))
-    nat = sorted(f for f in os.listdir(NATIVE)) if os.path.isdir(NATIVE) else []
+    nat = sorted(f[len("cvnative_"):-3] for f in os.listdir(NATIVE) if f.startswith("cvnative_") and f.endswith(".so")) \
+        if os.path.isdir(NATIVE) else []
+    try:
+        rc = (_recompiler(),)
+    except SystemExit:  # no recompiler here: nothing can rebuild it
+        rc = None
+    old = [b for b in nat if rc and not fastcode.up_to_date(NATIVE, b, rc)]
     print("Fast engine code (%s): %s" % (arch(), ", ".join(nat) if nat else "none (run: classicvoices-data native)"))
+    if old:
+        print("  built by an older version, slower (run: classicvoices-data native): %s" % ", ".join(old))
     mod = os.path.join(os.path.expanduser("~"), ".local", "libexec", "speech-dispatcher-modules", "sd_classicvoices")
     print("Speech Dispatcher module: %s" % ("installed" if os.path.exists(mod) else "not installed (run: classicvoices-data install-module)"))
 
@@ -311,11 +319,15 @@ def cmd_native(args):
         sys.exit("no C compiler: install clang (e.g. sudo apt install clang)")
     if not any("clang" in os.path.basename(a) or "zig" in a for a in cc):
         print("warning: %s is not clang; gcc optimizes this generated code very slowly" % " ".join(cc))
+    # clang's flags for the huge generated functions (fastcode.FAST_FLAGS: builds 3-5 times sooner, runs faster)
+    flags = fastcode.FAST_FLAGS if any("clang" in os.path.basename(a) or "zig" in a for a in cc) else []
     work = os.path.join(data_root(), "build")
+    stamp = fastcode.stamp((_recompiler(),))
     for b in builds:
         gen = _generate(b, work)
         if gen:
-            _compile(b, gen, cc, [], [], os.path.join(NATIVE, "cvnative_%s.so" % b))
+            _compile(b, gen, cc, flags, [], os.path.join(NATIVE, "cvnative_%s.so" % b))
+            fastcode.write_stamp(NATIVE, b, stamp)
             shutil.rmtree(gen, ignore_errors=True)
 
 
@@ -377,8 +389,10 @@ def cmd_android_pack(args):
         for a in abis:
             target, flags = ANDROID_ABIS[a]
             # 16 KB pages: Android 15+ phones may use them
-            _compile(b, gen, [clang, "--target=" + target], flags, ["-Wl,-z,max-page-size=16384"],
+            _compile(b, gen, [clang, "--target=" + target], flags + fastcode.FAST_FLAGS, ["-Wl,-z,max-page-size=16384"],
                      os.path.join(stage, "Native", a, "cvnative_%s.so" % b))
+            # the same stamp the app has (android/build.sh), so it isn't built again on the phone
+            fastcode.write_stamp(os.path.join(stage, "Native", a), b, fastcode.stamp((_recompiler(),)))
         shutil.rmtree(gen, ignore_errors=True)
     import zipfile
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:

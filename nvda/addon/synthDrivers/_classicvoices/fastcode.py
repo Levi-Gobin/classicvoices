@@ -10,6 +10,7 @@ derives from Apple's code and stays on this computer.
 The recompiler comes with the add-on (recompiler/: recomp.py, its profiles,
 the instruction semantics headers and native_glue.c); the app passes where
 its own copy is."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -31,6 +32,10 @@ NO_WINDOW = 0x08000000 if IS_WIN else 0
 # without it), and its classic GVN 85% of an iOS 6 file's time (NewGVN: a
 # sixth). Same output either way. -g0: Zig adds debug info otherwise.
 FAST_FLAGS = ["-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
+# Bumped when the compiler flags change what's built (f2: FAST_FLAGS).
+FLAGS_VERSION = "f2"
+SEMANTICS = ("thumb.h", "thumb_ops.h", "recomp_rt.h")
+BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10")  # a profile each
 
 
 def cache_dir():
@@ -136,6 +141,57 @@ def native_files(build):
     return ["cvnative_%s.so" % build]
 
 
+def stamp(candidates=()):
+    """What fast code is built from here besides the engine: the recompiler,
+    its profiles, the instruction semantics (the interpreter's must match
+    them), the glue and the flags. Fast code with another stamp was built by
+    another version, and is rebuilt. None: no recompiler here."""
+    r = recompiler(candidates)
+    if r is None:
+        return None
+    tools, core, glue = r
+    if r not in _stamps:
+        h = hashlib.sha256(FLAGS_VERSION.encode())
+        profiles = os.path.join(tools, "profiles")
+        # every build's profile (each a few KB), so one stamp serves all, as on Android
+        files = [("recomp.py", os.path.join(tools, "recomp.py")), ("native_glue.c", glue)]
+        files += [(n, os.path.join(core, n)) for n in SEMANTICS]
+        files += [("profiles/%s.txt" % b, os.path.join(profiles, b + ".txt")) for b in BUILDS]
+        for name, path in files:
+            with open(path, "rb") as f:
+                h.update(name.encode() + b"\0" + f.read().replace(b"\r\n", b"\n") + b"\0")
+        _stamps[r] = h.hexdigest()[:16]
+    return _stamps[r]
+
+
+_stamps = {}
+
+
+def stamp_file(native_dir, build):
+    return os.path.join(native_dir, "cvnative_%s.stamp" % build)
+
+
+def write_stamp(native_dir, build, value):
+    with open(stamp_file(native_dir, build), "w", encoding="utf-8") as f:
+        f.write(value + "\n")
+
+
+def up_to_date(native_dir, build, candidates=()):
+    """Whether build's fast code in native_dir was built by this version (its
+    files are there and the stamp matches). Without a recompiler here,
+    whatever is there counts: nothing could rebuild it."""
+    if not all(os.path.isfile(os.path.join(native_dir, f)) for f in native_files(build)):
+        return False
+    want = stamp(candidates)
+    if want is None:
+        return True
+    try:
+        with open(stamp_file(native_dir, build), encoding="utf-8") as f:
+            return f.read().strip() == want
+    except OSError:  # built before 0.5.0
+        return False
+
+
 def native_targets():
     """(output file name pattern, extra compiler args) per file a build needs."""
     if IS_WIN:
@@ -150,6 +206,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
     cancel. python: run the recompiler with that interpreter (else in this
     process, as in NVDA or a frozen app)."""
     tools, core, glue = recompiler(candidates)
+    value = stamp(candidates)
     voiced = os.path.join(voices_root, build, "voiced")
     os.makedirs(cache_dir(), exist_ok=True)
     work = tempfile.mkdtemp(prefix="cv_fast_", dir=cache_dir())
@@ -201,6 +258,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
         for f in os.listdir(native_dir):
             if f.endswith(".c.lib"):
                 os.remove(os.path.join(native_dir, f))
+        write_stamp(native_dir, build, value)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

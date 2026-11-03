@@ -8,6 +8,7 @@ import os
 import threading
 
 import globalPluginHandler
+import globalVars
 import gui
 import languageHandler
 import ui
@@ -41,20 +42,32 @@ _work = threading.Lock()
 
 
 def _has_fast_code(build):
+    """Fast code is there, from this version or an older one."""
     nr = cv_paths.native_root()
     return all(os.path.isfile(os.path.join(nr, f)) for f in cv_fastcode.native_files(build))
 
 
+def _fast_code_current(build):
+    return cv_fastcode.up_to_date(cv_paths.native_root(), build)
+
+
 def _fast_code_missing():
+    """Imported engines without fast code, or with an older version's."""
     vr = cv_paths.voices_root()
-    return [b for b, _label in BUILDS if cv_voices.has_engine(vr, b) and not _has_fast_code(b)]
+    return [b for b, _label in BUILDS if cv_voices.has_engine(vr, b) and not _fast_code_current(b)]
 
 
-def _build_fast_code(progress):
-    """Builds fast engine code for every imported engine without it: a few
-    minutes each, and the Zig compiler (about 100 MB) is downloaded the first
-    time. Returns whether anything was built."""
-    todo = _fast_code_missing()
+def _fast_code_outdated():
+    """Imported engines whose fast code an older version built."""
+    return [b for b in _fast_code_missing() if _has_fast_code(b)]
+
+
+def _build_fast_code(progress, todo=None):
+    """Builds fast engine code for every imported engine without it (or todo):
+    a few minutes each, and the Zig compiler (about 100 MB) is downloaded the
+    first time. Returns whether anything was built."""
+    if todo is None:
+        todo = _fast_code_missing()
     if not todo or not cv_fastcode.recompiler():
         return False
     cc = cv_fastcode.find_compiler()
@@ -73,7 +86,8 @@ def _status_lines():
         if not cv_voices.has_engine(vr, build):
             lines.append("%s: not imported" % label)
             continue
-        lines.append("%s: imported, %s" % (label, "fast engine code ready" if _has_fast_code(build)
+        lines.append("%s: imported, %s" % (label, "fast engine code ready" if _fast_code_current(build)
+                                           else "fast engine code from an older version" if _has_fast_code(build)
                                            else "no fast engine code yet"))
     n = len(cv_voices.scan(vr, dr))
     lines.append("Voices available to NVDA: %d" % n)
@@ -466,6 +480,42 @@ class LanguagesDialog(wx.Dialog):
         self.rows.FitInside()
 
 
+def _update_fast_code():
+    """Fast code an older version of the add-on built still runs, but slower:
+    build it again in the background, as the voices keep working meanwhile.
+    When the Classic Voices app is installed, its data is shared and the app
+    does this."""
+    try:
+        if globalVars.appArgs.secure or cv_paths.app_data_root() or not cv_fastcode.recompiler():
+            return
+        todo = _fast_code_outdated()
+    except Exception:
+        log.exception("Classic Voices: checking the fast engine code failed")
+        return
+    if not todo or not _work.acquire(blocking=False):
+        return
+
+    def run():
+        built = False
+        try:
+            built = _build_fast_code(lambda message, fraction: None, todo)
+        except Exception:
+            log.exception("Classic Voices: updating the fast engine code failed")
+        finally:
+            _work.release()
+
+        def finish():
+            _reload_synth()
+            d = DataDialog._instance
+            if d:
+                d.refresh()
+            # Translators: announced when fast engine code built by an older version has been built again.
+            ui.message(_("Classic Voices: fast engine code is updated."))
+        if built:
+            wx.CallAfter(finish)
+    threading.Thread(target=run, daemon=True).start()
+
+
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super().__init__()
@@ -474,6 +524,8 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.item = tools.Append(wx.ID_ANY, _("Classic &Voices data..."),
                                  _("Import firmware and download Classic Voices"))
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onOpen, self.item)
+        # after an update, once NVDA has settled
+        self._later = wx.CallLater(30000, _update_fast_code)
 
     def onOpen(self, evt):
         gui.mainFrame.prePopup()
@@ -483,6 +535,10 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         gui.mainFrame.postPopup()
 
     def terminate(self):
+        try:
+            self._later.Stop()
+        except Exception:
+            pass
         try:
             gui.mainFrame.sysTrayIcon.toolsMenu.Remove(self.item)
         except Exception:

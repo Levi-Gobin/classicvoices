@@ -68,9 +68,9 @@ int vx_try_native_dll(Vx *vx, const char *build) {
             CvTable table = (CvTable)GetProcAddress(m, "cv_native_table");
             if (abi && bind && table && abi() == 1) {
                 bind(rt_call, rt_import, vx_fault_mem, vx_undef);
-                CvBindIcall bic = (CvBindIcall)GetProcAddress(m, "cv_native_bind_icall");  // none before 0.4.1
+                CvBindIcall bic = (CvBindIcall)GetProcAddress(m, "cv_native_bind_icall");  // none before 0.5.0
                 if (bic) bic(rt_icall);
-                CvGuestMem gm = (CvGuestMem)GetProcAddress(m, "cv_native_guest_mem");  // none before 0.4.1: 1 GB
+                CvGuestMem gm = (CvGuestMem)GetProcAddress(m, "cv_native_guest_mem");  // none before 0.5.0: 1 GB
                 slot->guest_mem = gm ? gm() : 0x40000000u;
                 slot->table = table(&slot->count);
             } else {

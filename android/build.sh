@@ -78,6 +78,11 @@ cp nvda/addon/synthDrivers/_classicvoices/EnhancedCatalog.json nvda/addon/synthD
 cp tools/profiles/ios3.txt tools/profiles/ios4.txt tools/profiles/ios5.txt tools/profiles/ios6.txt \
     tools/profiles/ios7.txt tools/profiles/ios70.txt tools/profiles/ios10.txt "$OUT/assets/fastcode/profiles/"
 cp core/thumb.h core/thumb_ops.h core/recomp_rt.h nvda/src/native_glue.c "$OUT/assets/fastcode/"
+# fast code with another stamp was built by another version: the phone builds it again
+# (FastCode.current). fastcode.py's stamp: Recompiler.java mirrors recomp.py
+python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _classicvoices import fastcode; \
+print(fastcode.stamp(((sys.argv[2] + "/tools", sys.argv[2] + "/core", sys.argv[2] + "/nvda/src/native_glue.c"),)))' \
+    "$PWD/nvda/addon/synthDrivers" "$PWD" > "$OUT/assets/fastcode/stamp"
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
 # DEBUG=1: a debuggable build, so adb can reach the app's files (run-as) while developing
 DBG=""

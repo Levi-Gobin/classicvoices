@@ -127,6 +127,10 @@ def native_files(build):
     return cv_fastcode.native_files(build)
 
 
+def fast_code_current(build):
+    return cv_fastcode.up_to_date(native_dir(), build, _recompiler_candidates())
+
+
 def nvda_data_root():
     """The NVDA add-on's own data folder (installed NVDA), if it has voices."""
     if not IS_WIN:

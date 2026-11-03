@@ -11,7 +11,7 @@ IOS_BUILDS = (("ios3", "iOS 3"), ("ios4", "iOS 4"), ("ios5", "iOS 5"), ("ios6", 
 ENHANCED_BUILDS = (("ios5", "iOS 5"), ("ios6", "iOS 6"), ("ios70", "iOS 7"))
 MAC_ERAS = (("mac107", "Lion"), ("mac108", "Mountain Lion"), ("mac109", "Mavericks"))
 # Either iOS 7 engine runs the Mavericks compacts: 7.1.2's when it was
-# imported (the only one before 0.4.1), else 7.0.6's (vxstream.c open_engine).
+# imported (the only one before 0.5.0), else 7.0.6's (vxstream.c open_engine).
 IOS7 = ("ios7", "ios70")
 # Engine firmware needed per Mac era (and for Mavericks, compact vs premium);
 # a tuple is a choice of firmware.

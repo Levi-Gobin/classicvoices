@@ -102,6 +102,7 @@
     <string name="fast_heading">Fast code for this phone (%1$s)</string>
     <string name="fast_ready">%1$s: fast code ready</string>
     <string name="fast_missing">%1$s: no fast code yet</string>
+    <string name="fast_old">%1$s: fast code from an older version, slower</string>
     <string name="fast_import_first">Import firmware first.</string>
     <string name="fast_build_now">Build fast code now</string>
     <string name="fast_again">Build it again</string>
