@@ -28,6 +28,8 @@ final class Languages {
     private Languages() {}
 
     static final String EVERY = "*";
+    /** As a choice's voice: the voice reading keeps reading that language (vxlang.h). */
+    static final String KEEP = "-";
 
     // ---------------------------------------------------------------- languages to get
 

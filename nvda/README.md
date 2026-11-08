@@ -64,9 +64,17 @@ The add-on builds it by itself after each import (or with **Build fast
 code** in the data dialog, for firmware imported before): the first time it
 downloads the free Zig C compiler from ziglang.org (about 100 MB, checked
 against the SHA-256 ziglang.org publishes), then takes a few minutes per
-firmware. The dialog can be closed meanwhile; NVDA says when it's ready and
-loads Classic Voices again to use it. It writes
+firmware. Each step (downloading, translating, compiling for 64- and for
+32-bit programs) has its own progress. The dialog can be closed meanwhile;
+NVDA says when it's ready and loads Classic Voices again to use it. It writes
 `cvnative_<build>_<bits>.dll` (64- and 32-bit) into `<data folder>/Native`.
+
+On Windows on Arm, NVDA (an x64 program) loads `cvengine_arm64ec.dll`, Arm
+code it runs natively: speech starts in less than half the time of the x64
+engine under emulation. Its fast code (`cvnative_<build>_arm64ec.dll`) needs
+llvm-mingw instead of Zig (Zig can't build ARM64EC): the add-on downloads
+llvm-mingw's Arm release from GitHub (186 MB, checked against a SHA-256 the
+add-on carries) and unpacks only what the build needs.
 The builder is `_classicvoices/fastcode.py`, shared with the Windows and
 Linux app; the add-on carries the recompiler in `_classicvoices/recompiler/`.
 

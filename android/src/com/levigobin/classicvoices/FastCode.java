@@ -138,6 +138,18 @@ final class FastCode {
     static void build(Context c, Progress p, boolean again) throws IOException {
         List<Firmware.Build> todo = again ? imported(c) : missing(c);
         if (todo.isEmpty()) return;
+        // Background priority, which the compilers inherit: speech (TalkBack,
+        // and this app's own voices) goes first while fast code builds.
+        int priority = android.os.Process.getThreadPriority(android.os.Process.myTid());
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+        try {
+            buildAll(c, p, todo);
+        } finally {
+            android.os.Process.setThreadPriority(priority);
+        }
+    }
+
+    private static void buildAll(Context c, Progress p, List<Firmware.Build> todo) throws IOException {
         if (!supported(c)) throw new IOException(c.getString(R.string.fast_unsupported));
         File work = new File(c.getCacheDir(), "fastcode");
         Firmware.deleteTree(work);
@@ -163,28 +175,22 @@ final class FastCode {
             z.run(p, "cc", "-target", z.target, "-shared", "-nostdlib", "-Wl,-soname,libc.so", "-o", stub.getPath(),
                     new File(work, "stub.c").getPath());
 
-            // translate everything first, so one progress bar covers all the compiling
-            List<List<File>> sources = new ArrayList<>();
-            long totalBytes = 0;
-            for (Firmware.Build b : todo) {
-                p.step(c.getString(R.string.fast_translating, b.nice));
-                if (p.cancelled()) throw new Progress.Cancelled();
+            // each step has its own progress: translating a firmware's engine, then compiling it
+            int jobs = jobs(c);
+            for (int i = 0; i < todo.size(); i++) {
+                Firmware.Build b = todo.get(i);
+                p.step(c.getString(R.string.fast_translating, b.nice, i + 1, todo.size()));
+                p.fraction(0);
                 List<File> files;
                 try (InputStream prof = c.getAssets().open("fastcode/profiles/" + b.key + ".txt")) {
                     files = Recompiler.run(Recompiler.readAll(new File(new File(Data.voicesDir(c), b.key), "voiced")),
-                            prof, new File(work, "gen_" + b.key), b.key, 1500, isStripped(b.key));
+                            prof, new File(work, "gen_" + b.key), b.key, 1500, isStripped(b.key), p);
                 }
                 files.add(new File(core, "native_glue.c"));
+                long totalBytes = 0, doneBytes = 0;
                 for (File f : files) totalBytes += f.length();
-                sources.add(files);
-            }
-
-            int jobs = jobs(c);
-            long doneBytes = 0;
-            for (int i = 0; i < todo.size(); i++) {
-                Firmware.Build b = todo.get(i);
-                p.step(c.getString(R.string.fast_compiling, b.nice));
-                List<File> files = new ArrayList<>(sources.get(i));
+                p.step(c.getString(R.string.fast_compiling, b.nice, i + 1, todo.size()));
+                p.fraction(0);
                 Collections.sort(files, new Comparator<File>() {  // biggest first: the long ones overlap
                     @Override
                     public int compare(File x, File y) {
@@ -256,7 +262,8 @@ final class FastCode {
         am.getMemoryInfo(mi);
         long spare = mi.availMem - (400L << 20);
         int byMemory = (int) Math.max(1, spare / (1200L << 20));
-        return Math.max(1, Math.min(Math.min(byMemory, Runtime.getRuntime().availableProcessors()), 4));
+        int cores = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);  // a core left for speech
+        return Math.max(1, Math.min(Math.min(byMemory, cores), 4));
     }
 
     private static final class Running {

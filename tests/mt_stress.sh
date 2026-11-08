@@ -10,7 +10,7 @@ clang++ -O2 -g -Icore -w -std=c++17 -c third_party/glint/aac_decoder.cpp -o buil
 clang++ -O2 -g -Icore -Icore/mt -w -std=c++17 -c core/mt/mt_glint.cpp -o build/mt_stress/mt_glint.o
 # The recompiled Vocalizer engines are optional (weak references).
 U=()
-for b in ios3 ios4 ios5 ios6 ios7 ios10; do U+=(-Wl,-U,_vx_native_$b -Wl,-U,_vx_native_${b}_count); done
+for b in ios3 ios4 ios5 ios6 ios7 ios70 ios10; do U+=(-Wl,-U,_vx_native_$b -Wl,-U,_vx_native_${b}_count); done
 clang -O2 -g "$@" -Icore -Icore/mt -Icore/x86 -w -o build/mt_stress/mt_stress tests/mt_stress.c $SRC \
     build/mt_stress/glint.o build/mt_stress/mt_glint.o -lc++ -lz -lsqlite3 -lbz2 \
     -framework CoreFoundation -framework AudioToolbox -framework Accelerate $U

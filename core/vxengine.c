@@ -828,11 +828,15 @@ static uint32_t map_file_fd(Vx *vx, int fd, uint64_t off, uint32_t len) {
     size_t page = (size_t)getpagesize();
     uint32_t a = (uint32_t)((vx->map_next + page - 1) & ~(page - 1));
     size_t span = (len + page - 1) & ~(page - 1);
-    if (a + span > MAP_HI) cpu_fault(&vx->cpu, "guest map region exhausted");
+    if ((uint64_t)a + span > MAP_HI) cpu_fault(&vx->cpu, "guest map region exhausted");
     if (fd >= 0) {
         void *p = mmap(vx->mem + a, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, (off_t)off);
         if (p == MAP_FAILED) cpu_fault(&vx->cpu, "mmap failed: %s", strerror(errno));
     }
+#ifdef _WIN32
+    else if (mmap(vx->mem + a, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED | MAP_ANON, -1, 0) == MAP_FAILED)
+        cpu_fault(&vx->cpu, "out of memory for a %u byte mapping", len);
+#endif
     vx->map_next = a + (uint32_t)span;
     if (vx->native_limit && vx->map_next > vx->native_limit) vx_set_native(vx, NULL, 0);
     return a;
@@ -1555,7 +1559,13 @@ static int vx_start(Vx *vx, const char *voiced_path, const char *lang_dir, const
 
 Vx *vx_open(const char *voiced_path, const char *lang_dir, const char *common_dir, char *err, size_t errlen) {
     Vx *vx = calloc(1, sizeof *vx);
+#ifdef _WIN32
+    // the low part committed; mappings take the rest as they come (vx_win.c)
+    void *mem = vx_mmap_reserve(GUEST_MEM_SIZE, MAP_LO);
+    if (!mem) mem = mmap(NULL, GUEST_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+#else
     void *mem = mmap(NULL, GUEST_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+#endif
     if (!vx || mem == MAP_FAILED) {
         if (err) snprintf(err, errlen, "out of memory");
         free(vx);

@@ -35,7 +35,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--iscc", help="Inno Setup's ISCC.exe")
     a = ap.parse_args()
-    for dll in ("nvda/cvengine64.dll", "nvda/cvengine32.dll", "sapi/cvsapi64.dll", "sapi/cvsapi32.dll"):
+    for dll in ("nvda/cvengine64.dll", "nvda/cvengine32.dll", "nvda/cvengine_arm64ec.dll",
+                "sapi/cvsapi64.dll", "sapi/cvsapi32.dll", "sapi/cvsapi_arm64ec.dll"):
         if not os.path.isfile(os.path.join(ROOT, "build", dll)):
             sys.exit("missing build/%s: build it first (nvda/build.py, windows/sapi/build.py)" % dll)
     work = os.path.join(OUT, "work")
@@ -44,9 +45,8 @@ def main():
     # the library, as files the app imports at run time
     shutil.copytree(LIB, os.path.join(stage, "lib", "_classicvoices"),
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.dll"))
-    for bits in (64, 32):
-        shutil.copy(os.path.join(ROOT, "build", "nvda", "cvengine%d.dll" % bits),
-                    os.path.join(stage, "lib", "_classicvoices"))
+    for name in ("cvengine64.dll", "cvengine32.dll", "cvengine_arm64ec.dll"):  # lib.load picks one
+        shutil.copy(os.path.join(ROOT, "build", "nvda", name), os.path.join(stage, "lib", "_classicvoices"))
     # the recompiler, for "Speed up the voices"
     os.makedirs(os.path.join(stage, "tools"))
     shutil.copy(os.path.join(ROOT, "tools", "recomp.py"), os.path.join(stage, "tools"))
@@ -70,8 +70,9 @@ def main():
     cmd.append(os.path.join(ROOT, "desktop", "ClassicVoices.pyw"))
     subprocess.check_call(cmd)
     app = os.path.join(OUT, "dist", "Classic Voices")
-    for bits in (64, 32):  # the SAPI engine, registered by the installer
-        shutil.copy(os.path.join(ROOT, "build", "sapi", "cvsapi%d.dll" % bits), app)
+    # the SAPI engine, registered by the installer (ARM64EC for 64-bit programs on Windows on Arm)
+    for name in ("cvsapi64.dll", "cvsapi32.dll", "cvsapi_arm64ec.dll"):
+        shutil.copy(os.path.join(ROOT, "build", "sapi", name), app)
     print("app:", app)
 
     iscc = a.iscc or shutil.which("iscc") or next(

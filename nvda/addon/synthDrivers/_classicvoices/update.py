@@ -13,7 +13,7 @@ import urllib.request
 
 # The add-on's manifest, the Windows installer and the Android manifest carry
 # the same number (nvda/build.py checks the manifest).
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 RELEASES = "https://api.github.com/repos/Levi-Gobin/classicvoices/releases?per_page=10"
 PAGE = "https://github.com/Levi-Gobin/classicvoices/releases"
 DAY = 24 * 3600

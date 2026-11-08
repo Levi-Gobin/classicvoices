@@ -11,8 +11,10 @@ Narrator and the modern Windows apps (Microsoft's OneCore speech) can't use
 them: OneCore ignored a Classic Voices entry in its own voice list, even
 with Microsoft's attributes and engine CLSID copied in (tested on Windows 11).
 
-On Windows on Arm, the x64 DLL serves x64 programs and ARM64EC ones such as
-NVDA. Native Arm programs would need an ARM64X forwarder, since x64 and Arm
+On Windows on Arm, the installer puts `cvsapi_arm64ec.dll` in
+`cvsapi64.dll`'s place: x64 programs (and ARM64EC ones such as NVDA) run its
+Arm code natively, with ARM64EC fast code (`cvnative_<build>_arm64ec.dll`).
+Native Arm programs would need an ARM64X forwarder, since x64 and Arm
 programs share one COM registration; `--cc-arm64` builds the Arm engine, but
 a working forwarder isn't done yet (see NOTES.md).
 
@@ -52,7 +54,7 @@ first audio. The first utterance after a program picks a voice also loads it
 
 ## Building
 
-    python windows/sapi/build.py [--cc-x64 NAME] [--cc-x86 NAME]
+    python windows/sapi/build.py [--cc-x64 NAME] [--cc-x86 NAME] [--cc-arm64ec NAME]
 
 MinGW-w64 gcc or clang, as for the NVDA add-on; output in `build/sapi/`.
 MinGW has no `sapiddk.h`, so the engine side of SAPI is declared in

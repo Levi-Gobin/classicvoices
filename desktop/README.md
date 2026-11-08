@@ -22,7 +22,9 @@ What the phone and Mac apps get built in, this app gets for you:
   this computer, by itself after each firmware import (and when the app
   opens, for firmware imported before). It's bit-identical to the slow
   interpreter, and starts speaking several times sooner. Windows downloads
-  the Zig C compiler for it (checked against ziglang.org's checksum); Linux
+  the Zig C compiler for it (checked against ziglang.org's checksum), or
+  llvm-mingw on Windows on Arm (its ARM64EC code runs natively in x64
+  programs; checked against a SHA-256 the app carries); Linux
   uses clang if you have it, else Zig too. A firmware takes one to three
   minutes. If a build fails or you stop it, it starts again only from this
   page.

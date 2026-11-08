@@ -161,8 +161,9 @@ class Job:
         if self.cancelled:
             raise Cancelled()
         before = (self.message, self.percent)
-        if message:
+        if message:  # a step starts, with its own progress from 0
             self.message = message
+            self.fraction = None
         if fraction is not None:
             self.fraction = min(max(fraction, 0.0), 1.0)
         if self.notify and (self.message, self.percent) != before:
@@ -329,7 +330,7 @@ class Library:
         return item.id in system.hidden_keys()
 
     def fast_code(self, build):
-        return all(os.path.isfile(os.path.join(system.native_dir(), f)) for f in system.native_files(build))
+        return system.has_fast_code(build)
 
     def fast_code_current(self, build):
         """Fast code built by this version (older fast code still runs, slower,
@@ -455,12 +456,13 @@ class Library:
             todo = builds if builds is not None else self.fast_code_missing()
             if not todo:
                 return
-            cc = system.find_compiler()
-            if not cc:
-                system.download_zig(job.progress)
-                cc = system.find_compiler()
-            for b in todo:
-                system.build_fast_code(b, cc, job.progress)
+            cc = system.find_compiler() or system.download_compiler(job.progress)
+            for i, b in enumerate(todo):
+                def step(message, fraction, i=i, b=b):
+                    # each step has its own progress; which firmware, of how many
+                    job.progress(message and "%s (%s, %d of %d)" % (message, FIRMWARE_NAMES.get(b, b), i + 1, len(todo)),
+                                 fraction)
+                system.build_fast_code(b, cc, step)
         self._queue(Job("fast", "fast", "Fast engine code", 0, run))
 
     def get_pronunciation(self):

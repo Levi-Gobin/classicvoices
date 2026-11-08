@@ -220,7 +220,7 @@ int vx_lang_pick(const char *current_key, const char *language, const char *cons
 // over one for the whole language ("zh").
 static void chosen(const char *choices, const char *who, Tag want, char *out, size_t cap) {
     out[0] = 0;
-    int best = 0;  // 1: the language's line, 2: its region's
+    int best = 0;  // 1: the line for every language, 2: the language's, 3: its region's
     const char *region = want.region[0] ? want.region : default_region(want.lang);
     for (const char *line = choices; line && *line;) {
         const char *end = strchr(line, '\n');
@@ -238,7 +238,8 @@ static void chosen(const char *choices, const char *who, Tag want, char *out, si
         }
         if (nf == 3 && !strcmp(f[0], who)) {
             Tag t = parse(f[1]);
-            int rank = strcmp(t.lang, want.lang) ? 0 : !t.region[0] ? 1 : !strcmp(t.region, region) ? 2 : 0;
+            int rank = !strcmp(f[1], "*") ? 1  // every language
+                     : strcmp(t.lang, want.lang) ? 0 : !t.region[0] ? 2 : !strcmp(t.region, region) ? 3 : 0;
             if (rank > best) {
                 best = rank;
                 snprintf(out, cap, "%s", f[2]);
@@ -259,8 +260,10 @@ int vx_lang_choose(const char *choices, const char *current_key, const char *lan
         if (pass == 0 && !current_key) continue;
         chosen(choices, pass == 0 ? current_key : "*", want, k, sizeof k);
         if (!k[0]) continue;
+        const char *find = strcmp(k, "-") ? k : current_key;  // "-": the voice in use reads it
+        if (!find) continue;
         for (size_t i = 0; i < n; i++)
-            if (!strcmp(keys[i], k)) return (int)i;
+            if (!strcmp(keys[i], find)) return (int)i;
     }
     return autov;
 }

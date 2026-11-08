@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Build the Classic Voices NVDA add-on.
 
-  python nvda/build.py [dll|addon|all|test] [--cc-x64 NAME] [--cc-x86 NAME]
+  python nvda/build.py [dll|addon|all|test] [--cc-x64 NAME] [--cc-x86 NAME] [--cc-arm64ec NAME]
 
 dll    compile cvengine32.dll (x86, for NVDA before 2026.1) and cvengine64.dll
-       (x64, NVDA 2026.1+) with MinGW-w64 gcc or clang, plus cvtest.exe.
+       (x64, NVDA 2026.1+) with MinGW-w64 gcc or clang, plus cvtest.exe; and
+       cvengine_arm64ec.dll (Arm code x64 NVDA runs natively on Windows on
+       Arm) with llvm-mingw's arm64ec-w64-mingw32-clang.
 addon  zip nvda/addon + the DLLs into build/classicvoices-<version>.nvda-addon,
        refusing to package any Apple-derived file.
 all    both (default).
@@ -62,34 +64,40 @@ def find_cc(explicit, candidates):
     return None
 
 
-def build_dll(cc, bits, defines):
+def build_dll(cc, bits, defines, tag=None):
+    """cvengine<bits>.dll, or cvengine_<tag>.dll (tag "arm64ec")."""
     os.makedirs(OUT, exist_ok=True)
-    dll = os.path.join(OUT, "cvengine%d.dll" % bits)
+    tag = tag or str(bits)
+    dll = os.path.join(OUT, "cvengine%s.dll" % (tag if tag == str(bits) else "_" + tag))
     # core objects (with the force-include), then shims (without it)
-    objs = pcre2_build.objects(cc, os.path.join(OUT, "pcre2"), str(bits))
+    objs = pcre2_build.objects(cc, os.path.join(OUT, "pcre2"), tag)
     pcre = ["-DCV_PCRE2_STATIC", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-I" + pcre2_build.include_dir()]
     for src in CORE + SHIM + HOST:
         extra = [] if src.endswith("vx_win.c") else CORE_EXTRA
         if src.endswith(("cv_rules.c", "cvnvda.c")):
             extra = extra + pcre
-        obj = os.path.join(OUT, "%d_%s.o" % (bits, os.path.splitext(os.path.basename(src))[0]))
+        obj = os.path.join(OUT, "%s_%s.o" % (tag, os.path.splitext(os.path.basename(src))[0]))
         run([cc] + CFLAGS + defines + extra + ["-c", src, "-o", obj])
         objs.append(obj)
     run([cc, "-shared", "-o", dll, os.path.join(SRC, "cvengine.def")] + objs + LDFLAGS)
     run([cc] + CFLAGS + defines + ["-c", os.path.join(SRC, "cvtest.c"),
-         "-o", os.path.join(OUT, "%d_cvtest.o" % bits)])
-    run([cc, "-o", os.path.join(OUT, "cvtest%d.exe" % bits),
-         os.path.join(OUT, "%d_cvtest.o" % bits), dll] + LDFLAGS)
+         "-o", os.path.join(OUT, "%s_cvtest.o" % tag)])
+    run([cc, "-o", os.path.join(OUT, "cvtest%s.exe" % (tag if tag == str(bits) else "_" + tag)),
+         os.path.join(OUT, "%s_cvtest.o" % tag), dll] + LDFLAGS)
     print("built", dll)
     return dll
 
 
-def build_dlls(cc64, cc86):
+def build_dlls(cc64, cc86, ccec=None):
     built = []
     if cc64:
         built.append(build_dll(cc64, 64, ["-DMAX_ENGINES=2"]))
     else:
         print("WARNING: no x86_64 compiler found; skipping cvengine64.dll")
+    if ccec:
+        built.append(build_dll(ccec, 64, ["-DMAX_ENGINES=2"], "arm64ec"))
+    else:
+        print("WARNING: no arm64ec compiler (llvm-mingw); skipping cvengine_arm64ec.dll")
     if cc86:
         built.append(build_dll(cc86, 32, ["-DGUEST_MEM_SIZE=0x20000000u", "-DMAX_ENGINES=1"]))
     else:
@@ -136,11 +144,15 @@ def package():
         for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
             z.write(os.path.join(ROOT, "core", h), rc + h)
         z.write(os.path.join(NVDA, "src", "native_glue.c"), rc + "native_glue.c")
-        for bits in (32, 64):
-            dll = os.path.join(OUT, "cvengine%d.dll" % bits)
+        for name in ("cvengine32.dll", "cvengine64.dll", "cvengine_arm64ec.dll"):
+            dll = os.path.join(OUT, name)
             if not os.path.exists(dll):
+                if name == "cvengine_arm64ec.dll" and not os.environ.get("CI"):
+                    # a local build without llvm-mingw: Windows on Arm runs the x64 one
+                    print("WARNING: no %s; the add-on uses the x64 engine on Windows on Arm" % name)
+                    continue
                 sys.exit("missing %s (run the dll step first)" % dll)
-            z.write(dll, "synthDrivers/_classicvoices/cvengine%d.dll" % bits)
+            z.write(dll, "synthDrivers/_classicvoices/" + name)
     print("packaged", bundle)
     return bundle
 
@@ -150,11 +162,13 @@ def main():
     ap.add_argument("step", nargs="?", default="all", choices=["dll", "addon", "all"])
     ap.add_argument("--cc-x64")
     ap.add_argument("--cc-x86")
+    ap.add_argument("--cc-arm64ec")
     args = ap.parse_args()
     cc64 = find_cc(args.cc_x64, ["x86_64-w64-mingw32-gcc", "x86_64-w64-mingw32-clang", "gcc"])
     cc86 = find_cc(args.cc_x86, ["i686-w64-mingw32-gcc", "i686-w64-mingw32-clang"])
+    ccec = find_cc(args.cc_arm64ec, ["arm64ec-w64-mingw32-clang"])
     if args.step in ("dll", "all"):
-        build_dlls(cc64, cc86)
+        build_dlls(cc64, cc86, ccec)
     if args.step in ("addon", "all"):
         package()
 

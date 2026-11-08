@@ -10,7 +10,10 @@ Windows and Linux app, SAPI and Speech Dispatcher (vxlang.h vx_lang_choose):
 
 <for> is "*" (whichever voice is in use) or a voice key; languages are bare
 codes ("de"), so a choice covers de-DE and de-AT text alike, except where the
-regions are languages of their own (Chinese: zh-CN, zh-TW, zh-HK)."""
+regions are languages of their own (Chinese: zh-CN, zh-TW, zh-HK). The
+language "*" is every language not chosen otherwise, and the voice key "-"
+keeps the voice in use reading it: "* * -" turns switching off, "<key> * -"
+for that voice only."""
 import os
 
 from . import lib

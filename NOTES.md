@@ -1798,3 +1798,195 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   FLAGS_VERSION bump); FastCode.current() compares; missing() includes
   outdated, so startIfNeeded at launch rebuilds. A data pack's stamp is
   read-only like its code: deleted before writing.
+
+## 0.5.1: voice files mapped on Windows, speech ahead of builds, language switching off (2026-11-04)
+
+- Windows guest memory (nvda/src/vx_win.c): vx_open asks vx_mmap_reserve for
+  GUEST_MEM_SIZE with the low MAP_LO (64 MB: image, heap, stack) committed and
+  the rest a placeholder (VirtualAlloc2, Windows 10 1803+). Each map_file_fd
+  takes the next piece: a voice file becomes a copy-on-write view of the file
+  (MapViewOfFile3, MEM_REPLACE_PLACEHOLDER), anonymous mappings (fd -1, which
+  now call mmap on Windows) committed zero pages. Before, the whole 1.06 GB
+  was committed and every file read into private memory: NVDA had 2.7 GB with
+  iOS 3 and iOS 6 loaded (a premium Mac voice is a 415 MB file). Probed on
+  Windows 11 (x64, x86, ARM64): placeholders split at 4 KB, and a view into
+  one takes any page-aligned address and file offset, but its size must not
+  pass the end of the file (a page-rounded size fails with error 5): the view
+  is the file's exact bytes in a page-rounded placeholder. Pieces go upward
+  without gaps; a vectored exception handler gives zero pages to an access
+  above the last piece (a read past a mapping), as the committed region did.
+  Older Windows, or any failure, reads the file as before; CV_NO_MAP=1 forces
+  that. Windows 11 deleted a file while it was mapped (POSIX delete); older
+  Windows 10 may refuse while a program has the voice loaded.
+  Measured on the UTM Windows 11 ARM64 VM (x64 and x86 builds, the user's own
+  data, open + first audio, working set; audio checksums identical mapped or
+  read): Mountain Lion premium Samantha 1.0-2.2 s -> 0.23 s, 471 -> 35 MB;
+  iOS 7 Siri Catherine 3.0-4.8 s -> 0.57 s, 245 -> 35 MB; iOS 7.0 enhanced
+  Karen 0.8-1.9 s -> 0.41 s, 150 -> 30 MB; compacts unchanged when cached.
+  SAPI (cvsapitest bench, the test DLL put in front for one user by an HKCU
+  CLSID entry, no admin): Catherine's first utterance 1061 -> 447 ms, warm
+  phrases a little sooner.
+- vxs_wait(stream, timeout_us): a reader that found nothing waits on a
+  condition the ring writer signals (only when a reader waits: a seq_cst fence
+  then a look at waiters), instead of sleeping 1 ms. NVDA (ctypes lets go of
+  Python's lock), SAPI (was a 0.5 ms high-resolution timer), Speech
+  Dispatcher and Android use it; the Apple audio unit's render thread keeps
+  its short sleeps. Mac, iOS 6 Samantha: first audio 6.4 ms vs 7.4 ms.
+- Priorities: vxstream's worker is above normal on Windows and -4 on Android
+  (macOS/iOS: QoS user interactive already); NVDA's feeding thread too. Fast
+  code compilers run below normal / nice 10 (fastcode.py), at background
+  priority on Android, one core fewer everywhere; NVDA's in-process recomp.py
+  runs with sys.setswitchinterval(0.0005) so NVDA's threads get Python's lock
+  back quickly. NVDA builds the engine of the voice in use first. Interpreted
+  (no fast code), iOS 6 is only 1.4x real time on an M-series Mac: slower
+  machines stutter until fast code is built, whatever the buffering.
+- NVDA: a background rebuild shows its progress in the data window, the busy
+  message says what runs and how far; "Get firmware from Apple..." asks which.
+  "Voices for other languages" failed to open in 0.5.0 whenever a language
+  had no choice (mine.get(lang) None was "in" keys, then mine[lang] raised).
+  Tested in NVDA 2026.3rc1 with a test config (-c, volume 1) and a scratchpad
+  global plugin that drives the dialogs and the driver and writes a log; the
+  installed NVDA has uiAccess, so a scheduled task starts it with
+  cmd /c start (CreateProcess fails with 740). Zig as MinGW for local Windows
+  builds: drop -static when linking a DLL (zig cc -shared -static makes an ar
+  archive), and link exes against the DLL's .lib.
+- languages.txt: the language "*" (every language not chosen otherwise, below
+  a language's own line) and the voice "-" (keep the voice in use): "* * -" is
+  switching off, "<key> * -" off for one voice (a voice's lines win over "*"'s
+  as before). The NVDA, Windows/Linux app and Android pages have a "Switch
+  voices when the text changes language" checkbox and "Keep the voice reading"
+  per language.
+- Where first-audio latency goes (2026-11-05, iOS 6 Samantha compact, fast
+  code, median of 11; a reader on vxs_read/vxs_wait, so stream + engine):
+
+  | phrase | Mac (M) | Intel i7-10710U, Linux x64 | Win 11 Arm VM, ARM64 | same VM, x64 emulated |
+  |---|---|---|---|---|
+  | Back. | 2.6 ms | 3.7 | 2.5 | 6.0 |
+  | Home button. | 3.9 | 5.0 | 3.3 | 8.2 |
+  | Messages, 3 new items. | 8.0 | 10.0 | 6.7 | 16.6 |
+  | long (two sentences) | 16.1 | 17.6 | 12.6 | 29 |
+
+  The reader gets its first sample within 0.1 ms of the engine's first
+  sound; SAPI adds about 0.2 ms (client Speak to eng_Speak) and cvsapi
+  0.5 ms (its log's first audio vs the stream's); NVDA's driver, Android's
+  service and the speechd module pass each read on at once. All of it is
+  the engine analysing the first sentence before its first sample, so it
+  grows with that sentence. The higher Windows numbers on the user's VM are
+  x64 code under Prism: 2.4x the native ARM64 time. ARM64 builds
+  (zig -target aarch64-windows-gnu, the loader's _arm64 suffix) run in
+  ARM64 processes only; NVDA and most SAPI programs on Arm are x64, which
+  can load ARM64EC DLLs (llvm-mingw 21+, arm64ec-w64-mingw32; zig has no
+  arm64ec), engine and fast code both.
+- **ARM64EC on Windows on Arm (2026-11-05).** Every x64 program on Windows 11
+  on Arm can load ARM64EC DLLs (Arm code with the x64 calling convention),
+  which run natively. cvengine_arm64ec.dll (nvda/build.py --cc-arm64ec,
+  llvm-mingw's arm64ec-w64-mingw32-clang; zig has no arm64ec) is what the
+  add-on's lib.load and the app take when platform.machine() is ARM64 (x64
+  Python says ARM64 there too), falling back to cvengine64.dll; the installer
+  puts cvsapi_arm64ec.dll in cvsapi64.dll's place on Arm. Its fast code is
+  cvnative_<build>_arm64ec.dll (vx_native_load: __arm64ec__, which defines
+  __x86_64__ and not __aarch64__). On the user's VM, an x64 program with the
+  ARM64EC engine, iOS 6 Samantha: "Back." 2.7 ms, "Home button." 3.6,
+  "Messages, 3 new items." 7.5, the long one 13.9 (x64 engine there: 6.3,
+  8.4, 16.8, 29.8); audio checksums identical; open 79 vs 118 ms.
+  fastcode.py on Arm: llvm-mingw 20261006's ucrt-aarch64.zip (SHA-256
+  pinned in LLVM_MINGW), only what's needed unpacked (clang.exe is a 13 KB
+  launcher for clang-23.exe; ld.lld.exe; the aarch64 (ARM64EC links
+  against its ARM64X libraries) and i686 sysroots, generic headers, clang's
+  headers and builtins), then it builds _arm64ec and _32 (i686-w64-mingw32-
+  clang) and removes the Zig an older version fetched. CI fetches
+  llvm-mingw 20261006's ubuntu-22.04-x86_64 tarball (SHA-256 checked).
+  Until it's built again, the ARM64EC engine loads the x64 fast code
+  (cvnative_<build>_64.dll: an ARM64EC DLL calls x64 code and back through
+  Windows' thunks), and fastcode.has_fast_code counts that as an older
+  version's, so the add-on's update rebuilds it. Measured on the VM, iOS 3:
+  the ARM64EC engine on x64 fast code matched the x64 engine exactly
+  (8.8 / 8.1 / 16.8 / 23.4 ms, same audio): nothing is slower before the
+  rebuild.
+- **VoiceOver's items run together (2026-11-05).** VoiceOver on macOS sends
+  each item as its own `<voice name="">` with no space between ("In" +
+  "list view", "Prompt" + a spelled "i" at +50% pitch, seen in the Synth
+  log's ssml=), and SSMLParser joined them: "Inlist view", "Prompti". A
+  `</voice>` is now a word break unless there already is one; a prosody
+  change inside an item still doesn't split a word ("Mc<prosody>Donald").
+  NVDA puts the spaces in itself (as for eSpeak); SAPI fragments keep the
+  text's own spacing.
+- **How fast each engine starts (2026-11-05).** Mac (M-series), fast code,
+  first audio for Back. / Home button. / Messages, 3 new items. / the long
+  email: iOS 3-7.0 compacts 2.0-2.5 / 1.8-3.1 / 3.6-5.6 / 5.2-13.7 ms;
+  iOS 5 and 6 enhanced 2.0-2.2 / 2.8-2.9 / 8.0-8.5 / 7.9-12.6; the Lion,
+  Mountain Lion and Mavericks compacts the same as iOS 6/7; Leopard
+  MacinTalk Fred and Victoria about 2 ms whatever the length (MacinTalk
+  starts speaking before it has the whole sentence), Alex 3.9-5.8, Vicki
+  5.7-11.3 (up to 24). On the Arm VM (ARM64EC): Mountain Lion premium
+  Samantha 2.8 / 3.5 / 8.6 / 12.3, Lion Jill 2.7 / 3.7 / 5.6 / 8.1,
+  Mavericks Allison 1.9 / 2.8 / 6.6 / 10.4, Siri Catherine 3.8 / 5.5 / 16.6
+  / 25.5. `sample` of the Vocalizer engines speaking in a loop: 87-94% of
+  the busy time in fast code, none in the interpreter; iOS 6's compact
+  spends 60% in one guest function (0x0d74e4). MacinTalk Alex/Vicki: 38-41%
+  in the AAC decoder (glint: decode_frame, cbrt, imdct, TNS), 24-37% in
+  fast code, 0.2-0.4% interpreted. Two avoidable MacinTalk delays:
+  mtengine's speak_one holds back 2048 frames while an utterance runs and
+  polls every 500 us. Over 23 phrases x 3 rates, Tiger, Leopard and Snow
+  Leopard never rewrote collected audio and Lion rewrote 1 frame (its
+  one-frame silent kick); a 64-frame hold and 50 us polling took Fred
+  2.0 -> 0.7 ms, Alex 4.5 -> 3.5, Vicki 9.2 -> 8.5. A cbrt table for the
+  quantized AAC values saves 0.1-0.5 ms (not done). MacinTalk's output
+  depends on timing (Alex changed under CPU load with no code change; an
+  instant clock, mt_set_speed(1e9), makes it give up), so it can't be
+  checked by one checksum.
+- **MacinTalk: 64 frames held back, and a wait instead of polling
+  (2026-11-05).** speak_one holds back 64 frames (was 2048) and
+  mt_audio_take waits on the pacer's condition variable (the pacer
+  broadcasts after each collect) instead of usleep(500). Checked against
+  the old code by comparing the PCM (scratchpad wave/dump.c + compare.py):
+  one-word phrases, all 24 Leopard voices x 10 words x 3 runs, identical
+  to the sample. 10 longer phrases with Fred, Victoria, Alex, Vicki,
+  Bruce, Kathy, Agnes, Junior (Leopard), Fred and Vicki (Tiger), Alex
+  (Snow Leopard), Alex and Vicki (Lion), quiet and under load (yes on all
+  14 cores): every take the new code made is one the old code made too.
+  What varies with either: Alex's first run of a fresh process (cold
+  voice data) shifts some quiet stretches by 2-3 ms; Lion's Alex and
+  Vicki insert or drop one silent sample in the long email; Vicki's
+  long email under load sounds different from 3.6 s on. First audio:
+  Fred 2.0 -> 0.7 ms, Victoria 2.0 -> 0.8, Alex 4.5 -> 3.4, Vicki
+  10 -> 8.5. tests/mt_stress (interpreted, cut-offs counted in frames
+  received): no stalls; restarts per cancel that reached a speaking
+  engine unchanged (Fred 83/84%, Alex 84/79%), more cancels reach one
+  because the frames come ~90 ms sooner. mt_stress.sh was missing ios70.
+- **32-bit programs and big voices (2026-11-05).** 32-bit builds have a
+  512 MB guest space (GUEST_MEM_SIZE=0x20000000u), about 448 MB of mappings:
+  Mountain Lion Samantha (447 MB) just fits, and about 30 of the 184 Mac
+  premium voices don't (from their package sizes, x1.15 unpacked: Mavericks
+  Anna, Mei-Jia, Audrey, Melina, Ting-Ting, Claire, Ava, Xander, Alva,
+  Milena, Samantha; Mountain Lion and Lion Mikko, Maged, Melina, Ting-Ting,
+  Anna, Claire ...). Largest free block on the VM (Windows 11 Arm, x86
+  under WOW64): plain 32-bit exe 1757 MB (1700 with cvengine32.dll
+  loaded), large-address-aware 2038 MB, 32-bit PowerShell 1495 MB; all
+  could reserve 1.06 GB. Since vx_open only reserves (placeholders, files
+  mapped as views), the full space would fit there; the bounds are
+  compile-time in the interpreter, recomp_rt.h and the fast code
+  (native_glue's cv_native_guest_mem), about 22 places.
+- **Progress per step (2026-11-05).** Each fast code step has its own bar
+  from 0: downloading the compiler (bytes), unpacking it (files),
+  translating (recomp.py's own functions wrapped from fastcode.py, so its
+  file and the stamp stay as they were: exploring a function counts 40%,
+  writing it 60%; another interpreter runs `fastcode.py --translate` and
+  prints progress lines), then compiling for each kind of program (files
+  finished; a compiler run reports nothing inside one file). NVDA's label
+  says which firmware of how many; a new message starts its bar at 0 in
+  NVDA and the app. Android: Recompiler.run reports the same way, and each
+  firmware is translated then compiled, each with its bar. The Mac app's
+  bars already started over at each step.
+- **Sideloadly 0.71 and Tiger's files (2026-11-06).** Sideloadly 0.71 signs
+  every Mach-O in the app and fails on one with no signature: "Failed to
+  process app binary (code -69): SignBinary(.../Voices/mt104/MacinTalk):
+  macho sign/edit failed (-11)". Tiger's MacinTalk and SpeechDictionary
+  (i386+ppc, 2005) are the only unsigned ones; mt105-107 and the iOS
+  binaries carry Apple's signatures, and Oct 18's older Sideloadly took
+  them. tools/package_ipa.sh now signs unsigned Mach-Os ad hoc, each in a
+  temporary folder (in place, codesign took SpeechDictionary/ for a bundle
+  and added _CodeSignature). Only bytes 16-2413 of the i386 slice change
+  (load commands); __text starts at 4000 and the fast code's lowest range
+  is 0x11100fa0, so it still matches; mtsay Fred/Victoria identical. Not yet
+  confirmed with Sideloadly itself. Xcode builds are not affected.

@@ -56,12 +56,21 @@ int vx_try_native_dll(Vx *vx, const char *build) {
         slot->tried = 1;
         snprintf(slot->build, sizeof slot->build, "%s", build);
         wchar_t path[1200];
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__arm64ec__) || defined(_M_ARM64EC)
+        // native Arm code an x64 program (NVDA on Windows on Arm) can load
+        _snwprintf(path, 1200, L"%s\\cvnative_%hs_arm64ec.dll", g_dir, build);
+#elif defined(__aarch64__) || defined(_M_ARM64)
         _snwprintf(path, 1200, L"%s\\cvnative_%hs_arm64.dll", g_dir, build);  // x64's are _64
 #else
         _snwprintf(path, 1200, L"%s\\cvnative_%hs_%d.dll", g_dir, build, (int)(sizeof(void *) * 8));
 #endif
         HMODULE m = LoadLibraryW(path);  // kept loaded for the process lifetime
+#if defined(__arm64ec__) || defined(_M_ARM64EC)
+        if (!m) {  // until it is built again: x64 fast code, which an ARM64EC DLL can call
+            _snwprintf(path, 1200, L"%s\\cvnative_%hs_64.dll", g_dir, build);
+            m = LoadLibraryW(path);
+        }
+#endif
         if (m) {
             CvAbi abi = (CvAbi)GetProcAddress(m, "cv_native_abi");
             CvBind bind = (CvBind)GetProcAddress(m, "cv_native_bind");

@@ -15,12 +15,21 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-mingw-w64-x86-64 gcc-mingw-w64-i686
+      - name: llvm-mingw, for the ARM64EC engine (x64 programs on Windows on Arm run it natively)
+        run: |
+          f=llvm-mingw-20261006-ucrt-ubuntu-22.04-x86_64.tar.xz
+          curl -sSfL -o "$RUNNER_TEMP/$f" "https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/$f"
+          echo "5f9c6ed95b2d4bdb2869a488c5fd5857fbdabcf288a0aa3eb1da43f6a08d8ab4  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP"
+          echo "CC_ARM64EC=$RUNNER_TEMP/${f%.tar.xz}/bin/arm64ec-w64-mingw32-clang" >> "$GITHUB_ENV"
       - name: Engine DLLs and the NVDA add-on
         run: |
-          python3 nvda/build.py all --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix
+          python3 nvda/build.py all --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix \
+            --cc-arm64ec "$CC_ARM64EC"
       - name: SAPI 5 engine
         run: |
-          python3 windows/sapi/build.py --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix
+          python3 windows/sapi/build.py --cc-x64 x86_64-w64-mingw32-gcc-posix --cc-x86 i686-w64-mingw32-gcc-posix \
+            --cc-arm64ec "$CC_ARM64EC"
       - uses: actions/upload-artifact@v4
         with:
           name: classicvoices-nvda-addon
@@ -31,8 +40,10 @@ jobs:
           path: |
             build/nvda/cvengine64.dll
             build/nvda/cvengine32.dll
+            build/nvda/cvengine_arm64ec.dll
             build/sapi/cvsapi64.dll
             build/sapi/cvsapi32.dll
+            build/sapi/cvsapi_arm64ec.dll
 
   app:
     # The app (wxPython, frozen with PyInstaller) and its installer (Inno Setup).

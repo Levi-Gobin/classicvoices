@@ -31,7 +31,9 @@ int vx_lang_same(const char *a, const char *b);
 // <for> is "*" (whichever voice is in use) or a voice key (only while that
 // voice is in use, and it wins over "*"); <language> a bare code ("de"), so a
 // choice covers de-DE and de-AT text alike, or one with its region ("zh-TW",
-// winning over "zh" for that region's text); '#' starts a comment. The voice
+// winning over "zh" for that region's text), or "*" for every language not
+// chosen otherwise; <voice key> "-" keeps the voice in use reading it (so
+// "* * -" turns language switching off); '#' starts a comment. The voice
 // in use still speaks a language it speaks, and a chosen voice that isn't
 // there any more falls back to the automatic one.
 int vx_lang_choose(const char *choices, const char *current_key, const char *language,

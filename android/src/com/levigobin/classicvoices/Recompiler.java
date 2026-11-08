@@ -840,18 +840,30 @@ final class Recompiler {
         return seen;
     }
 
-    /** Recompiles engine into outdir as <prefix>_NNN.c and <prefix>_table.c; returns the files. */
-    static List<File> run(byte[] engine, InputStream profile, File outdir, String prefix, int perFile, boolean scanBl)
-            throws IOException {
+    /** Recompiles engine into outdir as <prefix>_NNN.c and <prefix>_table.c; returns the files. p (may be
+     *  null) hears how far it is: exploring each function is the first 40%, writing each the rest. */
+    static List<File> run(byte[] engine, InputStream profile, File outdir, String prefix, int perFile, boolean scanBl,
+                          Progress p) throws IOException {
         try {
-            return generate(engine, profile, outdir, prefix, perFile, scanBl);
+            return generate(engine, profile, outdir, prefix, perFile, scanBl, p);
         } catch (BadAddress e) {
             throw new IOException("the engine has no code at 0x" + e.getMessage());
         }
     }
 
+    /** f to p when it reaches another whole percent (last[0]: the one told before). */
+    private static void tell(Progress p, double f, int[] last) throws Progress.Cancelled {
+        if (p == null) return;
+        if (p.cancelled()) throw new Progress.Cancelled();
+        int pc = (int) (f * 100);
+        if (pc != last[0]) {
+            last[0] = pc;
+            p.fraction(f);
+        }
+    }
+
     private static List<File> generate(byte[] engine, InputStream profile, File outdir, String prefix, int perFile,
-                                       boolean scanBl) throws IOException, BadAddress {
+                                       boolean scanBl, Progress p) throws IOException, BadAddress {
         MachO mo = new MachO(engine);
         Map<Long, String> hostAt = new HashMap<>();  // guest address -> host code, for this build
         Map<Long, String[]> interruptAt = new HashMap<>();  // guest address -> host code while a stop is pending
@@ -886,10 +898,13 @@ final class Recompiler {
             if (f == null) funcs.put(lo, f = new Function(lo, hi));
             f.roots.add(s);
         }
+        int explored = 0;
+        int[] told = {-1};
         for (Function f : funcs.values()) {
             if (boundSet.contains(f.start)) f.roots.add(f.start);
             explore(mo, f);
             f.roots.retainAll(f.insns.keySet());
+            tell(p, 0.4 * ++explored / funcs.size(), told);
         }
 
         Map<Long, String> entriesOf = new HashMap<>();
@@ -975,8 +990,10 @@ final class Recompiler {
         List<List<String>> files = new ArrayList<>();
         List<String> cur = new ArrayList<>();
         int curN = 0;
+        int emitted = 0;
         for (Function f : order) {
             List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf, interruptAt, copyFuncs, nocopyFuncs);
+            tell(p, 0.4 + 0.6 * ++emitted / order.size(), told);
             for (long r : resume) {
                 table.add(new long[] {r, tableNames.size()});
                 tableNames.add(fname(prefix, f.start));
@@ -1064,7 +1081,7 @@ final class Recompiler {
             else pos.add(args[i]);
         }
         try (InputStream p = new FileInputStream(pos.get(1))) {
-            List<File> out = run(readAll(new File(pos.get(0))), p, new File(pos.get(2)), prefix, perFile, scan);
+            List<File> out = run(readAll(new File(pos.get(0))), p, new File(pos.get(2)), prefix, perFile, scan, null);
             System.out.println(out.size() + " files");
         }
     }

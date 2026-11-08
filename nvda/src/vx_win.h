@@ -24,6 +24,7 @@ int vx_open_rd(const char *path);
 int vx_access_utf8(const char *path, int mode);
 int vx_stat_utf8(const char *path, struct stat *st);
 void vx_sleep_ns(long long ns);
+void vx_win_speech_priority(void);  // the calling thread above normal (vxstream's worker)
 
 #define fopen vx_fopen_utf8
 #define open(p, f) vx_open_rd(p)

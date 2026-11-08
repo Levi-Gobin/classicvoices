@@ -123,8 +123,9 @@ def native_dir():
     return os.path.join(data_root(), "Native") if IS_WIN else os.path.join(data_root(), "Native", linux_abi())
 
 
-def native_files(build):
-    return cv_fastcode.native_files(build)
+def has_fast_code(build):
+    """This version's fast code or an older one's (which still runs)."""
+    return cv_fastcode.has_fast_code(native_dir(), build)
 
 
 def fast_code_current(build):
@@ -507,8 +508,12 @@ def find_compiler():
     return cv_fastcode.find_compiler()
 
 
-def download_zig(progress):
-    return cv_fastcode.download_zig(progress)
+def arm_windows():
+    return cv_fastcode.arm_windows()
+
+
+def download_compiler(progress):
+    return cv_fastcode.download_compiler(progress)
 
 
 def recompiler():

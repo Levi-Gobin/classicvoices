@@ -1,6 +1,7 @@
-# ctypes binding for cvengine32/64.dll (the Vocalizer engine emulator).
+# ctypes binding for cvengine32/64.dll and cvengine_arm64ec.dll (the Vocalizer engine emulator).
 import ctypes
 import os
+import platform
 import struct
 
 _lib = None
@@ -16,8 +17,17 @@ def load():
     if _lib is not None:
         return _lib
     bits = 64 if struct.calcsize("P") == 8 else 32
-    path = os.path.join(os.path.dirname(__file__), "cvengine%d.dll" % bits)
-    lib = ctypes.CDLL(path)
+    here = os.path.dirname(__file__)
+    lib = None
+    if bits == 64 and platform.machine().lower() in ("arm64", "aarch64"):
+        # Windows on Arm: x64 NVDA runs ARM64EC code natively (2.4 times the
+        # emulated x64 engine's speed), and its fast code is ARM64EC too
+        try:
+            lib = ctypes.CDLL(os.path.join(here, "cvengine_arm64ec.dll"))
+        except OSError:
+            pass
+    if lib is None:
+        lib = ctypes.CDLL(os.path.join(here, "cvengine%d.dll" % bits))
     c = ctypes
     lib.cv_abi_version.restype = c.c_int
     lib.vxs_create.restype = c.c_void_p
@@ -45,6 +55,8 @@ def load():
     lib.vx_phoneme_text.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.c_char_p, c.c_char_p, c.c_int]
     lib.vxs_read_marks.restype = c.c_size_t
     lib.vxs_read_marks.argtypes = [c.c_void_p, c.POINTER(Mark), c.c_size_t]
+    lib.vxs_wait.restype = None
+    lib.vxs_wait.argtypes = [c.c_void_p, c.c_int]
     lib.cv_read_s16.restype = c.c_size_t
     lib.cv_read_s16.argtypes = [c.c_void_p, c.POINTER(c.c_int16), c.c_size_t,
                                 c.POINTER(c.c_int)]

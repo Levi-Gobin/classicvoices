@@ -12,7 +12,7 @@
 [Setup]
 AppId={{19DA7EBB-22D3-4802-AF6B-7D80EF1406FB}
 AppName=Classic Voices
-AppVersion=0.5.0
+AppVersion=0.5.1
 AppPublisher=Classic Voices
 AppPublisherURL=https://github.com/levi-gobin/classicvoices
 DefaultDirName={autopf}\Classic Voices
@@ -43,9 +43,11 @@ Name: "{commonappdata}\Classic Voices"; Permissions: users-modify
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
-Source: "{#AppDir}\*"; Excludes: "\cvsapi64.dll,\cvsapi32.dll"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
-; the voices for Windows programs: one in use is moved aside first (MoveAside)
-Source: "{#AppDir}\cvsapi64.dll"; DestDir: "{app}"; Flags: ignoreversion; BeforeInstall: MoveAside('cvsapi64.dll')
+Source: "{#AppDir}\*"; Excludes: "\cvsapi64.dll,\cvsapi32.dll,\cvsapi_arm64ec.dll"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; the voices for Windows programs: one in use is moved aside first (MoveAside).
+; On Windows on Arm, 64-bit (x64) programs get the ARM64EC build, which they run natively
+Source: "{#AppDir}\cvsapi64.dll"; DestDir: "{app}"; Flags: ignoreversion; Check: not IsArm64; BeforeInstall: MoveAside('cvsapi64.dll')
+Source: "{#AppDir}\cvsapi_arm64ec.dll"; DestDir: "{app}"; DestName: "cvsapi64.dll"; Flags: ignoreversion; Check: IsArm64; BeforeInstall: MoveAside('cvsapi64.dll')
 Source: "{#AppDir}\cvsapi32.dll"; DestDir: "{app}"; Flags: ignoreversion; BeforeInstall: MoveAside('cvsapi32.dll')
 
 [Registry]

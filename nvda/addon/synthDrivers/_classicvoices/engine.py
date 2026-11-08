@@ -6,7 +6,6 @@
 import ctypes
 import queue
 import threading
-import time
 
 from . import lib
 
@@ -122,10 +121,14 @@ class Speaker:
             if done.value:
                 return reached, pending
             if not n:
-                time.sleep(0.001)
+                self._lib.vxs_wait(self._s, 2000)  # back as soon as audio comes (Python's lock let go meanwhile)
         return reached, b""
 
     def _run(self):
+        try:  # ahead of NVDA's other work, so speech keeps up while the computer is busy
+            ctypes.windll.kernel32.SetThreadPriority(ctypes.windll.kernel32.GetCurrentThread(), 1)  # ABOVE_NORMAL
+        except (AttributeError, OSError):
+            pass
         while self._alive:
             item = self._q.get()
             if item is None:

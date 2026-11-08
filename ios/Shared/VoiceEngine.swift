@@ -606,6 +606,7 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
     enum Token {
         case text(String), pause(Int), sentenceEnd, pitch(Int), rate(Int), volume(Int), spell(Bool), mark(Int)
         case phoneme(ipa: String, text: String)
+        case gap  // a word break, unless there already is one
     }
     private var emittedPitch: Int?
     private var emitted = (rate: 100, volume: -1, spell: false)
@@ -644,6 +645,7 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
                 if let ph = phonemes?(ipa, joined) { out += ph } else { out += spell ? text : rules?.apply(text) ?? text }
             case .pause(let ms): out += " \u{1b}\\pause=\(ms)\\ "
             case .sentenceEnd: out += " \u{1b}\\eos=1\\ "
+            case .gap: if let c = out.last, !c.isWhitespace { out += " " }
             case .pitch(let p):
                 out += exactPitch ? "\u{1b}\\pitchpct=\(p)\\" : "\u{1b}\\pitch=\(vxs_engine_pitch(Int32(min(p, 1000))))\\"
             case .rate(let r): out += "\u{1b}\\rate=\(min(max(r, exactPitch ? 10 : 50), 400))\\"  // MacinTalk goes slower
@@ -714,6 +716,10 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
             tokens.append(.phoneme(ipa: ph.ipa, text: ph.text))
         }
         if name == "s" || name == "p" { tokens.append(.sentenceEnd) }
+        // VoiceOver sends each item (a label, its role, a spelled letter) as
+        // its own <voice>, with no space between: "In" + "list view" was read
+        // as "Inlist view", "Prompt" + a spelled "i" as "Prompti".
+        if name == "voice" { tokens.append(.gap) }
     }
 
     /// Before something heard: the prosody that changed since the last thing heard.

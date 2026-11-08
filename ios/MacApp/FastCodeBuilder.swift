@@ -186,7 +186,7 @@ enum FastCodeBuilder {
         // Every core, but at utility priority (still the performance cores):
         // the compiler gives way only when something else needs the CPU, so
         // voices still on the interpreter don't stutter while it builds.
-        let jobs = max(1, ProcessInfo.processInfo.activeProcessorCount)
+        let jobs = max(1, ProcessInfo.processInfo.activeProcessorCount - 1)  // a core left for speech
         var running: [(Process, Pipe)] = []
         var done = 0
         var objs: [String] = []

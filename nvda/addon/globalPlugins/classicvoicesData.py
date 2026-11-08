@@ -39,12 +39,13 @@ FIRMWARE_NAMES = {v[0]: v[2] for v in cv_firmware.SUPPORTED.values()}
 
 # One job at a time, also while the dialog is closed (fast code builds on in the background).
 _work = threading.Lock()
+# What that job is doing now, for a dialog opened meanwhile: (message, fraction or None).
+_now = ["", None]
 
 
 def _has_fast_code(build):
     """Fast code is there, from this version or an older one."""
-    nr = cv_paths.native_root()
-    return all(os.path.isfile(os.path.join(nr, f)) for f in cv_fastcode.native_files(build))
+    return cv_fastcode.has_fast_code(cv_paths.native_root(), build)
 
 
 def _fast_code_current(build):
@@ -62,20 +63,45 @@ def _fast_code_outdated():
     return [b for b in _fast_code_missing() if _has_fast_code(b)]
 
 
+def _engines_in_use():
+    """The engines speaking NVDA's Classic Voices voice now, likeliest first:
+    their fast code is built first."""
+    import synthDriverHandler
+    s = synthDriverHandler.getSynth()
+    key = getattr(s, "voice", "") if s and s.name == "classicvoices" else ""
+    era = (key or "").split("/")[0]
+    if era == cv_voices.SIRI:
+        return [cv_voices.SIRI_ENGINE, "ios70"]
+    if era in cv_voices.MAC_ENGINES:
+        if era == "mac109":  # compacts on an iOS 7 engine, premium voices on iOS 10's
+            return list(cv_voices.IOS7) if key.endswith("Compact") else ["ios10"]
+        return list(cv_voices.MAC_ENGINES[era])
+    return [era[:-1] if era.endswith("e") else era] if era else []
+
+
 def _build_fast_code(progress, todo=None):
     """Builds fast engine code for every imported engine without it (or todo):
-    a few minutes each, and the Zig compiler (about 100 MB) is downloaded the
-    first time. Returns whether anything was built."""
+    a few minutes each, and the compiler (Zig, about 100 MB; llvm-mingw, 186 MB,
+    on Windows on Arm) is downloaded the first time. Each step has its own
+    progress. Returns whether anything was built."""
     if todo is None:
         todo = _fast_code_missing()
     if not todo or not cv_fastcode.recompiler():
         return False
-    cc = cv_fastcode.find_compiler()
-    if not cc:
-        cv_fastcode.download_zig(progress)
-        cc = cv_fastcode.find_compiler()
-    for b in todo:
-        cv_fastcode.build(b, cv_paths.voices_root(), cv_paths.native_root(), cc, progress)
+    try:
+        first = _engines_in_use()
+    except Exception:
+        first = []
+    todo = sorted(todo, key=lambda b: first.index(b) if b in first else len(first))  # the voice in use first
+    cc = cv_fastcode.find_compiler() or cv_fastcode.download_compiler(progress)
+    labels = dict(BUILDS)
+    for i, b in enumerate(todo):
+        def step(message, fraction, i=i, b=b):
+            # Translators: a fast code build step; %(step)s is what it does, %(firmware)s the firmware,
+            # then which of how many firmware this is.
+            progress(message and _("%(step)s (%(firmware)s, %(n)d of %(of)d)") % {
+                "step": message, "firmware": labels.get(b, b), "n": i + 1, "of": len(todo)}, fraction)
+        cv_fastcode.build(b, cv_paths.voices_root(), cv_paths.native_root(), cc, step)
     return True
 
 
@@ -130,7 +156,7 @@ class DataDialog(wx.Dialog):
         main.Add(self.gauge, flag=wx.EXPAND | wx.ALL, border=5)
         btns = wx.BoxSizer(wx.HORIZONTAL)
         # Translators: button that streams every firmware not imported yet from Apple's servers.
-        self.appleBtn = wx.Button(self, label=_("Get firmware from &Apple"))
+        self.appleBtn = wx.Button(self, label=_("Get firmware from &Apple..."))
         self.appleBtn.Bind(wx.EVT_BUTTON, self.onApple)
         btns.Add(self.appleBtn)
         # Translators: button that imports an IPSW firmware file.
@@ -173,6 +199,10 @@ class DataDialog(wx.Dialog):
         self.SetSizerAndFit(main)
         cv_paths.ensure_dirs()
         self.refresh()
+        if _work.locked():  # fast code building in the background, as after an update
+            self._busy = self._building = True
+            self._enable(False)
+            self._show(*_now)
 
     def onClose(self, evt):
         if self._busy and not self._building:
@@ -198,17 +228,26 @@ class DataDialog(wx.Dialog):
 
     @staticmethod
     def _progress(message, fraction):
+        # A message starts a step, with its own progress from 0: the
+        # fraction is how far that step is.
+        if message:
+            _now[:] = [message, fraction]
+        elif fraction is not None:
+            _now[1] = fraction
+
         def update():
             d = DataDialog._instance
-            if not d:
-                return
-            if message:
-                d.progress.SetLabel(message)
-            if fraction is not None:
-                percent = int(min(max(fraction, 0.0), 1.0) * 100)
-                if d.gauge.GetValue() != percent:
-                    d.gauge.SetValue(percent)
+            if d:
+                d._show(message, fraction)
         wx.CallAfter(update)
+
+    def _show(self, message, fraction):
+        if message:
+            self.progress.SetLabel(message)
+        if fraction is not None or message:
+            percent = int(min(max(fraction or 0.0, 0.0), 1.0) * 100)
+            if self.gauge.GetValue() != percent:
+                self.gauge.SetValue(percent)
 
     def _enable(self, on):
         for b in (self.appleBtn, self.importBtn, self.importDirBtn, self.dlBtn):
@@ -219,10 +258,15 @@ class DataDialog(wx.Dialog):
         """Runs fn (None: nothing), then builds fast engine code for whatever
         lacks it. The dialog can be closed while fast code builds."""
         if not _work.acquire(blocking=False):
-            # Translators: message when another job (such as building fast code) is still running.
-            gui.messageBox(_("Classic Voices is still busy; it says when it's done."),
+            message, fraction = _now
+            if fraction is not None:
+                message = "%s, %d%%" % (message, int(fraction * 100))
+            # Translators: message when another job (such as building fast code) is still running;
+            # %s says what it is doing.
+            gui.messageBox(_("Classic Voices is still busy: %s. It says when it's done.") % message,
                            _("Classic Voices"), wx.OK, self)
             return
+        _now[:] = ["", None]
         self._busy = True
         self._building = False
         self.gauge.SetValue(0)
@@ -283,10 +327,11 @@ class DataDialog(wx.Dialog):
             # Translators: message when every firmware is imported already.
             gui.messageBox(_("Every firmware is imported already."), _("Classic Voices"), wx.OK, self)
             return
-        # Translators: asks before streaming firmware from Apple; %d is how many.
-        if gui.messageBox(_("Get %d firmware from Apple? Only their speech files are streamed, which takes a "
-                            "while; then fast engine code is built on this computer.") % len(todo),
-                          _("Classic Voices"), wx.YES_NO | wx.ICON_QUESTION, self) != wx.YES:
+        d = FirmwareDialog(self, todo)
+        ok = d.ShowModal() == wx.ID_OK
+        todo = d.chosen()
+        d.Destroy()
+        if not ok or not todo:
             return
 
         def work():
@@ -350,6 +395,42 @@ def _language_name(code):
         return languageHandler.getLanguageDescription(code.replace("-", "_")) or code
     except Exception:
         return code
+
+
+class FirmwareDialog(wx.Dialog):
+    """Which of the firmware not imported yet to get from Apple."""
+
+    def __init__(self, parent, todo):
+        # Translators: title of the dialog choosing which firmware to get from Apple.
+        super().__init__(parent, title=_("Get firmware from Apple"))
+        self.todo = todo
+        labels = dict(BUILDS)
+        main = wx.BoxSizer(wx.VERTICAL)
+        # Translators: explains the firmware checklist.
+        main.Add(wx.StaticText(self, label=_(
+            "Only each firmware's speech files are streamed from Apple, which takes a while; then fast engine "
+            "code is built on this computer.")), flag=wx.ALL, border=5)
+        # Translators: label of the firmware checklist.
+        main.Add(wx.StaticText(self, label=_("&Firmware to get:")), flag=wx.LEFT | wx.TOP, border=5)
+        # Translators: a firmware in the checklist: its name, then what it brings.
+        self.list = nvdaControls.CustomCheckListBox(self, choices=[
+            _("%(firmware)s: %(purpose)s") % {"firmware": labels.get(k, k), "purpose": cv_remote.PURPOSE.get(k, "")}
+            for k in todo], size=(520, 220))
+        self.list.SetCheckedItems(range(len(todo)))
+        self.list.SetSelection(0)
+        main.Add(self.list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        # Translators: button getting the checked firmware.
+        get = wx.Button(self, wx.ID_OK, label=_("&Get the checked firmware"))
+        get.SetDefault()
+        btns.Add(get)
+        btns.Add(wx.Button(self, wx.ID_CANCEL))
+        main.Add(btns, flag=wx.ALL, border=5)
+        self.SetSizerAndFit(main)
+        self.list.SetFocus()
+
+    def chosen(self):
+        return [self.todo[i] for i in self.list.GetCheckedItems()]
 
 
 class WantedDialog(wx.Dialog):
@@ -423,7 +504,7 @@ class LanguagesDialog(wx.Dialog):
         main.Add(wx.StaticText(self, label=_(
             "With NVDA's automatic language switching on, text in another language is read by a voice of that "
             "language: by default the one nearest the voice reading. Choose voices here for every voice, or for "
-            "one voice.")), flag=wx.ALL, border=5)
+            "one voice, or keep the voice reading for a language or for all of them.")), flag=wx.ALL, border=5)
         # Translators: label of the list choosing whose choices are shown.
         main.Add(wx.StaticText(self, label=_("&For:")), flag=wx.LEFT | wx.TOP, border=5)
         self.whos = [None] + [v.key for v in self.voices]
@@ -432,6 +513,10 @@ class LanguagesDialog(wx.Dialog):
         self.who.SetSelection(0)
         self.who.Bind(wx.EVT_CHOICE, lambda evt: self.fill())
         main.Add(self.who, flag=wx.ALL, border=5)
+        # Translators: checkbox turning Classic Voices' language switching on or off (for every voice or one).
+        self.switch = wx.CheckBox(self, label=_("&Switch voices when the text changes language"))
+        self.switch.Bind(wx.EVT_CHECKBOX, self.onSwitch)
+        main.Add(self.switch, flag=wx.ALL, border=5)
         self.rows = wx.ScrolledWindow(self, size=(520, 360), style=wx.VSCROLL)
         self.rows.SetScrollRate(0, 20)
         self.grid = wx.FlexGridSizer(2, 5, 5)
@@ -444,6 +529,11 @@ class LanguagesDialog(wx.Dialog):
         self.SetSizerAndFit(main)
         self.fill()
 
+    def onSwitch(self, evt):
+        who = self.whos[self.who.GetSelection()]
+        cv_languages.set_choice(self.data, "*", None if self.switch.GetValue() else "-", who)
+        self.fill()
+
     def fill(self):
         self.rows.DestroyChildren()
         self.grid.Clear()
@@ -454,24 +544,32 @@ class LanguagesDialog(wx.Dialog):
         own = next((v.language for v in self.voices if v.key == who), None)
         langs = sorted((l for l in by if not own or cv_languages.base(l) != cv_languages.base(own)), key=_language_name)
         choices = cv_languages.load(self.data)
-        every = {l: k for l, k in choices.get("*", {}).items() if k in self.names}
-        mine = {l: k for l, k in choices.get(who, {}).items() if k in self.names} if who else every
+        # "-": the voice reading keeps reading it; "*" as the language: every language
+        every = {l: k for l, k in choices.get("*", {}).items() if k in self.names or k == "-"}
+        mine = {l: k for l, k in choices.get(who, {}).items() if k in self.names or k == "-"} if who else every
+        every_off = every.get("*") == "-"
+        self.switch.SetValue(mine.get("*") != "-" and not every_off)
+        self.switch.Enable(not (who and every_off))
+        # Translators: the entry in a language's list keeping the voice that is reading.
+        keep = _("Keep the voice reading")
         pairs = [(v.key, v.language) for v in self.voices]
         for lang in langs:
             if not who:
                 # Translators: the automatic entry in a language's list, for every voice.
-                first = _("Automatic: the voice nearest the one reading")
-            elif lang in every:
+                first = _("Automatic: the voice nearest the one reading") if not every_off else \
+                    _("Off: keep the voice reading")
+            elif lang in every or every_off:
                 # Translators: %s is the voice chosen for that language for every voice.
-                first = _("As for every voice: %s") % self.names[every[lang]]
+                first = _("As for every voice: %s") % (keep if every.get(lang, "-") == "-"
+                                                       else self.names[every[lang]])
             else:
                 auto = cv_lib.lang_pick(who, lang, pairs)
                 # Translators: %s is the voice automatic language switching picks.
                 first = _("Automatic: %s") % self.names.get(auto, _("none"))
-            keys = [None] + [v.key for v in by[lang]]
+            keys = [None, "-"] + [v.key for v in by[lang]]
             label = wx.StaticText(self.rows, label="%s:" % _language_name(lang))
-            c = wx.Choice(self.rows, choices=[first] + [v.name for v in by[lang]], name=_language_name(lang))
-            c.SetSelection(keys.index(mine[lang]) if mine.get(lang) in keys else 0)
+            c = wx.Choice(self.rows, choices=[first, keep] + [v.name for v in by[lang]], name=_language_name(lang))
+            c.SetSelection(keys.index(mine[lang]) if lang in mine and mine[lang] in keys else 0)
             c.Bind(wx.EVT_CHOICE, lambda evt, lang=lang, keys=keys, c=c: cv_languages.set_choice(
                 self.data, lang, keys[c.GetSelection()], who))
             self.grid.Add(label, flag=wx.ALIGN_CENTER_VERTICAL)
@@ -494,25 +592,34 @@ def _update_fast_code():
         return
     if not todo or not _work.acquire(blocking=False):
         return
+    # Translators: shown while fast code an older version built is built again in the background.
+    _now[:] = [_("Updating the fast engine code; the voices keep working meanwhile, a little slower."), 0.0]
 
     def run():
         built = False
         try:
-            built = _build_fast_code(lambda message, fraction: None, todo)
+            built = _build_fast_code(DataDialog._progress, todo)
         except Exception:
             log.exception("Classic Voices: updating the fast engine code failed")
         finally:
             _work.release()
 
         def finish():
-            _reload_synth()
+            if built:
+                _reload_synth()
             d = DataDialog._instance
             if d:
+                d._busy = d._building = False
+                d._enable(True)
                 d.refresh()
-            # Translators: announced when fast engine code built by an older version has been built again.
-            ui.message(_("Classic Voices: fast engine code is updated."))
-        if built:
-            wx.CallAfter(finish)
+                d.gauge.SetValue(0)
+                # Translators: shown when updating the fast code failed (the log says why).
+                d.progress.SetLabel(_("Classic Voices: fast engine code is updated.") if built
+                                    else _("Updating the fast engine code failed; Build fast code tries again."))
+            if built:
+                # Translators: announced when fast engine code built by an older version has been built again.
+                ui.message(_("Classic Voices: fast engine code is updated."))
+        wx.CallAfter(finish)
     threading.Thread(target=run, daemon=True).start()
 
 

@@ -145,6 +145,7 @@ static void *pacer_main(void *arg) {
             collect(m, job.slice, job.epoch);
             if (!g_first_t)  // first audible sample
                 for (uint32_t i = before; i < g_pcm_n; i++) if (fabsf(g_pcm[i]) > 1e-3f) { g_first_t = now_s() - g_begin_t; break; }
+            if (g_pcm_n != before) pthread_cond_broadcast(&g_cv);  // mt_audio_take is waiting for it
         }
         pthread_mutex_unlock(&g_mu);
 
@@ -247,16 +248,25 @@ const float *mt_audio_pcm(uint32_t *n) { *n = g_pcm_n; return g_pcm; }
 // Streaming: copy frames [from, from+max) that are final. Slices can land a
 // little behind the end, so while the utterance runs `hold` frames are kept
 // back. *done = utterance finished (graph stopped and pacer idle, or quiet).
-uint32_t mt_audio_take(float *dst, uint32_t from, uint32_t max, uint32_t hold, int *done) {
+// With nothing to hand out, waits up to wait_us for the pacer to collect more.
+uint32_t mt_audio_take(float *dst, uint32_t from, uint32_t max, uint32_t hold, int *done, unsigned wait_us) {
     pthread_mutex_lock(&g_mu);
-    int idle = !g_qn && !g_busy;
-    *done = g_stopped && idle;
-    uint32_t avail = g_pcm_n;
-    if (!*done) avail = avail > hold ? avail - hold : 0;
     uint32_t n = 0;
-    if (avail > from) {
-        n = avail - from < max ? avail - from : max;
-        memcpy(dst, g_pcm + from, n * sizeof(float));
+    for (int waited = 0;; waited = 1) {
+        int idle = !g_qn && !g_busy;
+        *done = g_stopped && idle;
+        uint32_t avail = g_pcm_n;
+        if (!*done) avail = avail > hold ? avail - hold : 0;
+        if (avail > from) {
+            n = avail - from < max ? avail - from : max;
+            memcpy(dst, g_pcm + from, n * sizeof(float));
+        }
+        if (n || *done || waited || !wait_us) break;
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_nsec += (long)wait_us * 1000;
+        if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
+        pthread_cond_timedwait(&g_cv, &g_mu, &ts);
     }
     pthread_mutex_unlock(&g_mu);
     return n;

@@ -794,10 +794,25 @@ public class MainActivity extends Activity implements ImportService.Listener {
         Map<String, String> every = chosen.containsKey(Languages.EVERY) ? chosen.get(Languages.EVERY) : new java.util.HashMap<String, String>();
         Map<String, String> mine = voice == null ? every
                 : chosen.containsKey(voice.id) ? chosen.get(voice.id) : new java.util.HashMap<String, String>();
+        // Languages.KEEP: the voice reading keeps reading it; Languages.EVERY as the language: every language
+        final boolean everyOff = Languages.KEEP.equals(every.get(Languages.EVERY));
+        final String keep = getString(R.string.lang_keep);
+        if (voice != null && everyOff) text(getString(R.string.lang_switch_off_every));
+        else check("lang:switch", voice != null ? getString(R.string.lang_switch_for, voice.name) : getString(R.string.lang_switch),
+                !Languages.KEEP.equals(mine.get(Languages.EVERY)), new CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Languages.set(MainActivity.this, Languages.EVERY, on ? null : Languages.KEEP,
+                                voice != null ? voice.id : null);
+                        refreshPage();
+                    }
+                });
         for (final String lang : langs) {
             String first;
-            if (voice == null) first = getString(R.string.lang_auto_every);
-            else if (names.containsKey(every.get(lang))) first = getString(R.string.lang_as_every, names.get(every.get(lang)));
+            String everyLang = every.containsKey(lang) ? every.get(lang) : everyOff ? Languages.KEEP : null;
+            if (voice == null) first = getString(everyOff ? R.string.lang_off_every : R.string.lang_auto_every);
+            else if (Languages.KEEP.equals(everyLang)) first = getString(R.string.lang_as_every, keep);
+            else if (names.containsKey(everyLang)) first = getString(R.string.lang_as_every, names.get(everyLang));
             else {
                 int a = Native.langPick("", voice.id, lang, keys, tags);
                 first = getString(R.string.lang_auto, a >= 0 ? names.get(keys[a]) : getString(R.string.lang_none));
@@ -806,6 +821,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
             List<String> labels = new ArrayList<>();
             optKeys.add(null);
             labels.add(first);
+            optKeys.add(Languages.KEEP);
+            labels.add(keep);
             for (VoiceInfo v : by.get(lang)) {
                 optKeys.add(v.key);
                 labels.add(v.name);

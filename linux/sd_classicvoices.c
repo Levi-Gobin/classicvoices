@@ -285,8 +285,8 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
                 size_t n = vxs_read(g_stream, buf, 2205, &done);
                 nmk += vxs_read_marks(g_stream, mk + nmk, 64 - nmk);
                 if (!n && !done) {
-                    if (++idle > 15000) { DBG("engine stalled: %s", vxs_last_error(g_stream)); break; }
-                    usleep(1000);
+                    if (++idle > 7500) { DBG("engine stalled: %s", vxs_last_error(g_stream)); break; }
+                    vxs_wait(g_stream, 2000);  // back as soon as audio comes
                     continue;
                 }
                 idle = 0;

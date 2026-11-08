@@ -13,7 +13,7 @@
 #include <time.h>
 #include <unistd.h>
 
-uint32_t mt_audio_take(float *dst, uint32_t from, uint32_t max, uint32_t hold, int *done);
+uint32_t mt_audio_take(float *dst, uint32_t from, uint32_t max, uint32_t hold, int *done, unsigned wait_us);
 uint32_t mt_audio_slices(void);
 
 struct MtEngine {
@@ -625,7 +625,12 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
     int stopped = 0;
     for (;;) {
         int done;
-        uint32_t n = mt_audio_take(tmp, pos, 4096, 2048, &done);
+        // 64 frames (3 ms) held back, not 2048 (93 ms): no MacinTalk from 10.4
+        // to 10.7 rewrites more than the one silent frame of Lion's kick, and
+        // the audio comes out sample for sample the same. Waits for the pacer
+        // instead of checking every 0.5 ms. About 1 ms sooner (Fred 2.0 ->
+        // 0.7 ms, Alex 4.5 -> 3.5, Vicki 9.2 -> 8.5).
+        uint32_t n = mt_audio_take(tmp, pos, 4096, 64, &done, stopped ? 100 : 500);
         if (n) {
             pos += n;
             if (!stopped && cb(ctx, tmp, n)) {  // cancelled: stop the engine, drain quietly
@@ -678,7 +683,6 @@ static int speak_one(MtEngine *e, const char *text, size_t len, MtPcmCallback cb
             e->stop_deadline = 0;
             return -1;
         }
-        usleep(stopped ? 100 : 500);
     }
     e->stop_deadline = 0;
     if (stopped && e->fn_stop) stop_hint(e, 0);

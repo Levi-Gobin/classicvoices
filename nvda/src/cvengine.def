@@ -12,6 +12,7 @@ EXPORTS
     vxs_cancel
     vxs_read
     vxs_read_marks
+    vxs_wait
     vx_phoneme_text
     vxs_preload
     vxs_set_rules_pack

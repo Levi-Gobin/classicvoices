@@ -233,7 +233,7 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_read(JNIEnv *env,
             (*env)->SetByteArrayRegion(env, buf, 0, (jsize)(n * 2), (const jbyte *)pcm);
             return (jint)(n * 2);
         }
-        if (!done) usleep(1000);
+        if (!done) vxs_wait(g_stream, 2000);  // back as soon as audio comes
     }
     return 0;
 }

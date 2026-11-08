@@ -40,6 +40,11 @@ void vxs_cancel(VxStream *s);
 // once the current utterance has been fully produced and drained.
 size_t vxs_read(VxStream *s, float *out, size_t frames, int *done);
 
+// For a reader that found nothing to read: returns as soon as there are
+// samples, the utterance has ended (or was cancelled), or after timeout_us;
+// waking right away instead of after a sleep. Not for a real-time thread.
+void vxs_wait(VxStream *s, int timeout_us);
+
 // Where each word of the current utterance starts, in the order spoken:
 // frame counts output frames from the utterance's first one (what vxs_read
 // returns), text_pos/text_len are bytes of the UTF-8 text given to vxs_start.

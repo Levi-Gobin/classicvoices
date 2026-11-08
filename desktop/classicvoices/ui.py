@@ -479,17 +479,30 @@ class Browser(wx.Panel):
             p.text("When %s reads text in another language, it hands it to these voices." % voice.name)
         names = {i.id: "%s, %s" % (i.title, i.version.name) for i in here}
         choices = languages.load(system.data_root())
-        every = {l: k for l, k in choices.get("*", {}).items() if k in names}
-        mine = {l: k for l, k in choices.get(voice.id, {}).items() if k in names} if voice else every
+        # "-": the voice reading keeps reading it; "*" as the language: every language
+        every = {l: k for l, k in choices.get("*", {}).items() if k in names or k == "-"}
+        mine = {l: k for l, k in choices.get(voice.id, {}).items() if k in names or k == "-"} if voice else every
+        every_off = every.get("*") == "-"
+        keep = "Keep the voice reading"
+
+        def switch(on):
+            languages.set_choice(system.data_root(), "*", None if on else "-", voice.id if voice else None)
+            self.render(keep=True)
+        if voice and every_off:
+            p.text("Switching voices when the text changes language is off for every voice (on the Languages "
+                   "page); a voice chosen below for a language still reads it.")
+        else:
+            p.check("Switch voices when the text changes language" + (" (while %s reads)" % voice.name if voice else ""),
+                    mine.get("*") != "-", switch)
         auto = self.frame.auto_voices(voice.id) if voice else {}
         for lang in langs:
             if not voice:
-                first = "Automatic: the voice nearest the one reading"
-            elif lang in every:
-                first = "As for every voice: " + names[every[lang]]
+                first = "Off: keep the voice reading" if every_off else "Automatic: the voice nearest the one reading"
+            elif lang in every or every_off:
+                first = "As for every voice: " + (keep if every.get(lang, "-") == "-" else names[every[lang]])
             else:
                 first = "Automatic: " + names.get(auto.get(lang), "none")
-            opts = [("", first)] + [(i.id, names[i.id]) for i in sorted(by[lang], key=lambda i: (
+            opts = [("", first), ("-", keep)] + [(i.id, names[i.id]) for i in sorted(by[lang], key=lambda i: (
                 [v.id for v in L.VERSIONS].index(i.version.id), i.name.lower(), i.kind))]
             p.choice(L.language_name(lang) + ":", opts, mine.get(lang, ""),
                      lambda key, lang=lang: languages.set_choice(system.data_root(), lang, key or None,
@@ -541,7 +554,9 @@ class Browser(wx.Panel):
                "translated into this computer's own code, from your own firmware: it sounds identical and starts "
                "speaking several times sooner. Classic Voices builds it by itself after each firmware import. "
                "It takes a few minutes per firmware" +
-               (", and the first time it downloads the free Zig C compiler from ziglang.org (about 100 MB)."
+               ((", and the first time it downloads the free llvm-mingw C compiler from GitHub (186 MB)."
+                 if system.arm_windows() else
+                 ", and the first time it downloads the free Zig C compiler from ziglang.org (about 100 MB).")
                 if system.IS_WIN else ", with your clang, or the Zig C compiler it downloads (about 55 MB)."))
         imported = [f for f in L.FIRMWARE_NAMES if lib.firmware_imported(f)]
         p.section("Fast code")

@@ -12,6 +12,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__ANDROID__)
+#include <sys/resource.h>
+#endif
 
 #define RING_FRAMES (1u << 20)  // ~47 s at 22.05 kHz
 // How far the engine may run ahead of playback. Enhanced voices make a long
@@ -112,6 +115,9 @@ struct VxStream {
     float *ring;
     _Atomic uint64_t write_pos, read_pos;
     _Atomic int producing;   // worker is still generating the current utterance
+    pthread_mutex_t rmu;     // vxs_wait: a reader waiting for samples
+    pthread_cond_t rcv;
+    _Atomic int waiters;
     _Atomic int cancel;      // ask the worker to stop the current utterance
     Vx *speaking;            // the engine in vx_speak now (under mu): a cancel stops it at once
     _Atomic int mt_keep_commands;  // vxs_set_mt_reset(0)
@@ -518,6 +524,15 @@ static void words_resolve(Sink *k, int held_only, uint32_t upto, uint32_t run_st
     k->npend = j;
 }
 
+// A reader in vxs_wait goes on: samples came, or the utterance ended.
+static void wake_readers(VxStream *s) {
+    atomic_thread_fence(memory_order_seq_cst);  // the samples or the end before the look at waiters
+    if (!atomic_load(&s->waiters)) return;
+    pthread_mutex_lock(&s->rmu);
+    pthread_cond_broadcast(&s->rcv);
+    pthread_mutex_unlock(&s->rmu);
+}
+
 // Write output-rate samples to the ring buffer. Returns 1 if cancelled.
 static int ring_write(Sink *k, const float *out, size_t n) {
     VxStream *s = k->s;
@@ -553,6 +568,7 @@ static int ring_write(Sink *k, const float *out, size_t n) {
             k->out_pos++;
         }
         atomic_store_explicit(&s->write_pos, w + chunk, memory_order_release);
+        wake_readers(s);
         i += chunk;
     }
     k->frames += n;
@@ -967,8 +983,20 @@ static int mt_pcm(void *ctx, const float *pcm, size_t n) {
     return 0;
 }
 
+// The speaking thread goes before ordinary work (a fast code build, a busy
+// program), so speech keeps ahead of playback while the computer is loaded.
+// macOS and iOS: its QoS class, set where it is created.
+static void speech_priority(void) {
+#if defined(_WIN32)
+    vx_win_speech_priority();
+#elif defined(__ANDROID__)
+    setpriority(PRIO_PROCESS, (id_t)gettid(), -4);  // ANDROID_PRIORITY_DISPLAY: before apps' work, not their UI
+#endif
+}
+
 static void *worker(void *arg) {
     VxStream *s = arg;
+    speech_priority();
     pthread_mutex_lock(&s->mu);
     for (;;) {
         while (!s->quit && !s->has_job && !s->preload_lang[0]) pthread_cond_wait(&s->cv, &s->mu);
@@ -1037,6 +1065,7 @@ static void *worker(void *arg) {
             free(text);
             pthread_mutex_lock(&s->mu);
             atomic_store(&s->producing, 0);
+            wake_readers(s);
             pthread_cond_broadcast(&s->cv);
             continue;
         }
@@ -1084,6 +1113,7 @@ static void *worker(void *arg) {
 
         pthread_mutex_lock(&s->mu);
         atomic_store(&s->producing, 0);
+        wake_readers(s);
         pthread_cond_broadcast(&s->cv);
         if (fallback[0] && !s->has_job) {
             // Have the compact voice ready for the next pitch change, without
@@ -1104,6 +1134,8 @@ VxStream *vxs_create(const char *root) {
     s->ring = calloc(RING_FRAMES, sizeof(float));
     pthread_mutex_init(&s->mu, NULL);
     pthread_cond_init(&s->cv, NULL);
+    pthread_mutex_init(&s->rmu, NULL);
+    pthread_cond_init(&s->rcv, NULL);
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, 16 << 20);  // recompiled code recurses on the C stack
@@ -1145,6 +1177,7 @@ void vxs_cancel(VxStream *s) {
     if (s->has_job) {  // never picked up by the worker
         s->has_job = 0;
         atomic_store(&s->producing, 0);
+        wake_readers(s);
     }
     while (atomic_load(&s->producing)) pthread_cond_wait(&s->cv, &s->mu);
     atomic_store(&s->read_pos, atomic_load(&s->write_pos));  // drop unplayed audio
@@ -1224,6 +1257,22 @@ void vxs_preload(VxStream *s, const char *lang) {
     snprintf(s->preload_pack, sizeof s->preload_pack, "%s", s->next_pack);
     pthread_cond_broadcast(&s->cv);
     pthread_mutex_unlock(&s->mu);
+}
+
+void vxs_wait(VxStream *s, int timeout_us) {
+    if (timeout_us <= 0) return;
+    pthread_mutex_lock(&s->rmu);
+    atomic_fetch_add(&s->waiters, 1);
+    struct timespec until;
+    clock_gettime(CLOCK_REALTIME, &until);
+    until.tv_nsec += (long)(timeout_us % 1000000) * 1000;
+    until.tv_sec += timeout_us / 1000000 + until.tv_nsec / 1000000000;
+    until.tv_nsec %= 1000000000;
+    // waiters is counted before this look, so a writer after it wakes us
+    while (atomic_load(&s->write_pos) == atomic_load(&s->read_pos) && atomic_load(&s->producing))
+        if (pthread_cond_timedwait(&s->rcv, &s->rmu, &until)) break;
+    atomic_fetch_sub(&s->waiters, 1);
+    pthread_mutex_unlock(&s->rmu);
 }
 
 size_t vxs_read(VxStream *s, float *out, size_t frames, int *done) {

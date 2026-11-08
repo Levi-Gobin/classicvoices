@@ -30,6 +30,24 @@ xcodebuild -project ios/ClassicVoices.xcodeproj -scheme "$SCHEME" -configuration
     || { grep -E ': error: |^error:' "$LOG" | sort -u; exit 1; }
 
 APP=$DD/Build/Products/Release-$SDK/ClassicVoices.app
+# Sideloadly 0.71 signs every Mach-O file in the app and fails on one that has
+# no signature yet ("macho sign/edit failed (-11)"): Tiger's MacinTalk and
+# SpeechDictionary. Sign those ad hoc so it only replaces a signature. Only
+# their header and the end of __LINKEDIT change, not the code fast code checks.
+# Each is signed on its own in a temporary folder: signed in place, the
+# SpeechDictionary folder would be taken for a bundle and get a _CodeSignature.
+SIGN=$(mktemp -d)
+find "$APP/PlugIns/Synth.appex/Voices" -type f | while IFS= read -r F; do
+    case $(head -c 4 "$F" | od -An -tx1 | tr -d ' \n') in
+    cafebabe|feedface|cefaedfe|feedfacf|cffaedfe) ;;
+    *) continue ;;
+    esac
+    codesign -dv "$F" 2>&1 | grep -q "not signed at all" || continue
+    cp "$F" "$SIGN/$(basename "$F")"
+    codesign -s - "$SIGN/$(basename "$F")" || exit 1
+    mv "$SIGN/$(basename "$F")" "$F"
+done
+rm -rf "$SIGN"
 codesign -f -s - --entitlements ios/Synth/Synth.entitlements "$APP/PlugIns/Synth.appex"
 codesign -f -s - --entitlements ios/App/ClassicVoices.entitlements "$APP"
 

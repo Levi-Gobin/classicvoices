@@ -50,6 +50,11 @@
     <string name="lang_auto_every">Automatic: the voice nearest the one reading</string>
     <string name="lang_auto">Automatic: %1$s</string>
     <string name="lang_as_every">As for every voice: %1$s</string>
+    <string name="lang_keep">Keep the voice reading</string>
+    <string name="lang_off_every">Off: keep the voice reading</string>
+    <string name="lang_switch">Switch voices when the text changes language</string>
+    <string name="lang_switch_for">Switch voices when the text changes language (while %1$s reads)</string>
+    <string name="lang_switch_off_every">Switching voices when the text changes language is off for every voice (on the Languages page); a voice chosen below for a language still reads it.</string>
     <string name="lang_none">none</string>
     <string name="requires_firmware">%1$s, requires the %2$s firmware</string>
     <string name="get_firmware_for_voice">%1$s needs Apple\'s %2$s firmware, which isn\'t here yet. Get it from Apple now (streams about %3$s), then download %4$s (%5$s)?</string>
@@ -112,8 +117,8 @@
     <string name="fast_job">Fast code</string>
     <string name="fast_unsupported">This phone can\'t build fast code</string>
     <string name="fast_no_space">Building fast code needs about 400 MB of free space</string>
-    <string name="fast_translating">Translating the %1$s engine</string>
-    <string name="fast_compiling">Compiling the %1$s engine</string>
+    <string name="fast_translating">Translating the %1$s engine (%2$d of %3$d)</string>
+    <string name="fast_compiling">Compiling the %1$s engine (%2$d of %3$d)</string>
     <string name="fast_cant_save">Couldn\'t save the fast code</string>
     <string name="fast_finding_zig">Finding the Zig compiler</string>
     <string name="fast_zig_index">ziglang.org\'s download list couldn\'t be read</string>

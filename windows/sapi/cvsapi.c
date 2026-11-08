@@ -91,27 +91,6 @@ static void logf_(const char *fmt, ...) {
     va_end(ap);
 }
 
-// Waiting for the engine's next samples: Sleep(1) can take a whole 15.6 ms
-// timer tick, so wait on a high-resolution timer (Windows 10 1803+) instead.
-static void short_wait(void) {
-    static __thread HANDLE timer;
-    static __thread int tried;
-    if (!tried) {
-        tried = 1;
-        timer = CreateWaitableTimerExW(NULL, NULL, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */,
-                                       TIMER_ALL_ACCESS);
-    }
-    if (timer) {
-        LARGE_INTEGER due;
-        due.QuadPart = -5000;  // 0.5 ms, in 100 ns units
-        if (SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE)) {
-            WaitForSingleObject(timer, INFINITE);
-            return;
-        }
-    }
-    Sleep(1);
-}
-
 // The data folder: HKLM\SOFTWARE\Classic Voices\DataDir (64-bit view), else
 // %ProgramData%\Classic Voices.
 static void data_dir(WCHAR *out, DWORD cap) {
@@ -423,7 +402,7 @@ static int speak_text(Run *r, const Text *t, const Marks *mk, int rate, int pitc
                 }
             }
         }
-        if (!n) short_wait();
+        if (!n) vxs_wait(e->vxs, 2000);  // back as soon as audio comes
     }
 }
 
