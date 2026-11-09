@@ -324,7 +324,16 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .environment(library)
-        .task { await updates.check() }
+        .task {
+            await updates.check()
+            #if CV_PUBLIC
+            // while the app is open (GitHub is asked at most every 6 hours)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(3600))
+                await updates.check()
+            }
+            #endif
+        }
         #if CV_PUBLIC
         .task { MacSetup.shared.start() }
         #endif
@@ -984,6 +993,9 @@ struct SettingsTab: View {
 /// The speech settings, for every voice unless a voice says otherwise.
 struct SpeechSettingsView: View {
     @Environment(VoiceLibrary.self) private var library
+    #if CV_PUBLIC
+    @AppStorage("update.automatic") private var updateAutomatically = true
+    #endif
 
     var body: some View {
         Form {
@@ -1028,6 +1040,15 @@ struct SpeechSettingsView: View {
             } footer: {
                 Text("Embedded commands such as [[inpt PHON]], [[rate 300]] or [[char LTRL]] change a MacinTalk voice until something changes them back, so a command VoiceOver reads out once could leave the voice in that mode. With this on, each utterance starts from the voice\u{2019}s normal settings. Turn it off to keep a command in effect across utterances. Values past what the engine takes (rate above 32767, pbas above 127, pmod above 200, volm above 2) are set to the highest it takes.")
             }
+            #if CV_PUBLIC
+            Section {
+                Toggle("Update automatically", isOn: $updateAutomatically)
+            } header: {
+                Text("Updates")
+            } footer: {
+                Text("A new version of Classic Voices is downloaded and checked in the background, and installed when you quit Classic Voices (or straight away with Restart Now). Off, Classic Voices asks first. Your voices stay either way.")
+            }
+            #endif
             Section {
                 Toggle("24-hour times in Leopard voices", isOn: Binding(
                     get: { library.settings.twentyFourHour },

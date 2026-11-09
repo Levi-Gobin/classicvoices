@@ -2063,3 +2063,22 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   -2 to -3.6 dB; en-GB voices and Siri Catherine the brightest (8.5-9.5 kHz
   at -14 to -19 dB); MacinTalk Victoria -3.5, Fred -2 to -2.6, Alex and
   Vicki -1; iOS 3 and 4 (16 kHz voices) have nothing there.
+- **The Mac app updates itself automatically (2026-11-09, 0.5.2).** The
+  released Mac app already downloaded, checked (size, GitHub's SHA-256,
+  Developer ID of this team and app) and swapped in a new version when asked
+  (MacUpdater.install). Now, as Sparkle's automatic mode does: UpdateCheck
+  asks every 6 hours at most (was a day; the iPhone app too), at launch and
+  hourly while RootView is up; with "Update automatically" on (default,
+  UserDefaults update.automatic) and the app's folder writable, a new release
+  is prepared quietly (MacUpdater.prepare: fetch + verify into the Update
+  folder, no announcement) and put in place at quit (installOnQuit, from
+  MacSetup's willTerminate observer: replaceItemAt, lsregister -f, killall
+  axassetsd); "Update ready" on the voice pages has Restart Now
+  (installReady). A failed download is retried at the next check and shown
+  once as the old alert. Off, or not writable: the old ask-first alert.
+  cleanUpIfIdle keeps the launch clean-up off an update in progress. Test
+  without GitHub: -updateFeed <url> -updateQuiet YES -updateQuitWhenReady YES
+  (quits once ready, so installOnQuit runs). Not yet run end to end: launching
+  a test copy registers its speech extension and may rebuild fast code in the
+  shared App Group, so it waits for the user. Not Sparkle: it would add a
+  framework, EdDSA keys and an appcast for what this already does.

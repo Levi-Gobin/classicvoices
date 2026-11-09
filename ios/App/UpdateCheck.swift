@@ -5,8 +5,9 @@ import AppKit
 #endif
 
 /// Is there a newer Classic Voices? Asked as the other platforms ask
-/// (nvda/.../update.py): GitHub at most once a day, in the background, and
-/// each new version offered once. These apps carry Apple's code, so they're
+/// (nvda/.../update.py): GitHub at most every 6 hours, in the background, and
+/// each new version offered once. The released Mac app asks while it's open
+/// too, and updating automatically, installs it when it quits (MacUpdater). These apps carry Apple's code, so they're
 /// built in each person's own GitHub account and never in a release: the
 /// update is building it again. The release page says what's new. The
 /// released Mac app (CV_PUBLIC) installs the update itself (MacUpdater).
@@ -55,7 +56,7 @@ final class UpdateCheck {
         guard feed != nil || !CommandLine.arguments.dropFirst().contains(where: { $0.hasPrefix("-") && !$0.hasPrefix("-NS") && !$0.hasPrefix("-Apple") })
         else { return }
         let now = Date().timeIntervalSince1970
-        guard feed != nil || now - defaults.double(forKey: "update.checked") >= 24 * 3600 else { return }
+        guard feed != nil || now - defaults.double(forKey: "update.checked") >= 6 * 3600 else { return }
         var request = URLRequest(url: feed ?? Self.releases, timeoutInterval: 10)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("ClassicVoices/\(Self.current)", forHTTPHeaderField: "User-Agent")
@@ -63,7 +64,13 @@ final class UpdateCheck {
               (response as? HTTPURLResponse)?.statusCode == 200,
               let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
         defaults.set(now, forKey: "update.checked")
-        let announced = feed != nil ? "0" : defaults.string(forKey: "update.announced") ?? "0"
+        #if CV_PUBLIC
+        // updating itself: each check tries again until the new version is in place
+        let quiet = MacUpdater.automatic && MacUpdater.canUpdateQuietly
+        #else
+        let quiet = false
+        #endif
+        let announced = feed != nil || quiet ? "0" : defaults.string(forKey: "update.announced") ?? "0"
         var found: Release?
         for release in list where release["draft"] as? Bool != true {
             let v = ((release["tag_name"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "v"))
@@ -81,6 +88,19 @@ final class UpdateCheck {
                             assets: assets)
         }
         guard let found else { return }
+        #if CV_PUBLIC
+        // testing: `-updateFeed … -updateQuiet YES -updateQuitWhenReady YES` downloads it
+        // quietly and quits once it's ready, which installs it (MacUpdater.installOnQuit)
+        if quiet, feed == nil || defaults.bool(forKey: "updateQuiet"), MacUpdater.canInstall(found) {
+            MacUpdater.shared.prepare(found) { [weak self] in
+                // it couldn't be downloaded or checked: say so once, as when asking
+                guard defaults.string(forKey: "update.announced") != found.version else { return }
+                defaults.set(found.version, forKey: "update.announced")
+                self?.available = found
+            }
+            return
+        }
+        #endif
         defaults.set(found.version, forKey: "update.announced")
         #if CV_PUBLIC
         // testing with a feed: `-updateFeed … -updateNow YES` installs it without asking

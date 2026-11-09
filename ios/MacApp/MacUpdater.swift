@@ -11,6 +11,11 @@ import SwiftUI
 /// copy, and opened. The engines, fast code and voices live outside the app
 /// (App Group, the extension's store), so they stay; fast code made by an
 /// older version is rebuilt (FastCodeBuilder.stamp).
+///
+/// Updating automatically (the default; Settings, "Update automatically"), a
+/// new version is downloaded and checked in the background (prepare) and put
+/// in place when Classic Voices quits (installOnQuit), as Sparkle does; Restart
+/// Now installs it at once. Off, the person is asked first (install).
 @MainActor @Observable
 final class MacUpdater {
     static let shared = MacUpdater()
@@ -21,8 +26,75 @@ final class MacUpdater {
     private(set) var fraction: Double?
     private(set) var error: String?
     private(set) var running = false
+    /// Downloaded and checked, waiting to be put in place.
+    private(set) var ready: (version: String, app: URL)?
+    private var preparing = false
 
     static func canInstall(_ r: UpdateCheck.Release) -> Bool { r.assets[asset] != nil }
+
+    static var automatic: Bool {
+        UserDefaults.standard.object(forKey: "update.automatic") as? Bool ?? true
+    }
+
+    /// Whether this copy can update itself without asking: this account can
+    /// replace it where it is.
+    static var canUpdateQuietly: Bool {
+        FileManager.default.isWritableFile(atPath: Bundle.main.bundleURL.deletingLastPathComponent().path)
+    }
+
+    /// Updating automatically: download and check the new version quietly. A
+    /// failure leaves it to the next check (or, on its own, to the person:
+    /// UpdateCheck shows the release when this gives up).
+    func prepare(_ release: UpdateCheck.Release, failed: @escaping @MainActor () -> Void) {
+        guard !running, !preparing, ready?.version != release.version, let a = release.assets[Self.asset] else { return }
+        preparing = true
+        Thread.detachNewThread { [weak self] in
+            do {
+                let new = try Self.fetch(a, version: release.version) { _ in }
+                Task { @MainActor in
+                    self?.preparing = false
+                    self?.ready = (release.version, new)
+                    if UserDefaults.standard.bool(forKey: "updateQuitWhenReady") { NSApp.terminate(nil) }
+                }
+            } catch {
+                Task { @MainActor in
+                    self?.preparing = false
+                    failed()
+                }
+            }
+        }
+    }
+
+    /// Restart Now: the downloaded version, put in place and opened.
+    func installReady() {
+        guard let r = ready, !running else { return }
+        running = true
+        status = "Installing Classic Voices \(r.version)"
+        let app = Bundle.main.bundleURL
+        do {
+            try Self.replace(app, with: r.app)
+            Self.relaunch(app)
+        } catch {
+            running = false
+            status = nil
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Classic Voices is quitting: a downloaded version takes this one's place,
+    /// and the system is told about its speech extension, as after an install.
+    func installOnQuit() {
+        guard let r = ready, !running else { return }
+        ready = nil
+        let app = Bundle.main.bundleURL
+        guard (try? Self.replace(app, with: r.app)) != nil else { return }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f \"$1\"; "
+                       + "killall axassetsd 2>/dev/null", "sh", app.path]
+        try? p.run()
+        p.waitUntilExit()
+    }
 
     func install(_ release: UpdateCheck.Release) {
         guard !running, let a = release.assets[Self.asset] else { return }
@@ -63,6 +135,11 @@ final class MacUpdater {
     /// What an update left behind (the folder it was unpacked in).
     nonisolated static func cleanUp() {
         try? FileManager.default.removeItem(at: FastCodeBuilder.cache.appendingPathComponent("Update"))
+    }
+
+    /// cleanUp, unless an update is being downloaded or waits there now.
+    func cleanUpIfIdle() {
+        if !preparing && ready == nil && !running { Self.cleanUp() }
     }
 
     nonisolated private static func fetch(_ a: UpdateCheck.Asset, version: String,
@@ -166,6 +243,13 @@ struct MacUpdateSection: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
+        if let ready = updater.ready, !updater.running, updater.error == nil {
+            PageSection("Update ready") {
+                Text("Classic Voices \(ready.version) has been downloaded. It\u{2019}s installed when you quit Classic Voices. Your voices stay.")
+                Button("Restart Now") { updater.installReady() }
+                Button("What\u{2019}s New") { openURL(UpdateCheck.page) }
+            }
+        }
         if updater.running || updater.error != nil {
             PageSection("Updating Classic Voices") {
                 if let status = updater.status {

@@ -41,10 +41,14 @@ final class MacSetup {
         #if CV_PUBLIC
         if !observing {
             observing = true
-            MacUpdater.cleanUp()
+            MacUpdater.shared.cleanUpIfIdle()
             // compiles stop with the app
             NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil,
-                                                   queue: nil) { _ in FastCodeBuilder.stopAll() }
+                                                   queue: .main) { _ in
+                FastCodeBuilder.stopAll()
+                // an update downloaded while it ran takes its place (MacUpdater)
+                MainActor.assumeIsolated { MacUpdater.shared.installOnQuit() }
+            }
         }
         guard !running, let root = VoiceCatalog.importedRoot, let native = VoiceCatalog.nativeDir else { return }
         guard needed else { finished = true; return }
