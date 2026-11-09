@@ -144,6 +144,10 @@
     <string name="setting_fallback_explained">Enhanced and premium voices can\'t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch uses the voice\'s compact version. Voices without a compact version here are unaffected.</string>
     <string name="setting_apple_tone">Tone as on iPhone and Mac</string>
     <string name="setting_apple_tone_explained">iPhone and Mac play the voices with their highest frequencies softened; Android keeps them, which sounds a little brighter. This softens them the same way.</string>
+    <string name="setting_steady_pauses">Pauses keep their length at any rate</string>
+    <string name="setting_steady_pauses_explained">The voices shorten a pause the faster they speak, so at high rates a pause TalkBack or an app asks for almost disappears. With this on, it lasts as long at any rate.</string>
+    <string name="setting_spelling_pauses">Pauses when spelling</string>
+    <string name="setting_spelling_pauses_explained">The voices pause before, between and after spelled letters. Off, spelling is as quick as the rest of the speech. iOS 3 and 4 voices always pause.</string>
     <string name="tts_heading">Text-to-speech</string>
     <string name="open_tts_settings">Open text-to-speech settings</string>
     <string name="summary_none">No voices yet. Nothing of Apple\'s comes with Classic Voices: get the firmware in the iOS tab, and its voices are taken out of it.</string>

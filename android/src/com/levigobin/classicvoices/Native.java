@@ -26,6 +26,13 @@ final class Native {
     static native void setAppleTone(boolean on);
 
     /**
+     * Pauses as long as asked at any rate (off: they shorten as the rate goes
+     * up, as the voices do), and pauses before, between and after spelled
+     * letters, for the utterances begun from now on.
+     */
+    static native void setPauses(boolean steady, boolean spelling);
+
+    /**
      * The pre-check for a pronunciation rule set (core/vxrules.h): which
      * rules could match a text, so the others needn't run. Patterns and text
      * are UTF-8 bytes; marks gets 1 for each rule worth running (never cleared).

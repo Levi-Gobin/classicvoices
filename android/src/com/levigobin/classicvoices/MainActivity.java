@@ -1039,7 +1039,9 @@ public class MainActivity extends Activity implements ImportService.Listener {
                 .append(Pronunciation.enabled(this) ? (Pronunciation.downloaded(this) ? "on" : "on, not downloaded") : "off")
                 .append(", pitch fallback ")
                 .append(Data.fallbackEnabled(this) ? "on" : "off").append(", tone as on iPhone and Mac ")
-                .append(Data.appleTone(this) ? "on" : "off").append('\n');
+                .append(Data.appleTone(this) ? "on" : "off").append(", steady pauses ")
+                .append(Data.steadyPauses(this) ? "on" : "off").append(", spelling pauses ")
+                .append(Data.spellingPauses(this) ? "on" : "off").append('\n');
         for (String e : ImportService.errors()) s.append("Error: ").append(e).append('\n');
         return s.toString().trim();
     }
@@ -1061,6 +1063,11 @@ public class MainActivity extends Activity implements ImportService.Listener {
         text(getString(R.string.setting_fallback_explained));
         check("apple_tone", getString(R.string.setting_apple_tone), Data.appleTone(this), pref("apple_tone"));
         text(getString(R.string.setting_apple_tone_explained));
+        check("steady_pauses", getString(R.string.setting_steady_pauses), Data.steadyPauses(this), pref("steady_pauses"));
+        text(getString(R.string.setting_steady_pauses_explained));
+        check("spelling_pauses", getString(R.string.setting_spelling_pauses), Data.spellingPauses(this),
+                pref("spelling_pauses"));
+        text(getString(R.string.setting_spelling_pauses_explained));
 
         section(getString(R.string.tts_heading));
         String engine = Settings.Secure.getString(getContentResolver(), "tts_default_synth");

@@ -124,6 +124,8 @@ struct VxStream {
     _Atomic int mt_12_hour;        // vxs_set_mt_24_hour(0)
     _Atomic int mt_modern_rate;    // vxs_set_mt_modern_rate(1)
     _Atomic int apple_tone;        // vxs_set_apple_tone(1)
+    _Atomic int pauses_shorten;    // vxs_set_steady_pauses(0)
+    _Atomic int spelling_pauses;   // vxs_set_spelling_pauses(1)
     _Atomic uint64_t generation;
 
     // where each word of the current utterance starts (vxs_read_words)
@@ -1197,6 +1199,8 @@ void vxs_set_mt_reset(VxStream *s, int on) { atomic_store(&s->mt_keep_commands, 
 void vxs_set_mt_24_hour(VxStream *s, int on) { atomic_store(&s->mt_12_hour, !on); }
 void vxs_set_mt_modern_rate(VxStream *s, int on) { atomic_store(&s->mt_modern_rate, on); }
 void vxs_set_apple_tone(VxStream *s, int on) { atomic_store(&s->apple_tone, on ? 1 : 0); }
+void vxs_set_steady_pauses(VxStream *s, int on) { atomic_store(&s->pauses_shorten, !on); }
+void vxs_set_spelling_pauses(VxStream *s, int on) { atomic_store(&s->spelling_pauses, on ? 1 : 0); }
 
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);
@@ -1275,11 +1279,12 @@ static int pause_follows_rate(const char *key) {
 //   and out again pauses twice that (310 ms at 100%); the value the engine
 //   uses is the last one in the call, and it doesn't carry to the next.
 //   iOS 3 and 4 don't know ESC\spell\ and read it out.
-static char *timing_commands(const char *t, const char *key, int rate) {
+// Each can be turned off (vxs_set_steady_pauses, vxs_set_spelling_pauses).
+static char *timing_commands(const char *t, const char *key, int rate, int steady_pauses, int spelling_pauses) {
     static const char kPause[] = "\x1b\\pause=", kRate[] = "\x1b\\rate=", kSpell[] = "\x1b\\tn=spell\\",
                       kNoSpellPause[] = "\x1b\\spell=0\\";
-    int follows = pause_follows_rate(key);
-    int spell = strstr(t, kSpell) && strncmp(key, "ios3/", 5) && strncmp(key, "ios4/", 5);
+    int follows = steady_pauses && pause_follows_rate(key);
+    int spell = !spelling_pauses && strstr(t, kSpell) && strncmp(key, "ios3/", 5) && strncmp(key, "ios4/", 5);
     if (!spell && !(follows && strstr(t, kPause))) return strdup(t);
     size_t n = strlen(t);
     char *o = malloc(sizeof kNoSpellPause + n * 2 + 1), *w = o;  // a pause's digits grow from 1 to at most 4
@@ -1322,7 +1327,8 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     if (is_mt_key(lang)) {
         s->job_text = strdup(utf8_text);
     } else {
-        char *timed = timing_commands(utf8_text, lang, rate);
+        char *timed = timing_commands(utf8_text, lang, rate, !atomic_load(&s->pauses_shorten),
+                                      atomic_load(&s->spelling_pauses));
         s->job_text = typed_commands(timed ? timed : utf8_text);
         free(timed);
     }

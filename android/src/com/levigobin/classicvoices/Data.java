@@ -240,6 +240,10 @@ final class Data {
 
     static boolean appleTone(Context c) { return prefs(c).getBoolean("apple_tone", true); }
 
+    static boolean steadyPauses(Context c) { return prefs(c).getBoolean("steady_pauses", true); }
+
+    static boolean spellingPauses(Context c) { return prefs(c).getBoolean("spelling_pauses", false); }
+
     static boolean hasEngine(Context c, String build) {
         return new File(new File(voicesDir(c), build), "voiced").isFile();
     }

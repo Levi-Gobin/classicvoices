@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CV_ABI 4  // 4: vxs_set_apple_tone
+#define CV_ABI 5  // 4: vxs_set_apple_tone; 5: vxs_set_steady_pauses, vxs_set_spelling_pauses
 
 int cv_abi_version(void) { return CV_ABI; }
 

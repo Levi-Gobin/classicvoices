@@ -82,6 +82,10 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("newerPronunciation", _("&Newer pronunciation rules"), defaultVal=False),
         # Translators: a setting: roll off the highest frequencies as iPhone and Mac playback does.
         BooleanDriverSetting("appleTone", _("&Tone as on iPhone and Mac"), defaultVal=True),
+        # Translators: a setting: pauses (such as before a character's description) don't get shorter at higher rates.
+        BooleanDriverSetting("steadyPauses", _("Pauses &keep their length at any rate"), defaultVal=True),
+        # Translators: a setting: the voice pauses before, between and after spelled letters, as it originally did.
+        BooleanDriverSetting("spellingPauses", _("Pauses &when spelling"), defaultVal=False),
     )
     # LangChangeCommand: NVDA sends it when "Automatic language switching" is on
     supportedCommands = {IndexCommand, BreakCommand, PitchCommand, RateCommand, VolumeCommand,
@@ -111,6 +115,8 @@ class SynthDriver(SynthDriver):
         self._rules = True
         self._newer = False
         self._tone = True
+        self._steady = True
+        self._spellPauses = False
         self._voice = next(iter(self._voices))
         self._lang_cache = {}
         # looked up once: each lookup reads the registry and lists folders,
@@ -123,6 +129,8 @@ class SynthDriver(SynthDriver):
             feed=self._feed, idle=self._idle,
             native_root=cv_paths.native_root())
         self._speaker.set_apple_tone(self._tone)
+        self._speaker.set_steady_pauses(self._steady)
+        self._speaker.set_spelling_pauses(self._spellPauses)
         self._speaker.preload(self._voice, self._pack(self._voice))
 
     def _pack(self, key):
@@ -359,6 +367,22 @@ class SynthDriver(SynthDriver):
         # off (core/vxstream.c, vxs_set_apple_tone): on, it sounds as there.
         self._tone = bool(value)
         self._speaker.set_apple_tone(self._tone)
+
+    def _get_steadyPauses(self):
+        return self._steady
+
+    def _set_steadyPauses(self, value):
+        # the voices shorten a pause the faster they speak (core/vxstream.c,
+        # timing_commands): on, a pause lasts as long as NVDA or MathCAT asks
+        self._steady = bool(value)
+        self._speaker.set_steady_pauses(self._steady)
+
+    def _get_spellingPauses(self):
+        return self._spellPauses
+
+    def _set_spellingPauses(self, value):
+        self._spellPauses = bool(value)
+        self._speaker.set_spelling_pauses(self._spellPauses)
 
     def _get_newerPronunciation(self):
         return self._newer

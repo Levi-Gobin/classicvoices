@@ -576,6 +576,9 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
     int fallback = (int)user_setting(L"PitchFallback", 1);  // the compact voice speaks pitch changes
     // the top of the band rolled off as iPhone and Mac playback does (the app's "Tone as on iPhone and Mac")
     vxs_set_apple_tone(e->vxs, (int)user_setting(L"AppleTone", 1));
+    // pauses as long as asked at any rate; spelling without pauses around the letters (the app's settings)
+    vxs_set_steady_pauses(e->vxs, (int)user_setting(L"SteadyPauses", 1));
+    vxs_set_spelling_pauses(e->vxs, (int)user_setting(L"SpellingPauses", 0));
     long rate = 0;
     USHORT volume = 100;
     site->lpVtbl->GetRate(site, &rate);

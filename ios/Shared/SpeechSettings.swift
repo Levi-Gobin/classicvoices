@@ -24,6 +24,12 @@ struct SpeechSettings: Codable, Equatable {
     /// MacinTalk: a rate speaks at the words per minute today's Alex speaks
     /// at, instead of a percent of the voice's own default rate.
     var modernRate = true
+    /// The voices shorten a pause the faster they speak: on, a pause VoiceOver
+    /// or an app asks for lasts as long at any rate (vxs_set_steady_pauses).
+    var steadyPauses = true
+    /// Spelling pauses before, between and after the letters, as the voices
+    /// themselves do (vxs_set_spelling_pauses). iOS 3 and 4 voices always do.
+    var spellingPauses = false
     var rulesOverride: [String: Bool] = [:]
     var newerRulesOverride: [String: Bool] = [:]
     var pitchFallbackOverride: [String: Bool] = [:]
@@ -48,6 +54,8 @@ struct SpeechSettings: Codable, Equatable {
         resetCommands = try c.decodeIfPresent(Bool.self, forKey: .resetCommands) ?? resetCommands
         twentyFourHour = try c.decodeIfPresent(Bool.self, forKey: .twentyFourHour) ?? twentyFourHour
         modernRate = try c.decodeIfPresent(Bool.self, forKey: .modernRate) ?? modernRate
+        steadyPauses = try c.decodeIfPresent(Bool.self, forKey: .steadyPauses) ?? steadyPauses
+        spellingPauses = try c.decodeIfPresent(Bool.self, forKey: .spellingPauses) ?? spellingPauses
         rulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .rulesOverride) ?? [:]
         newerRulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .newerRulesOverride) ?? [:]
         pitchFallbackOverride = try c.decodeIfPresent([String: Bool].self, forKey: .pitchFallbackOverride) ?? [:]

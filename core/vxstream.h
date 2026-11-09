@@ -103,6 +103,16 @@ void vxs_set_mt_modern_rate(VxStream *s, int on);
 // brighter.
 void vxs_set_apple_tone(VxStream *s, int on);
 
+// Pauses the screen reader or app asks for (ESC\pause=N\, SSML <break>) last
+// that long at any rate; off, they shorten as the speaking rate goes up, as
+// the voices themselves do. On by default. From the next utterance on.
+void vxs_set_steady_pauses(VxStream *s, int on);
+
+// Spelling (ESC\tn=spell\) pauses before, between and after the letters, as
+// the voices themselves do; off by default, it doesn't (except iOS 3 and 4,
+// which always do). From the next utterance on.
+void vxs_set_spelling_pauses(VxStream *s, int on);
+
 // Timing of the most recent utterance (milliseconds), for diagnostics.
 double vxs_last_first_audio_ms(VxStream *s);
 double vxs_last_synth_ms(VxStream *s);

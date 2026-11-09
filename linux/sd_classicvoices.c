@@ -37,6 +37,8 @@ static int g_debug;
 static int g_rules = 1, g_fallback = 1;  // Apple's pronunciation rules; compact voice for pitch changes
 static int g_newer;  // Apple's later pronunciation packs (<data>/Pronunciation/<language>)
 static int g_tone = 1;  // roll off the top of the band as iPhone and Mac playback does
+static int g_steady = 1;  // pauses as long as asked at any rate
+static int g_spell_pauses;  // spelling pauses around the letters, as the voices do
 static CvPaths g_paths;
 static VxStream *g_stream;
 static CvVoice *g_voices;
@@ -69,6 +71,8 @@ static pthread_t g_worker;
 //   PitchFallback 0                       let enhanced/premium voices ignore pitch changes
 //   NewerPronunciation 1                  add Apple's later pronunciation dictionary and rules
 //   AppleTone 0                           keep the top of the band iPhone and Mac playback rolls off
+//   SteadyPauses 0                        let pauses shorten as the rate goes up, as the voices do
+//   SpellingPauses 1                      pause before, between and after spelled letters
 //   Debug 1                               log to Speech Dispatcher's module log
 // The Classic Voices app writes the speech settings to <data>/settings.conf, which wins.
 static void read_config(const char *path) {
@@ -85,6 +89,8 @@ static void read_config(const char *path) {
             else if (!strcasecmp(key, "PitchFallback")) g_fallback = atoi(val) != 0;
             else if (!strcasecmp(key, "NewerPronunciation")) g_newer = atoi(val) != 0;
             else if (!strcasecmp(key, "AppleTone")) g_tone = atoi(val) != 0;
+            else if (!strcasecmp(key, "SteadyPauses")) g_steady = atoi(val) != 0;
+            else if (!strcasecmp(key, "SpellingPauses")) g_spell_pauses = atoi(val) != 0;
         }
     }
     fclose(f);
@@ -272,6 +278,8 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
     free(ssml);
     const char *fallback = g_fallback && v->fallback[0] ? v->fallback : NULL;
     vxs_set_apple_tone(g_stream, g_tone);
+    vxs_set_steady_pauses(g_stream, g_steady);
+    vxs_set_spelling_pauses(g_stream, g_spell_pauses);
     vxs_set_rules_pack(g_stream, pk);
     DBG("speak %s (%zu segments) %s", v->key, u.n, text);
 

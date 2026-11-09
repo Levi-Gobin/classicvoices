@@ -1022,6 +1022,20 @@ struct SpeechSettingsView: View {
                 Text("Enhanced and premium voices can\u{2019}t change pitch. As VoiceOver did on iOS 5 and 6, anything spoken at a changed pitch (capital letters, the pitch rotor) uses the voice\u{2019}s compact version, which stays loaded. Voices without a compact version here are unaffected.")
             }
             Section {
+                Toggle("Pauses keep their length at any rate", isOn: Binding(
+                    get: { library.settings.steadyPauses },
+                    set: { v in library.updateSettings { $0.steadyPauses = v } }))
+            } footer: {
+                Text("The voices shorten a pause the faster they speak, so at high rates a pause VoiceOver or an app asks for almost disappears. With this on, it lasts as long at any rate. Not for MacinTalk voices.")
+            }
+            Section {
+                Toggle("Pauses when spelling", isOn: Binding(
+                    get: { library.settings.spellingPauses },
+                    set: { v in library.updateSettings { $0.spellingPauses = v } }))
+            } footer: {
+                Text("The voices pause before, between and after spelled letters. Off, spelling is as quick as the rest of the speech. iOS 3 and 4 voices always pause. Not for MacinTalk voices.")
+            }
+            Section {
                 Picker("Speaking rate", selection: Binding(
                     get: { library.settings.modernRate },
                     set: { v in library.updateSettings { $0.modernRate = v } })) {

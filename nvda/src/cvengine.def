@@ -17,6 +17,8 @@ EXPORTS
     vxs_preload
     vxs_set_rules_pack
     vxs_set_apple_tone
+    vxs_set_steady_pauses
+    vxs_set_spelling_pauses
     vxs_engine_pitch
     vxs_last_first_audio_ms
     vxs_last_synth_ms

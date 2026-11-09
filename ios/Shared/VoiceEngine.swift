@@ -820,9 +820,12 @@ final class VoiceEngine {
     /// (PronunciationRules.newerPack), whose dictionary the engine loads, or
     /// nil for the voice as it shipped. Its rules come with `job`'s text.
     func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil, rulesPack: String? = nil,
-               resetCommands: Bool = true, twentyFourHour: Bool = true, modernRate: Bool = true) {
+               resetCommands: Bool = true, twentyFourHour: Bool = true, modernRate: Bool = true,
+               steadyPauses: Bool = true, spellingPauses: Bool = false) {
         guard let stream else { return }
         vxs_set_rules_pack(stream, rulesPack)
+        vxs_set_steady_pauses(stream, steadyPauses ? 1 : 0)
+        vxs_set_spelling_pauses(stream, spellingPauses ? 1 : 0)
         vxs_set_mt_reset(stream, resetCommands ? 1 : 0)
         vxs_set_mt_24_hour(stream, twentyFourHour ? 1 : 0)
         vxs_set_mt_modern_rate(stream, modernRate ? 1 : 0)

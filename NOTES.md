@@ -2116,3 +2116,12 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
     ties by list order), Android onGetVoices. Not SAPI: Windows lists tokens
     by registry name (ClassicVoices_<key>), and renaming them would make
     programs forget the chosen voice. Not the apps' browsers (by release).
+  - Both are settings (the user asked, same day): "Pauses keep their length
+    at any rate" (on) and "Pauses when spelling" (off), vxs_set_steady_pauses
+    / vxs_set_spelling_pauses, zero-initialised fields so callers that never
+    set them get the defaults. NVDA (cvengine ABI 5), SAPI and the
+    Windows/Linux app (SteadyPauses / SpellingPauses in HKCU or
+    settings.conf), Speech Dispatcher (same keys), Android (Native.setPauses),
+    iPhone/Mac (SpeechSettings steadyPauses / spellingPauses, read by the
+    extension). Off and on, the text the engine gets is exactly what it was
+    before 0.5.2.

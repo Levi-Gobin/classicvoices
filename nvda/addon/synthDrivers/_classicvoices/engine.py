@@ -65,6 +65,14 @@ class Speaker:
         the next utterance)."""
         self._lib.vxs_set_apple_tone(self._s, 1 if on else 0)
 
+    def set_steady_pauses(self, on):
+        """Pauses last as long as asked at any rate (from the next utterance)."""
+        self._lib.vxs_set_steady_pauses(self._s, 1 if on else 0)
+
+    def set_spelling_pauses(self, on):
+        """Spelling pauses before, between and after the letters (from the next utterance)."""
+        self._lib.vxs_set_spelling_pauses(self._s, 1 if on else 0)
+
     def preload(self, voice_key, pack=None):
         self._lib.vxs_set_rules_pack(self._s, pack.encode("utf-8") if pack else None)
         self._lib.vxs_preload(self._s, voice_key.encode("utf-8"))

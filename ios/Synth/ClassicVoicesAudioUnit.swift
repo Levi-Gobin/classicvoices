@@ -93,7 +93,8 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                                                 settings: settings)
         VoiceEngine.shared.speak(job, voiceKey: key, fallbackKey: fallback, rulesPack: pack,
                                  resetCommands: settings.resetCommandsEnabled(entry?.identifier ?? ""),
-                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate)
+                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate,
+                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses)
         dumpRenderLog(start: previous.0, count: previous.1, renders: previous.2)
         log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) newer=\(pack != nil) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
         if UserDefaults.standard.string(forKey: "lastVoiceKey") != key {

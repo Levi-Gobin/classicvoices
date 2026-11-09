@@ -217,6 +217,7 @@ public class TtsService extends TextToSpeechService {
         if (cb.start(Native.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
         Native.setRulesPack(pack);
         Native.setAppleTone(Data.appleTone(this));
+        Native.setPauses(Data.steadyPauses(this), Data.spellingPauses(this));
         if (Native.begin(v.key, fallback, utf8, ssml != null, r, p, -1) < 0) {
             Log.w(TAG, "engine not ready: " + Native.lastError());
             cb.error();

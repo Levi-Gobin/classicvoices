@@ -618,6 +618,10 @@ class SettingsPanel(wx.ScrolledWindow):
                 lambda v: system.set_setting("PitchFallback", v))
         p.check("Tone as on iPhone and Mac", system.get_setting("AppleTone"),
                 lambda v: system.set_setting("AppleTone", v))
+        p.check("Pauses keep their length at any rate", system.get_setting("SteadyPauses"),
+                lambda v: system.set_setting("SteadyPauses", v))
+        p.check("Pauses when spelling", system.get_setting("SpellingPauses"),
+                lambda v: system.set_setting("SpellingPauses", v))
         p.text("Apple’s rules are the text fixes each voice’s own iOS or Mac OS X release made "
                "before the engine read it (“iOS”, “OS X” …). The newer rules add Apple’s later "
                "pronunciation dictionary and rules to every voice; turning them on downloads them "
@@ -625,7 +629,11 @@ class SettingsPanel(wx.ScrolledWindow):
                "used the compact voice for those words, and so does Classic Voices unless this is off. "
                "iPhone and Mac play the voices with their highest frequencies softened; "
                + ("Windows" if system.IS_WIN else "Linux") + " keeps them, which sounds a little brighter. "
-               "Tone as on iPhone and Mac softens them the same way.")
+               "Tone as on iPhone and Mac softens them the same way. "
+               "The voices shorten a pause the faster they speak; with Pauses keep their length on, "
+               "a pause your screen reader asks for (such as before a character’s phonetic) lasts "
+               "as long at any rate. Pauses when spelling makes the voices pause before, between and "
+               "after spelled letters, as they originally did (iOS 3 and 4 voices always do).")
         if system.IS_WIN:
             p.section("Windows programs")
             n = system.system_voice_count()

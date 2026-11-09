@@ -160,8 +160,10 @@ def open_folder(path):
 # Apple's later pronunciation packs (<data>/Pronunciation/<language>).
 # AppleTone rolls off the top of the band as iPhone and Mac playback does
 # (vxs_set_apple_tone); Windows and Linux keep it, which sounds brighter.
+# SteadyPauses keeps a pause as long as asked at any rate (vxs_set_steady_pauses);
+# SpellingPauses lets spelling pause around the letters (vxs_set_spelling_pauses).
 SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True,
-            "AppleTone": True}
+            "AppleTone": True, "SteadyPauses": True, "SpellingPauses": False}
 
 if IS_WIN:
     def get_setting(name):

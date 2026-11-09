@@ -472,7 +472,8 @@ final class DirectPlayer: ObservableObject {
         job.text = rules?.apply(text) ?? text
         job.rate = rate
         VoiceEngine.shared.speak(job, voiceKey: voiceKey, rulesPack: rulesPack, resetCommands: settings.resetCommands,
-                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate)
+                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate,
+                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses)
         stats = "Speaking…"
         DispatchQueue.global().async { [weak self] in
             guard let stream = VoiceEngine.shared.stream else { return }
