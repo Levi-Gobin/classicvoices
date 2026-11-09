@@ -35,6 +35,12 @@ PITCH_MIN, PITCH_MAX = 50, 200    # percent of normal F0
 
 
 ESC_SPELL, ESC_NORMAL = "\x1b\\tn=spell\\", "\x1b\\tn=normal\\"
+# How long pauses and spelling take is the engine stream's (core/vxstream.c
+# timing_commands): the same on every platform.
+
+# Order in the voice list: the release, then the kind of voice.
+_RELEASE_ORDER = ("ios3", "ios4", "ios5", "ios6", "ios70", "siri7", "mac107", "mac108", "mac109")
+_KIND_ORDER = ("compact", "enhanced", "premium")
 
 
 def _only_commands(text):
@@ -48,6 +54,16 @@ def _exp_map(setting, lo, hi):
 def _exp_unmap(value, lo, hi):
     value = max(lo, min(hi, value))
     return int(round(100.0 * math.log(value / lo) / math.log(hi / lo)))
+
+
+def _release_and_kind(key):
+    """("ios6", "enhanced") for "ios6e/en-US"; the kind is compact, enhanced or premium."""
+    build, _, folder = key.partition("/")
+    if build.startswith("ios") and build.endswith("e"):
+        return build[:-1], "enhanced"
+    if build.startswith(("mac", "siri")) and not folder.endswith("Compact"):
+        return build, "premium" if build.startswith("mac") else "enhanced"
+    return build, "compact"
 
 
 class SynthDriver(SynthDriver):
@@ -362,8 +378,28 @@ class SynthDriver(SynthDriver):
         self._speaker.preload(value, self._pack(value))
 
     def _getAvailableVoices(self):
+        """By language, then voice, then release, then compact, enhanced, premium."""
+        def language_name(lang):
+            try:
+                import languageHandler
+                return languageHandler.getLanguageDescription(lang) or lang
+            except Exception:
+                return lang
+
+        names = {}
+
+        def order(item):
+            key, v = item
+            lang = (v.language or "").replace("-", "_")
+            if lang not in names:
+                names[lang] = language_name(lang) if lang else "￿"  # no language: last
+            release, kind = _release_and_kind(key)
+            return (names[lang].casefold(), lang.casefold(), v.name.split(" (")[0].casefold(),
+                    _RELEASE_ORDER.index(release) if release in _RELEASE_ORDER else len(_RELEASE_ORDER),
+                    _KIND_ORDER.index(kind), key)
+
         out = {}
-        for key, v in self._voices.items():
+        for key, v in sorted(self._voices.items(), key=order):
             lang = v.language.replace("-", "_") if v.language else None
             out[key] = VoiceInfo(key, v.name, lang)
         return out

@@ -2082,3 +2082,37 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   a test copy registers its speech extension and may rebuild fast code in the
   shared App Group, so it waits for the user. Not Sparkle: it would add a
   framework, EdDSA keys and an appcast for what this already does.
+- **Pauses at high rates, spelling, voice order (2026-11-09, 0.5.2).**
+  The user, NVDA with iOS 6 Samantha at 90% (325%): the pause between a
+  character and its phonetic too short, a pause before a spelled letter
+  mid-sentence, MathCAT's pauses all alike; then: no spelling pauses at all,
+  on every platform.
+  - The engines shorten ESC\pause=N\ by the rate: 1000 ms is 305 ms at 325%,
+    measured on iOS 3-7 compacts, the Mac compacts, iOS 7 enhanced, Siri 7
+    and Mavericks premium (the iOS 10 engine). The iOS 5 and 6 engines' large
+    voices (iOS 5/6 enhanced, Lion/Mountain Lion premium) keep the time
+    asked. NVDA's delayed character description is BreakCommand(1000);
+    MathCAT already scales its pauses by NVDA's rate (180 / (2 * rate)), so
+    at 90% they reached the engine as asked and came out under a third.
+  - Spelling: ESC\spell=N\ is the pause before each spelled letter, and the
+    switch into tn=spell and out pauses twice that (~310 ms at 100%, 95 at
+    325%). The value that counts is the last one in the call, and it doesn't
+    carry to the next call. iOS 3/4 read ESC\spell\ aloud.
+  - core/vxstream.c timing_commands (vxs_start, all platforms, not MacinTalk):
+    each ESC\pause\ from the request becomes ms * rate / 100 (the rate in
+    effect there: the call's, then ESC\rate\) where the voice shortens it, up
+    to 6550 (the engines keep no longer, about 6.5 s at 100%; pauses in a row
+    don't add); text with ESC\tn=spell\ gets ESC\spell=0\ first (not iOS
+    3/4). Typed commands (\pause=500\) are left as typed: they're converted
+    after. At 325%: the description pause 1000 ms on every voice; "cap" to
+    "B" 115 -> 60 ms on iOS 6, 20 on iOS 7 (plain "cap b" 20-30); a spelled
+    "bcdf" on iOS 7 times exactly as the plain word, iOS 6 20-45 ms between
+    letters. iOS 3/4 still drop a segment that is only a pause after an
+    inline rate change (speak_segmented's has_text): as before.
+  - Voice lists: by language, voice, release (iOS 3-7, Siri, Lion, Mountain
+    Lion, Mavericks), then compact/enhanced/premium: NVDA (by NVDA's language
+    name; NVDA keeps availableVoices' order), Speech Dispatcher and
+    classicvoices-say -l (cv_list_order, indexes only: cv_pick_voice breaks
+    ties by list order), Android onGetVoices. Not SAPI: Windows lists tokens
+    by registry name (ClassicVoices_<key>), and renaming them would make
+    programs forget the chosen voice. Not the apps' browsers (by release).

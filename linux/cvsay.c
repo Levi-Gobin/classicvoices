@@ -63,9 +63,14 @@ int main(int argc, char **argv) {
     CvVoice *voices;
     size_t nv = cv_scan_voices(paths.voices, paths.downloads, &voices);
     if (list) {
-        for (size_t i = 0; i < nv; i++)
-            printf("%s\t%s\t%s%s%s\n", voices[i].name, voices[i].language, voices[i].key,
-                   voices[i].fallback[0] ? "\tpitch fallback " : "", voices[i].fallback);
+        size_t *order = malloc((nv ? nv : 1) * sizeof *order);
+        cv_list_order(voices, nv, order);  // by language, voice, release, kind
+        for (size_t j = 0; j < nv; j++) {
+            const CvVoice *v = &voices[order[j]];
+            printf("%s\t%s\t%s%s%s\n", v->name, v->language, v->key, v->fallback[0] ? "\tpitch fallback " : "",
+                   v->fallback);
+        }
+        free(order);
         if (!nv) fprintf(stderr, "no voices under %s (import firmware with classicvoices-data first)\n", paths.root);
         return nv ? 0 : 1;
     }

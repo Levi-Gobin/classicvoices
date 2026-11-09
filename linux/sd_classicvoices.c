@@ -115,13 +115,17 @@ static void rescan(void) {
         free(g_spd_voices);
     }
     g_spd_voices = calloc(g_nvoices + 1, sizeof *g_spd_voices);
+    size_t *order = malloc((g_nvoices ? g_nvoices : 1) * sizeof *order);
+    cv_list_order(g_voices, g_nvoices, order);  // by language, voice, release, kind
     for (size_t i = 0; i < g_nvoices; i++) {
+        const CvVoice *c = &g_voices[order[i]];
         SPDVoice *v = calloc(1, sizeof *v);
-        v->name = strdup(g_voices[i].name);
-        v->language = strdup(g_voices[i].language[0] ? g_voices[i].language : "none");
+        v->name = strdup(c->name);
+        v->language = strdup(c->language[0] ? c->language : "none");
         v->variant = NULL;
         g_spd_voices[i] = v;
     }
+    free(order);
 }
 
 // ---------------------------------------------------------------- audio out

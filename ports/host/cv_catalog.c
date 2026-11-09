@@ -364,6 +364,43 @@ const CvVoice *cv_find_voice(const CvVoice *v, size_t n, const char *name_or_key
     return NULL;
 }
 
+// The order voices are listed in: by language, voice, release (iOS 3-7,
+// Siri, Lion, Mountain Lion, Mavericks), then compact, enhanced, premium.
+static const CvVoice *g_order_v;
+
+static int release_rank(const char *key) {
+    static const char *order[] = {"ios3", "ios4", "ios5", "ios6", "ios70", "siri7", "mac107", "mac108", "mac109"};
+    size_t bl = strcspn(key, "/");
+    if (bl && key[bl - 1] == 'e' && !strncmp(key, "ios", 3)) bl--;  // "ios6e": the iOS 6 release
+    for (size_t i = 0; i < sizeof order / sizeof order[0]; i++)
+        if (strlen(order[i]) == bl && !strncmp(key, order[i], bl)) return (int)i;
+    return 99;
+}
+
+static int kind_rank(const CvVoice *v) {
+    if (v->quality < 2) return 0;               // compact
+    return strncmp(v->key, "mac", 3) ? 1 : 2;   // enhanced, premium
+}
+
+static int list_cmp(const void *a, const void *b) {
+    const CvVoice *x = &g_order_v[*(const size_t *)a], *y = &g_order_v[*(const size_t *)b];
+    char lx[24], ly[24];
+    norm_lang(x->language, lx, sizeof lx);
+    norm_lang(y->language, ly, sizeof ly);
+    int c = (!*lx) - (!*ly);  // no language: last
+    if (!c) c = strcasecmp(lx, ly);
+    if (!c) c = strcasecmp(x->voice, y->voice);
+    if (!c) c = release_rank(x->key) - release_rank(y->key);
+    if (!c) c = kind_rank(x) - kind_rank(y);
+    return c ? c : strcmp(x->key, y->key);
+}
+
+void cv_list_order(const CvVoice *v, size_t n, size_t *order) {
+    for (size_t i = 0; i < n; i++) order[i] = i;
+    g_order_v = v;
+    qsort(order, n, sizeof *order, list_cmp);
+}
+
 const char *cv_voice_build(const CvVoice *v) {
     static const char *builds[] = {"ios3", "ios4", "ios5", "ios6", "ios7", "ios70", "ios10"};
     const char *k = v->key;

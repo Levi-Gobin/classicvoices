@@ -1249,6 +1249,64 @@ static char *typed_commands(const char *t) {
     return o;
 }
 
+// The voices shorten ESC\pause=N\ by the speaking rate: 1000 ms is 305 ms at
+// 325%, measured on the iOS 3-7 compacts, the Mac compacts, iOS 7 enhanced,
+// the Siri voices and Mavericks premium (the iOS 10 engine). The iOS 5 and 6
+// engines' large voices (iOS 5 and 6 enhanced, Lion and Mountain Lion premium)
+// keep the time asked for.
+static int pause_follows_rate(const char *key) {
+    const char *slash = strchr(key, '/');
+    size_t bl = slash ? (size_t)(slash - key) : strlen(key), n = strlen(key);
+    if (bl == 5 && (!strncmp(key, "ios5e", 5) || !strncmp(key, "ios6e", 5))) return 0;
+    if (bl == 6 && (!strncmp(key, "mac107", 6) || !strncmp(key, "mac108", 6)))
+        return n >= 7 && !strcmp(key + n - 7, "Compact");
+    return 1;
+}
+
+#define PAUSE_MAX 6550  // the longest ESC\pause\ the engines keep (their own ms); pauses in a row don't add
+
+// The timing the request's commands ask for (the screen reader's or app's,
+// written with ESC; typed ones are left as typed, see typed_commands):
+// - A pause is a length of time (NVDA's character description waits a
+//   second, MathCAT and SSML <break> time theirs): where the voice shortens
+//   it by the rate, ask for that much more, at the rate in effect there.
+// - Spelling has no pause before, between or after the letters. ESC\spell=N\
+//   is the pause before each spelled letter, and going into ESC\tn=spell\
+//   and out again pauses twice that (310 ms at 100%); the value the engine
+//   uses is the last one in the call, and it doesn't carry to the next.
+//   iOS 3 and 4 don't know ESC\spell\ and read it out.
+static char *timing_commands(const char *t, const char *key, int rate) {
+    static const char kPause[] = "\x1b\\pause=", kRate[] = "\x1b\\rate=", kSpell[] = "\x1b\\tn=spell\\",
+                      kNoSpellPause[] = "\x1b\\spell=0\\";
+    int follows = pause_follows_rate(key);
+    int spell = strstr(t, kSpell) && strncmp(key, "ios3/", 5) && strncmp(key, "ios4/", 5);
+    if (!spell && !(follows && strstr(t, kPause))) return strdup(t);
+    size_t n = strlen(t);
+    char *o = malloc(sizeof kNoSpellPause + n * 2 + 1), *w = o;  // a pause's digits grow from 1 to at most 4
+    if (!o) return NULL;
+    if (spell) w += sprintf(w, "%s", kNoSpellPause);
+    for (const char *p = t; *p;) {
+        if (!strncmp(p, kRate, sizeof kRate - 1)) {
+            int r = atoi(p + sizeof kRate - 1);
+            if (r > 0) rate = r;
+        } else if (follows && !strncmp(p, kPause, sizeof kPause - 1)) {
+            char *end;
+            long ms = strtol(p + sizeof kPause - 1, &end, 10);
+            if (*end == '\\' && ms > 0) {
+                long r = rate < 50 ? 50 : rate > 400 ? 400 : rate;
+                if (ms > PAUSE_MAX) ms = PAUSE_MAX;
+                ms = (ms * r + 50) / 100;
+                w += sprintf(w, "%s%ld\\", kPause, ms > PAUSE_MAX ? PAUSE_MAX : ms);
+                p = end + 1;
+                continue;
+            }
+        }
+        *w++ = *p++;
+    }
+    *w = 0;
+    return o;
+}
+
 void vxs_start(VxStream *s, const char *lang, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms) {
     vxs_start_with_fallback(s, lang, NULL, utf8_text, rate, pitch, volume, trailing_pause_ms);
@@ -1261,7 +1319,13 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     snprintf(s->job_lang, sizeof s->job_lang, "%s", lang);
     snprintf(s->job_fallback, sizeof s->job_fallback, "%s", fallback_key && !is_mt_key(lang) ? fallback_key : "");
     snprintf(s->job_pack, sizeof s->job_pack, "%s", is_mt_key(lang) ? "" : s->next_pack);
-    s->job_text = is_mt_key(lang) ? strdup(utf8_text) : typed_commands(utf8_text);
+    if (is_mt_key(lang)) {
+        s->job_text = strdup(utf8_text);
+    } else {
+        char *timed = timing_commands(utf8_text, lang, rate);
+        s->job_text = typed_commands(timed ? timed : utf8_text);
+        free(timed);
+    }
     s->job_rate = rate < 10 ? 10 : rate > 400 ? 400 : rate;  // Vocalizer's floor is 50; MacinTalk's modern curve goes lower
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;
     s->job_volume = volume < 0 ? 80 : volume > 100 ? 100 : volume;  // 80 = engine default

@@ -71,10 +71,40 @@ public class TtsService extends TextToSpeechService {
 
     @Override
     public List<Voice> onGetVoices() {
+        List<VoiceInfo> voices = new ArrayList<>(Data.voices(this));
+        java.util.Collections.sort(voices, LIST_ORDER);
         List<Voice> out = new ArrayList<>();
-        for (VoiceInfo v : Data.voices(this)) out.add(toVoice(v));
+        for (VoiceInfo v : voices) out.add(toVoice(v));
         return out;
     }
+
+    // By language, voice, release (iOS 3-7, Siri, Lion, Mountain Lion,
+    // Mavericks), then compact, enhanced, premium: as cv_list_order lists them.
+    private static final String[] RELEASES = {"ios3", "ios4", "ios5", "ios6", "ios70", "siri7", "mac107", "mac108", "mac109"};
+
+    private static int releaseRank(String key) {
+        int slash = key.indexOf('/');
+        String build = slash < 0 ? key : key.substring(0, slash);
+        if (build.startsWith("ios") && build.endsWith("e")) build = build.substring(0, build.length() - 1);
+        for (int i = 0; i < RELEASES.length; i++) if (RELEASES[i].equals(build)) return i;
+        return 99;
+    }
+
+    private static int kindRank(VoiceInfo v) {
+        return v.quality < 2 ? 0 : v.key.startsWith("mac") ? 2 : 1;
+    }
+
+    private static final java.util.Comparator<VoiceInfo> LIST_ORDER = new java.util.Comparator<VoiceInfo>() {
+        @Override
+        public int compare(VoiceInfo x, VoiceInfo y) {
+            int c = Boolean.compare(x.language.isEmpty(), y.language.isEmpty());
+            if (c == 0) c = x.language.replace('_', '-').compareToIgnoreCase(y.language.replace('_', '-'));
+            if (c == 0) c = x.voice.compareToIgnoreCase(y.voice);
+            if (c == 0) c = Integer.compare(releaseRank(x.key), releaseRank(y.key));
+            if (c == 0) c = Integer.compare(kindRank(x), kindRank(y));
+            return c != 0 ? c : x.key.compareTo(y.key);
+        }
+    };
 
     private static Voice toVoice(VoiceInfo v) {
         Set<String> features = new HashSet<>();

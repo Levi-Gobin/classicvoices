@@ -44,6 +44,10 @@ const CvVoice *cv_find_voice(const CvVoice *v, size_t n, const char *name_or_key
 const CvVoice *cv_lang_voice(const CvVoice *v, size_t n, const char *data_root, const char *current_key,
                              const char *language);
 
+// The order to list voices in (by language, voice, release, then compact,
+// enhanced, premium), as indexes into v, leaving v as it is: order has n.
+void cv_list_order(const CvVoice *v, size_t n, size_t *order);
+
 // The firmware build whose engine speaks a voice ("ios6" for "ios6e/en-US"
 // and the Lion voices, "ios10" for Mavericks premium ...).
 const char *cv_voice_build(const CvVoice *v);
