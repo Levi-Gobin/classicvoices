@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CV_ABI 3
+#define CV_ABI 4  // 4: vxs_set_apple_tone
 
 int cv_abi_version(void) { return CV_ABI; }
 

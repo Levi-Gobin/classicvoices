@@ -1990,3 +1990,76 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   (load commands); __text starts at 4000 and the fast code's lowest range
   is 0x11100fa0, so it still matches; mtsay Fred/Victoria identical. Not yet
   confirmed with Sideloadly itself. Xcode builds are not affected.
+- **Update checks while NVDA runs (2026-11-08).** 0.5.1 went up at 04:24 UTC;
+  the VM's 0.5.0 add-on had checked at 03:49 and checked only at NVDA start,
+  once a day, so it would have offered 0.5.1 a day later at the earliest.
+  update.newer now asks GitHub at most every 6 hours (the desktop app and the
+  add-on), and the add-on's thread checks 30 s after start and then hourly
+  while NVDA runs. Tools > "Check for Classic Voices updates" asks at once
+  (asked=True: offers a version announced before again, says when this is the
+  newest, and says when GitHub can't be reached). The add-on keeps its own
+  update-nvda.json: with the app installed both used update.json in its data
+  folder, so whichever offered a version first kept the other from offering
+  it. Android still checks once a day when the app opens.
+  The user confirmed 0.5.0's check offered 0.5.1 on the Windows VM once its
+  update.json was gone.
+- **The Speak button did nothing without VoiceOver (2026-11-08, 0.5.2).** A
+  voice's Try It row holds Speak and Stop in one HStack inside a Form. On iOS
+  a touch on such a row runs every button in it, so Speak started and Stop
+  cancelled it at once; VoiceOver activates one element, so with VoiceOver on
+  it worked. `.buttonStyle(.borderless)` on the row (not on macOS, where a
+  click reaches only one button) makes each take only its own touches.
+- **Windows brighter than iOS and the Mac (2026-11-09, fixed in 0.5.2).** The user
+  hears iOS 6 Samantha slightly brighter on Windows, "as if the sample rate
+  were a little higher": NVDA, SAPI programs, Windows Media Player playing a
+  WAV of the engine's output, on the VM and on real PCs, at any volume. The
+  same WAV is fine on the Mac. Not our engine (the Windows build's output is
+  byte-identical to the Mac's), not QEMU (still there at 44.1 kHz).
+  It is the sample-rate converter. White noise at 22,050 Hz through each
+  (dB against 1-3 kHz):
+      band (kHz)              9-9.5  9.5-10  10-10.5  10.5-10.8  10.8-11
+      Mac playback mixer       -1.5   -4.4    -9.8     -17.1     -23.7
+      Windows (WASAPI)          0.0   -0.1    -1.4      -5.9     -12.1
+  The Mac's mixer (AVAudioEngine, offline manual rendering) equals
+  AudioConverter at medium quality (64) to 0.1 dB; max (afconvert's default)
+  is -2.8/-14.9/-46.6 there, low and min -3.2/-5.2/-7.9 with images at
+  -16 dB. Windows passes 9-11 kHz up to 12 dB louder than any Apple setting.
+  iOS 6 (extracted/ios6, voiced): speech goes to AudioQueueNewOutput as
+  16-bit mono lpcm at the engine's rate, with no filter, converter or DSP of
+  its own (no AudioConverter or vDSP imports). The only queue properties it
+  sets are 'srcq' = 127 (max quality) on its recording queue and 'aqme'
+  (metering): the playback queue converted at AudioQueue's default quality.
+  So the roll-off the voices had on iPhones came from iOS's converter.
+  Which quality iOS 6's AudioQueue used by default isn't known (needs its
+  AudioToolbox); today's Mac mixer is medium.
+  Ruled out on the way: Windows' converter adds no images worth hearing
+  (-61 dB at 11-13 kHz, loopback with the endpoint muted, C:\classic-voices\t052);
+  a 48 kHz converter of our own was written, measured and taken out. QEMU's
+  audio (UTM: -audiodev coreaudio, no frequency) runs at 44,100 Hz and
+  converts linearly (audio/rate_template.h), but isn't this.
+  Volume (separate): NVDA hands its slider to the engine as is; iOS, the
+  Mac, SAPI and Linux top out at 80. Engine 100 = +6.02 dB over 80 and clips
+  inside the engine (iOS 6 Samantha: 257 flat tops up to 8 samples in 10 s,
+  distortion 24 dB under the speech, 12 dB in the worst 20 ms; 90: 15 tiny
+  ones; 80 peaks at 27476). Left as is; the user decides.
+  The fix: "Tone as on iPhone and Mac" (vxs_set_apple_tone, on by default
+  on Windows (NVDA's own setting; the app's checkbox for SAPI and the app,
+  HKCU AppleTone), Linux (settings.conf AppleTone; classicvoices-say -T) and
+  Android (apple_tone); never on iOS or the Mac, where the system does it).
+  A 24-tap minimum-phase FIR at 22,050 Hz in ring_write, latched per
+  utterance in the Sink (tools/apple_tone_filter.py measures afconvert -r 64
+  and prints the table): within 0.01 dB of the curve, group delay 0.1 sample.
+  Off, every voice's output is byte-identical to before. On, against
+  afconvert medium on the same audio: within 0.02 dB up to 10.5 kHz for iOS
+  3/6/6e, Mac Samantha compact, Fred, Alex, Victoria. First sound unchanged
+  (iOS 6 Samantha 3.07 ms on, 3.08 off, 60 phrases; 6e, Fred, Alex alike).
+  Windows on the VM (arm64ec build, byte-identical to the Mac's output),
+  through NVDA's WASAPI path: within 0.1 dB of the Mac's playback to 10 kHz;
+  Windows' own roll-off takes 0.6 dB more at 10-10.5 kHz, 4.6 at 10.5-11
+  (where the voice is 30-44 dB down).
+  Every voice type has energy there (8.5-11 kHz, dB of the whole sound, and
+  what Apple's curve takes off it): iOS 5/6/7.0 compact and enhanced,
+  Siri 7, Mac compacts and premium (Mavericks' premium = the iOS 10 engine)
+  -2 to -3.6 dB; en-GB voices and Siri Catherine the brightest (8.5-9.5 kHz
+  at -14 to -19 dB); MacinTalk Victoria -3.5, Fred -2 to -2.6, Alex and
+  Vicki -1; iOS 3 and 4 (16 kHz voices) have nothing there.

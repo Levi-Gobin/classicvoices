@@ -16,6 +16,7 @@ EXPORTS
     vx_phoneme_text
     vxs_preload
     vxs_set_rules_pack
+    vxs_set_apple_tone
     vxs_engine_pitch
     vxs_last_first_audio_ms
     vxs_last_synth_ms

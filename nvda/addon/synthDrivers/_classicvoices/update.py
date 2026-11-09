@@ -1,5 +1,6 @@
-"""Is there a newer Classic Voices? GitHub is asked at most once a day, in the
-background, and each new version is offered once. If the person says yes, its
+"""Is there a newer Classic Voices? GitHub is asked at most every 6 hours, in
+the background, and each new version is offered once (asked for, it is
+offered again). If the person says yes, its
 file for this platform is downloaded (and checked against the SHA-256 GitHub
 publishes for it) and handed to the platform's own installer: NVDA's add-on
 installer, the Windows setup program, the Linux install script."""
@@ -13,40 +14,47 @@ import urllib.request
 
 # The add-on's manifest, the Windows installer and the Android manifest carry
 # the same number (nvda/build.py checks the manifest).
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 RELEASES = "https://api.github.com/repos/Levi-Gobin/classicvoices/releases?per_page=10"
 PAGE = "https://github.com/Levi-Gobin/classicvoices/releases"
-DAY = 24 * 3600
+EVERY = 6 * 3600
 
 
 def _number(v):
     return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3])
 
 
-def newer(state_dir, timeout=10):
+def newer(state_dir, timeout=10, name="update.json", asked=False):
     """(version, release page, {file name: asset}) of a release newer than this
     one that hasn't been announced yet, else None (also when GitHub can't be
-    reached). An asset is {"url", "size", "sha256" (or None)}."""
-    path = os.path.join(state_dir, "update.json")
+    reached). An asset is {"url", "size", "sha256" (or None)}.
+    name: the state file; the NVDA add-on and the app share state_dir when the
+    app is installed, and each offers an update itself.
+    asked: the person asked: GitHub is asked now, a version already announced
+    is offered again, and GitHub not answering raises UpdateError."""
+    path = os.path.join(state_dir, name)
     try:
         with open(path, encoding="utf-8") as f:
             state = json.load(f)
     except (OSError, ValueError):
         state = {}
-    if time.time() - state.get("checked", 0) < DAY:
+    if not asked and time.time() - state.get("checked", 0) < EVERY:
         return None
     try:
         req = urllib.request.Request(RELEASES, headers={"Accept": "application/vnd.github+json",
                                                         "User-Agent": "ClassicVoices/" + VERSION})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             releases = json.load(r)
-    except Exception:
+    except Exception as e:
+        if asked:
+            raise UpdateError("GitHub couldn't be reached") from e
         return None
     state["checked"] = time.time()
     found = None
     for rel in releases:  # the releases are marked pre-release, so not .../releases/latest
         v = (rel.get("tag_name") or "").lstrip("v")
-        if rel.get("draft") or _number(v) <= _number(VERSION) or _number(v) <= _number(state.get("announced")):
+        if rel.get("draft") or _number(v) <= _number(VERSION) or (
+                not asked and _number(v) <= _number(state.get("announced"))):
             continue
         if not found or _number(v) > _number(found[0]):
             assets = {}

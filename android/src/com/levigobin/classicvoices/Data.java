@@ -238,6 +238,8 @@ final class Data {
 
     static boolean fallbackEnabled(Context c) { return prefs(c).getBoolean("pitch_fallback", true); }
 
+    static boolean appleTone(Context c) { return prefs(c).getBoolean("apple_tone", true); }
+
     static boolean hasEngine(Context c, String build) {
         return new File(new File(voicesDir(c), build), "voiced").isFile();
     }

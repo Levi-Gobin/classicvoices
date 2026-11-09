@@ -4,7 +4,6 @@
 # restarts NVDA).
 import os
 import threading
-import time
 
 import globalPluginHandler
 import gui
@@ -22,18 +21,45 @@ except Exception:
     pass
 
 ASSET = "classicvoices.nvda-addon"
+STATE = "update-nvda.json"  # the app, when installed, keeps update.json beside it
+_stop = threading.Event()
 
 
 def _check():
-    time.sleep(30)  # not while NVDA is starting
+    """30 s after NVDA starts (not while it's starting), then every hour while
+    it runs: update.newer itself asks GitHub at most every 6 hours."""
     try:
         cv_update.remove_downloads(ASSET)
-        found = cv_update.newer(cv_paths.data_root())
     except Exception:
+        log.debugWarning("Classic Voices: removing old update files failed", exc_info=True)
+    wait = 30
+    while not _stop.wait(wait):
+        wait = 3600
+        try:
+            found = cv_update.newer(cv_paths.data_root(), name=STATE)
+        except Exception:
+            log.debugWarning("Classic Voices: update check failed", exc_info=True)
+            continue
+        if found:
+            wx.CallAfter(_offer, *found)
+
+
+def _check_now():
+    """The person asked: GitHub is asked at once and says either way."""
+    try:
+        found = cv_update.newer(cv_paths.data_root(), name=STATE, asked=True)
+    except Exception as e:
         log.debugWarning("Classic Voices: update check failed", exc_info=True)
+        # Translators: the update check failed; %s says why.
+        wx.CallAfter(gui.messageBox, _("Classic Voices couldn't check for updates: %s.") % e,
+                     _("Classic Voices update"), wx.OK | wx.ICON_ERROR)
         return
     if found:
         wx.CallAfter(_offer, *found)
+    else:
+        # Translators: no newer version; %s is this one.
+        wx.CallAfter(gui.messageBox, _("Classic Voices %s is the newest version.") % cv_update.VERSION,
+                     _("Classic Voices update"), wx.OK | wx.ICON_INFORMATION)
 
 
 def _offer(version, url, assets):
@@ -92,4 +118,21 @@ def _install(path, url):
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super().__init__()
+        _stop.clear()
         threading.Thread(target=_check, name="ClassicVoicesUpdate", daemon=True).start()
+        tools = gui.mainFrame.sysTrayIcon.toolsMenu
+        # Translators: the Tools menu item that asks GitHub for a newer Classic Voices.
+        self.item = tools.Append(wx.ID_ANY, _("Check for Classic Voices &updates"),
+                                 _("Ask GitHub now whether a newer Classic Voices is out"))
+        gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onCheck, self.item)
+
+    def onCheck(self, evt):
+        threading.Thread(target=_check_now, name="ClassicVoicesUpdate", daemon=True).start()
+
+    def terminate(self):
+        _stop.set()
+        try:
+            gui.mainFrame.sysTrayIcon.toolsMenu.Remove(self.item)
+        except Exception:
+            pass
+        super().terminate()

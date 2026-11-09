@@ -1038,7 +1038,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         s.append("Settings: rules ").append(Data.rulesEnabled(this) ? "on" : "off").append(", newer rules ")
                 .append(Pronunciation.enabled(this) ? (Pronunciation.downloaded(this) ? "on" : "on, not downloaded") : "off")
                 .append(", pitch fallback ")
-                .append(Data.fallbackEnabled(this) ? "on" : "off").append('\n');
+                .append(Data.fallbackEnabled(this) ? "on" : "off").append(", tone as on iPhone and Mac ")
+                .append(Data.appleTone(this) ? "on" : "off").append('\n');
         for (String e : ImportService.errors()) s.append("Error: ").append(e).append('\n');
         return s.toString().trim();
     }
@@ -1058,6 +1059,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         text(getString(R.string.setting_newer_rules_explained));
         check("pitch_fallback", getString(R.string.setting_fallback), Data.fallbackEnabled(this), pref("pitch_fallback"));
         text(getString(R.string.setting_fallback_explained));
+        check("apple_tone", getString(R.string.setting_apple_tone), Data.appleTone(this), pref("apple_tone"));
+        text(getString(R.string.setting_apple_tone_explained));
 
         section(getString(R.string.tts_heading));
         String engine = Settings.Secure.getString(getContentResolver(), "tts_default_synth");

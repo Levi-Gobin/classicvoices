@@ -20,6 +20,12 @@ final class Native {
     static native void setRulesPack(String dir);
 
     /**
+     * Roll off the top of the band as iPhone and Mac playback does, for the
+     * utterances begun from now on (Android keeps it, which sounds brighter).
+     */
+    static native void setAppleTone(boolean on);
+
+    /**
      * The pre-check for a pronunciation rule set (core/vxrules.h): which
      * rules could match a text, so the others needn't run. Patterns and text
      * are UTF-8 bytes; marks gets 1 for each rule worth running (never cleared).

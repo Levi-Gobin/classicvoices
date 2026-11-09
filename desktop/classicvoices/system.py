@@ -158,7 +158,10 @@ def open_folder(path):
 # FastCodeAuto is turned off when a fast-code build fails or is stopped, so it
 # then starts only from the Speed up the voices page. NewerPronunciation adds
 # Apple's later pronunciation packs (<data>/Pronunciation/<language>).
-SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True}
+# AppleTone rolls off the top of the band as iPhone and Mac playback does
+# (vxs_set_apple_tone); Windows and Linux keep it, which sounds brighter.
+SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True,
+            "AppleTone": True}
 
 if IS_WIN:
     def get_setting(name):
@@ -309,6 +312,7 @@ class WinPlayer(Player):
 
         s = self._stream()
         self._lib.vxs_set_rules_pack(s, pack.encode("utf-8") if pack else None)
+        self._lib.vxs_set_apple_tone(s, 1 if get_setting("AppleTone") else 0)
         self._lib.vxs_start(s, key.encode("utf-8"), text.encode("utf-8"), int(rate), 100, -1, 0)
         fmt = WAVEFORMATEX(1, 1, 22050, 44100, 2, 16, 0)
         h = ctypes.c_void_p()
@@ -379,6 +383,8 @@ class CliPlayer(Player):
             args.append("-n")
         if get_setting("NewerPronunciation"):
             args.append("-N")
+        if get_setting("AppleTone"):
+            args.append("-T")
         p1 = subprocess.Popen(args + ["--", text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         p2 = subprocess.Popen(sink, stdin=p1.stdout, stderr=subprocess.DEVNULL)
         p1.stdout.close()

@@ -12,7 +12,7 @@
 [Setup]
 AppId={{19DA7EBB-22D3-4802-AF6B-7D80EF1406FB}
 AppName=Classic Voices
-AppVersion=0.5.1
+AppVersion=0.5.2
 AppPublisher=Classic Voices
 AppPublisherURL=https://github.com/levi-gobin/classicvoices
 DefaultDirName={autopf}\Classic Voices

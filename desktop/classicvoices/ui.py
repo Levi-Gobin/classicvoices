@@ -616,11 +616,16 @@ class SettingsPanel(wx.ScrolledWindow):
         p.check("Newer pronunciation rules", system.get_setting("NewerPronunciation"), self.set_newer)
         p.check("Compact voice for pitch changes", system.get_setting("PitchFallback"),
                 lambda v: system.set_setting("PitchFallback", v))
+        p.check("Tone as on iPhone and Mac", system.get_setting("AppleTone"),
+                lambda v: system.set_setting("AppleTone", v))
         p.text("Apple’s rules are the text fixes each voice’s own iOS or Mac OS X release made "
                "before the engine read it (“iOS”, “OS X” …). The newer rules add Apple’s later "
                "pronunciation dictionary and rules to every voice; turning them on downloads them "
                "from Apple (about 5 MB). Enhanced and premium voices can’t change their pitch; iOS "
-               "used the compact voice for those words, and so does Classic Voices unless this is off.")
+               "used the compact voice for those words, and so does Classic Voices unless this is off. "
+               "iPhone and Mac play the voices with their highest frequencies softened; "
+               + ("Windows" if system.IS_WIN else "Linux") + " keeps them, which sounds a little brighter. "
+               "Tone as on iPhone and Mac softens them the same way.")
         if system.IS_WIN:
             p.section("Windows programs")
             n = system.system_voice_count()
@@ -855,7 +860,7 @@ def main():
 
 
 def check_for_update(frame):
-    """Once a day at most: a newer Classic Voices is offered once, to install
+    """When the app opens, every 6 hours at most: a newer Classic Voices is offered once, to install
     (or, when this copy can't update itself, with its release page)."""
     from _classicvoices import update
     found = update.newer(system.data_root())

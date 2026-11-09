@@ -96,6 +96,13 @@ void vxs_set_mt_24_hour(VxStream *s, int on);
 // default rate (50-400%). Off by default.
 void vxs_set_mt_modern_rate(VxStream *s, int on);
 
+// Roll off the top of the band (above about 8.5 kHz) as iOS and macOS playback
+// does, from the next utterance on. Off by default: the Apple apps leave it to
+// the system. Windows, Linux and Android turn it on (the "Tone as on iPhone
+// and Mac" setting), where the system keeps that band and the voices sound
+// brighter.
+void vxs_set_apple_tone(VxStream *s, int on);
+
 // Timing of the most recent utterance (milliseconds), for diagnostics.
 double vxs_last_first_audio_ms(VxStream *s);
 double vxs_last_synth_ms(VxStream *s);

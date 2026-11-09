@@ -64,6 +64,8 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("pronunciationRules", _("Apple's pronunciation &rules"), defaultVal=True),
         # Translators: a setting: Apple's later pronunciation dictionary and rules, added to each voice's own.
         BooleanDriverSetting("newerPronunciation", _("&Newer pronunciation rules"), defaultVal=False),
+        # Translators: a setting: roll off the highest frequencies as iPhone and Mac playback does.
+        BooleanDriverSetting("appleTone", _("&Tone as on iPhone and Mac"), defaultVal=True),
     )
     # LangChangeCommand: NVDA sends it when "Automatic language switching" is on
     supportedCommands = {IndexCommand, BreakCommand, PitchCommand, RateCommand, VolumeCommand,
@@ -92,6 +94,7 @@ class SynthDriver(SynthDriver):
         self._volume = 80
         self._rules = True
         self._newer = False
+        self._tone = True
         self._voice = next(iter(self._voices))
         self._lang_cache = {}
         # looked up once: each lookup reads the registry and lists folders,
@@ -103,6 +106,7 @@ class SynthDriver(SynthDriver):
             on_index=self._on_index, on_done=self._on_done,
             feed=self._feed, idle=self._idle,
             native_root=cv_paths.native_root())
+        self._speaker.set_apple_tone(self._tone)
         self._speaker.preload(self._voice, self._pack(self._voice))
 
     def _pack(self, key):
@@ -330,6 +334,15 @@ class SynthDriver(SynthDriver):
 
     def _set_pronunciationRules(self, value):
         self._rules = bool(value)
+
+    def _get_appleTone(self):
+        return self._tone
+
+    def _set_appleTone(self, value):
+        # Windows keeps the top of the band that iOS and macOS playback rolls
+        # off (core/vxstream.c, vxs_set_apple_tone): on, it sounds as there.
+        self._tone = bool(value)
+        self._speaker.set_apple_tone(self._tone)
 
     def _get_newerPronunciation(self):
         return self._newer

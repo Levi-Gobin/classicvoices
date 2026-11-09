@@ -33,6 +33,7 @@ static size_t g_seg;          // next segment to start
 static int g_seg_running;     // a segment is being drained
 static char g_key[96], g_fallback[96];
 static char g_pack[1024];     // Apple's later pronunciation pack for the next utterance, or ""
+static int g_tone = 1;        // the top of the band rolled off as iPhone and Mac playback does
 static atomic_int g_cancel;
 
 static char *dup_utf(JNIEnv *env, jstring s) {
@@ -139,6 +140,15 @@ JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setRulesPack(JNIE
     free(d);
 }
 
+// Roll off the top of the band as iPhone and Mac playback does (Android keeps
+// it, which sounds brighter), for the utterances begun from now on.
+JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setAppleTone(JNIEnv *env, jclass cls, jboolean on) {
+    (void)env; (void)cls;
+    pthread_mutex_lock(&g_mu);
+    g_tone = on ? 1 : 0;
+    pthread_mutex_unlock(&g_mu);
+}
+
 // The pronunciation rules' pre-check (core/vxrules.h), for Rules.java.
 JNIEXPORT jlong JNICALL Java_com_levigobin_classicvoices_Native_newRuleIndex(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
@@ -188,6 +198,7 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
         return -1;
     }
     vxs_set_rules_pack(g_stream, g_pack);  // for each segment's vxs_start
+    vxs_set_apple_tone(g_stream, g_tone);
     cv_free_utterance(&g_utt);
     if (ssml) cv_parse_ssml(t, rate, pitch, volume, &g_utt);
     else cv_parse_plain(t, rate, pitch, volume, &g_utt);

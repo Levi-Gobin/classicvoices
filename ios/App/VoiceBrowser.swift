@@ -792,6 +792,13 @@ struct VoiceDetail: View {
                             Label("Stop", systemImage: "stop.fill")
                         }
                     }
+                    #if !os(macOS)
+                    // In a Form row a touch runs every button in it: Speak
+                    // and then Stop at once. VoiceOver activates just one, so
+                    // this only showed without it. Borderless, each button
+                    // takes only its own touches.
+                    .buttonStyle(.borderless)
+                    #endif
                     if !player.stats.isEmpty {
                         Text(player.stats).font(.footnote).monospacedDigit().foregroundStyle(.secondary)
                     }

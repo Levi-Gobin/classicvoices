@@ -123,6 +123,7 @@ struct VxStream {
     _Atomic int mt_keep_commands;  // vxs_set_mt_reset(0)
     _Atomic int mt_12_hour;        // vxs_set_mt_24_hour(0)
     _Atomic int mt_modern_rate;    // vxs_set_mt_modern_rate(1)
+    _Atomic int apple_tone;        // vxs_set_apple_tone(1)
     _Atomic uint64_t generation;
 
     // where each word of the current utterance starts (vxs_read_words)
@@ -343,6 +344,24 @@ static void rs_init(void) {
     }
 }
 
+// ---- Apple's playback tone (vxs_set_apple_tone)
+// iOS and macOS play this 22,050 Hz audio through their sample-rate converter
+// at medium quality (iOS 6's voiced hands the engine's samples straight to an
+// AudioQueue), which rolls off the top of the band: -0.8 dB at 9 kHz, -2.7 at
+// 9.5, -6.8 at 10, -13.9 at 10.5, -20 at 11. Windows, Linux and Android keep
+// that band, so the voices sound brighter there. This is that curve as a
+// minimum-phase FIR (tools/apple_tone_filter.py measures it and makes the
+// table): within 0.01 dB of it, delaying speech by 0.1 sample.
+#define TONE_TAPS 24
+static const float kAppleTone[TONE_TAPS] = {
+    8.311052010e-01f, 3.001374993e-01f, -2.248910108e-01f, 1.532074443e-01f,
+    -9.101876783e-02f, 4.232292616e-02f, -8.632606384e-03f, -1.095426160e-02f,
+    1.914661622e-02f, -1.955016181e-02f, 1.574656137e-02f, -1.060687171e-02f,
+    5.965699051e-03f, -2.645854214e-03f, 7.203244611e-04f, 1.414137467e-04f,
+    -3.749018655e-04f, 3.177920527e-04f, -2.121212671e-04f, 1.034157117e-04f,
+    -3.479455302e-05f, 6.896106760e-06f, -4.374024280e-07f, -0.000000000e+00f,
+};
+
 // Silence trimming: the engine pads every utterance with ~40-110 ms of
 // leading and ~200-250 ms of trailing silence. We drop the leading run (keeping
 // a short preroll so onsets aren't clipped) and cap the trailing run, then add
@@ -368,6 +387,9 @@ typedef struct {
     // diagnostics: silent runs (>= 40 ms) inside the output, as heard
     uint64_t out_pos, quiet_out, heard;
     char gaplog[256];
+    int tone;                    // Apple's playback tone, latched when the utterance starts
+    float tone_in[TONE_TAPS];    // its last inputs, newest at tone_at
+    unsigned tone_at;
     // LEAD_FRAMES: where the reader was when the engine got that far ahead
     int lead_set;
     uint64_t lead_r;
@@ -533,6 +555,15 @@ static void wake_readers(VxStream *s) {
     pthread_mutex_unlock(&s->rmu);
 }
 
+static float tone_step(Sink *k, float x) {
+    k->tone_at = (k->tone_at + TONE_TAPS - 1) % TONE_TAPS;
+    k->tone_in[k->tone_at] = x;
+    float y = 0;
+    for (unsigned j = 0, i = k->tone_at; j < TONE_TAPS; j++, i = i + 1 == TONE_TAPS ? 0 : i + 1)
+        y += kAppleTone[j] * k->tone_in[i];
+    return y;
+}
+
 // Write output-rate samples to the ring buffer. Returns 1 if cancelled.
 static int ring_write(Sink *k, const float *out, size_t n) {
     VxStream *s = k->s;
@@ -552,6 +583,7 @@ static int ring_write(Sink *k, const float *out, size_t n) {
         size_t chunk = n - i < space ? n - i : space;
         for (size_t j = 0; j < chunk; j++) {
             float v = out ? out[i + j] : 0.0f;
+            if (k->tone) v = tone_step(k, v);
             s->ring[(w + j) & (RING_FRAMES - 1)] = v;
             if (fabsf(v) < 0.003f) {
                 k->quiet_out++;
@@ -1024,7 +1056,7 @@ static void *worker(void *arg) {
         s->has_job = 0;
         pthread_mutex_unlock(&s->mu);
 
-        Sink k = {.s = s, .t0 = now_ms(), .rate = OUT_RATE, .last_pos = -1};
+        Sink k = {.s = s, .t0 = now_ms(), .rate = OUT_RATE, .last_pos = -1, .tone = atomic_load(&s->apple_tone)};
         if (is_mt_key(lang)) {
             MtEngine *mt = mt_for(s, lang);
             if (mt && !atomic_load(&s->cancel)) {
@@ -1164,6 +1196,7 @@ void vxs_destroy(VxStream *s) {
 void vxs_set_mt_reset(VxStream *s, int on) { atomic_store(&s->mt_keep_commands, !on); }
 void vxs_set_mt_24_hour(VxStream *s, int on) { atomic_store(&s->mt_12_hour, !on); }
 void vxs_set_mt_modern_rate(VxStream *s, int on) { atomic_store(&s->mt_modern_rate, on); }
+void vxs_set_apple_tone(VxStream *s, int on) { atomic_store(&s->apple_tone, on ? 1 : 0); }
 
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);

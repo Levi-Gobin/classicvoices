@@ -2,12 +2,13 @@
 // stdout, list voices, and time the engine. Linux (and macOS, for testing).
 //
 //   classicvoices-say -l
-//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-o out.wav] TEXT...
+//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-T] [-o out.wav] TEXT...
 //
 // RATE and PITCH are percent of normal (100). VOICE is a name from -l
 // ("Samantha (iOS 6)"), a key ("ios6/en-US") or just "Samantha". TEXT may be
 // SSML. -n leaves out Apple's pronunciation rules; -N adds the newer ones
-// (classicvoices-data pronunciation). Without -o the WAV goes to stdout.
+// (classicvoices-data pronunciation). -T rolls off the top of the band as
+// iPhone and Mac playback does (vxs_set_apple_tone). Without -o the WAV goes to stdout.
 // Data: $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
 // (~/.local/share/classicvoices).
 #include <ctype.h>
@@ -37,8 +38,8 @@ static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] 
 
 int main(int argc, char **argv) {
     const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL;
-    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNA:")) != -1) {
+    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, tone = 0, opt;
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNTA:")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -49,9 +50,10 @@ int main(int argc, char **argv) {
         case 'q': quiet = 1; break;
         case 'n': norules = 1; break;
         case 'N': newer = 1; break;
+        case 'T': tone = 1; break;
         case 'A': autofor = optarg; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] TEXT...\n"
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] TEXT...\n"
                     "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n", argv[0], argv[0]);
             return 2;
         }
@@ -104,6 +106,7 @@ int main(int argc, char **argv) {
     cv_set_native_dir(paths.native);
     VxStream *s = vxs_create(paths.voices);
     vxs_set_asset_root(s, paths.downloads);
+    vxs_set_apple_tone(s, tone);
     CvUtterance u;
     CvPhonemeVoice pv = {paths.voices, paths.downloads, v->key, v->language};
     char pack[1300];

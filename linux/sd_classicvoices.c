@@ -36,6 +36,7 @@ void cv_set_native_dir(const char *dir);
 static int g_debug;
 static int g_rules = 1, g_fallback = 1;  // Apple's pronunciation rules; compact voice for pitch changes
 static int g_newer;  // Apple's later pronunciation packs (<data>/Pronunciation/<language>)
+static int g_tone = 1;  // roll off the top of the band as iPhone and Mac playback does
 static CvPaths g_paths;
 static VxStream *g_stream;
 static CvVoice *g_voices;
@@ -67,6 +68,7 @@ static pthread_t g_worker;
 //   PronunciationRules 0                  don't apply Apple's text rules ("iOS" -> "I O S" ...)
 //   PitchFallback 0                       let enhanced/premium voices ignore pitch changes
 //   NewerPronunciation 1                  add Apple's later pronunciation dictionary and rules
+//   AppleTone 0                           keep the top of the band iPhone and Mac playback rolls off
 //   Debug 1                               log to Speech Dispatcher's module log
 // The Classic Voices app writes the speech settings to <data>/settings.conf, which wins.
 static void read_config(const char *path) {
@@ -82,6 +84,7 @@ static void read_config(const char *path) {
             else if (!strcasecmp(key, "PronunciationRules")) g_rules = atoi(val) != 0;
             else if (!strcasecmp(key, "PitchFallback")) g_fallback = atoi(val) != 0;
             else if (!strcasecmp(key, "NewerPronunciation")) g_newer = atoi(val) != 0;
+            else if (!strcasecmp(key, "AppleTone")) g_tone = atoi(val) != 0;
         }
     }
     fclose(f);
@@ -264,6 +267,7 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
     cv_parse_ssml_ex(ssml ? ssml : text, rate, pitch, volume, rules, cv_voice_phonemes, &pv, &u);
     free(ssml);
     const char *fallback = g_fallback && v->fallback[0] ? v->fallback : NULL;
+    vxs_set_apple_tone(g_stream, g_tone);
     vxs_set_rules_pack(g_stream, pk);
     DBG("speak %s (%zu segments) %s", v->key, u.n, text);
 

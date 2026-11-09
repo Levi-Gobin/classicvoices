@@ -60,6 +60,11 @@ class Speaker:
             self._gen += 1
         self._lib.vxs_cancel(self._s)
 
+    def set_apple_tone(self, on):
+        """Roll off the top of the band as iPhone and Mac playback does (from
+        the next utterance)."""
+        self._lib.vxs_set_apple_tone(self._s, 1 if on else 0)
+
     def preload(self, voice_key, pack=None):
         self._lib.vxs_set_rules_pack(self._s, pack.encode("utf-8") if pack else None)
         self._lib.vxs_preload(self._s, voice_key.encode("utf-8"))
