@@ -564,6 +564,39 @@ static void apply_rules(Engine *e, Text *t) {
     t->len = t->cap = strlen(s);
 }
 
+// A voice that wouldn't open, and what spoke for it (vxs_take_notice), in
+// %LOCALAPPDATA%\Classic Voices\sapi-log.txt beside the app's log.txt (the
+// one before in sapi-log-old.txt past 256 KB), with the program that spoke.
+static void log_notices(Engine *e) {
+    char msg[512];
+    while (vxs_take_notice(e->vxs, msg, sizeof msg)) {
+        logf_("%s", msg);
+        const WCHAR *base = _wgetenv(L"LOCALAPPDATA");
+        if (!base || !*base) continue;
+        WCHAR path[MAX_PATH], old[MAX_PATH], exe[MAX_PATH];
+        _snwprintf(path, MAX_PATH, L"%ls\\Classic Voices", base);
+        path[MAX_PATH - 1] = 0;
+        CreateDirectoryW(path, NULL);
+        _snwprintf(old, MAX_PATH, L"%ls\\sapi-log-old.txt", path);
+        old[MAX_PATH - 1] = 0;
+        wcsncat(path, L"\\sapi-log.txt", MAX_PATH - 1 - wcslen(path));
+        WIN32_FILE_ATTRIBUTE_DATA a;
+        if (GetFileAttributesExW(path, GetFileExInfoStandard, &a) && (a.nFileSizeHigh || a.nFileSizeLow > 256 * 1024))
+            MoveFileExW(path, old, MOVEFILE_REPLACE_EXISTING);
+        FILE *f = _wfopen(path, L"a");
+        if (!f) continue;
+        DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
+        const WCHAR *name = n && n < MAX_PATH && wcsrchr(exe, L'\\') ? wcsrchr(exe, L'\\') + 1 : L"?";
+        char *program = utf8_of(name, -1);
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        fprintf(f, "%04u-%02u-%02u %02u:%02u:%02u %s (%d-bit): %s\n", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+                t.wSecond, program ? program : "?", (int)(sizeof(void *) * 8), msg);
+        fclose(f);
+        free(program);
+    }
+}
+
 static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFGUID fmt, const WAVEFORMATEX *wfx,
                                            const SPVTEXTFRAG *frags, ISpTTSEngineSite *site) {
     (void)flags; (void)fmt; (void)wfx;
@@ -679,6 +712,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
         if (stop) break;
     }
     use_voice(e, &e->own);
+    log_notices(e);
     return S_OK;
 }
 

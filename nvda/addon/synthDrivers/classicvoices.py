@@ -127,11 +127,31 @@ class SynthDriver(SynthDriver):
             self._voices_root, self._downloads_root,
             on_index=self._on_index, on_done=self._on_done,
             feed=self._feed, idle=self._idle,
-            native_root=cv_paths.native_root())
+            native_root=cv_paths.native_root(), on_notice=self._on_notice)
         self._speaker.set_apple_tone(self._tone)
         self._speaker.set_steady_pauses(self._steady)
         self._speaker.set_spelling_pauses(self._spellPauses)
+        self._speaker.set_safe_voice(self._safe_voice(self._voice))
         self._speaker.preload(self._voice, self._pack(self._voice))
+
+    _SAFE_ORDER = ("ios6", "ios7", "ios5", "ios70", "ios4", "ios3", "ios10")
+
+    def _safe_voice(self, key):
+        """A built-in compact voice (part of the firmware, nothing downloaded)
+        to speak when `key` won't open, nor its compact version, nor the last
+        voice that worked: one of its language, else English, else any."""
+        v = self._voices.get(key)
+        builtin = [k for k in self._voices if k.split("/")[0] in self._SAFE_ORDER]
+        builtin.sort(key=lambda k: self._SAFE_ORDER.index(k.split("/")[0]))
+        def norm(lang, base=False):
+            lang = (lang or "").replace("_", "-").lower()
+            return lang.split("-")[0] if base else lang
+        for want in ((v.language if v else None), "en-US"):
+            for base in (False, True):  # the same language and region first
+                for k in builtin:
+                    if want and norm(self._voices[k].language, base) == norm(want, base):
+                        return k
+        return builtin[0] if builtin else None
 
     def _pack(self, key):
         """The newer pronunciation pack for a voice, when that setting is on."""
@@ -197,6 +217,15 @@ class SynthDriver(SynthDriver):
 
     def _on_done(self):
         synthDoneSpeaking.notify(synth=self)
+
+    def _on_notice(self, message):
+        # A voice that won't open is an error (NVDA plays its error sound
+        # when "Play a sound for logged errors" is on), once per voice; what
+        # spoke for it is in the message.
+        if "could not be loaded" in message:
+            log.error("Classic Voices: %s" % message)
+        else:
+            log.info("Classic Voices: %s" % message)
 
     # ---- speaking
     @staticmethod
@@ -399,6 +428,7 @@ class SynthDriver(SynthDriver):
         if value not in self._voices:
             raise ValueError("no such voice: %s" % value)
         self._voice = value
+        self._speaker.set_safe_voice(self._safe_voice(value))
         self._speaker.preload(value, self._pack(value))
 
     def _getAvailableVoices(self):

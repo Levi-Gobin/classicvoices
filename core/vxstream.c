@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdarg.h>
 #include <os/log.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -137,7 +138,20 @@ struct VxStream {
 
     double first_ms, synth_ms, audio_ms;
     char err[256];
+
+    // Voices that didn't open, and what speaks for them (stand_in): tried
+    // again after STAND_IN_RETRY_MS, reported once (worker only).
+    struct { char key[96], with[96]; double at; int reported; } failed[8];
+    char good_key[96];  // the last voice that opened here (worker only)
+    char safe_key[96];  // vxs_set_safe_voice (under mu)
+    // what went wrong, for the program's log (vxs_take_notice; under mu)
+    char notices[4][512];
+    unsigned notice_w, notice_r;
 };
+
+// The last voice that opened in any stream: a known working one
+static pthread_mutex_t g_good_mu = PTHREAD_MUTEX_INITIALIZER;
+static char g_good_key[96];
 
 static double now_ms(void) {
     struct timespec ts;
@@ -1017,6 +1031,135 @@ static int mt_pcm(void *ctx, const float *pcm, size_t n) {
     return 0;
 }
 
+// ---- a voice that won't open: another speaks for it
+// A voice can fail to open where it works elsewhere: Mavericks premium
+// voices need more memory than some 32-bit programs can spare in one piece,
+// files can be missing or damaged, an engine's firmware not imported. Then
+// rather than silence: its compact version, else the last voice that worked
+// (in any stream), else the program's safe voice (vxs_set_safe_voice). The
+// program hears of it through vxs_take_notice, once per voice.
+#define STAND_IN_RETRY_MS (5 * 60 * 1000.0)
+
+static void add_notice(VxStream *s, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void add_notice(VxStream *s, const char *fmt, ...) {
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    os_log_error(OS_LOG_DEFAULT, "CLASSICVOICES %{public}s", msg);
+    pthread_mutex_lock(&s->mu);
+    if (s->notice_w - s->notice_r == 4) s->notice_r++;  // full: the oldest goes
+    snprintf(s->notices[s->notice_w++ % 4], sizeof s->notices[0], "%s", msg);
+    pthread_mutex_unlock(&s->mu);
+}
+
+size_t vxs_take_notice(VxStream *s, char *out, size_t cap) {
+    size_t n = 0;
+    pthread_mutex_lock(&s->mu);
+    if (s->notice_r != s->notice_w) {
+        const char *m = s->notices[s->notice_r++ % 4];
+        n = strlen(m);
+        if (out && cap) snprintf(out, cap, "%s", m);
+    }
+    pthread_mutex_unlock(&s->mu);
+    return n;
+}
+
+void vxs_set_safe_voice(VxStream *s, const char *key) {
+    pthread_mutex_lock(&s->mu);
+    snprintf(s->safe_key, sizeof s->safe_key, "%s", key && !is_mt_key(key) ? key : "");
+    pthread_mutex_unlock(&s->mu);
+}
+
+// The compact version of an enhanced, premium or Siri voice ("mac109/Ava" ->
+// "mac109/AvaCompact", "ios6e/en-US" -> "ios6/en-US"); "" for a compact.
+static void compact_of(const char *key, char *out, size_t cap) {
+    out[0] = 0;
+    const char *slash = strchr(key, '/');
+    if (!slash) return;
+    size_t bl = (size_t)(slash - key), n = strlen(key);
+    if (!strncmp(key, "mac", 3) || !strncmp(key, "siri7/", 6)) {
+        if (n < 7 || strcmp(key + n - 7, "Compact")) snprintf(out, cap, "%sCompact", key);
+    } else if (bl >= 5 && key[bl - 1] == 'e') {
+        snprintf(out, cap, "%.*s%s", (int)(bl - 1), key, slash);
+    }
+}
+
+static void remember_good(VxStream *s, const char *key) {
+    if (!strcmp(s->good_key, key)) return;
+    snprintf(s->good_key, sizeof s->good_key, "%s", key);
+    pthread_mutex_lock(&g_good_mu);
+    snprintf(g_good_key, sizeof g_good_key, "%s", key);
+    pthread_mutex_unlock(&g_good_mu);
+}
+
+// The engine for voice key `lang` (96 bytes), or for the voice speaking for
+// it, whose key then replaces it in lang; NULL when none opens.
+static Vx *engine_or_stand_in(VxStream *s, char *lang, const char *pack) {
+    int slot = -1;
+    double now = now_ms();
+    for (int i = 0; i < 8; i++)
+        if (s->failed[i].key[0] && !strcmp(s->failed[i].key, lang)) slot = i;
+    if (slot >= 0 && now - s->failed[slot].at < STAND_IN_RETRY_MS) {
+        // known not to open: straight to what spoke for it
+        Vx *vx = s->failed[slot].with[0] ? engine_for(s, s->failed[slot].with, pack) : NULL;
+        if (vx) {
+            snprintf(lang, 96, "%s", s->failed[slot].with);
+            return vx;
+        }
+    } else {
+        Vx *vx = engine_for(s, lang, pack);
+        if (vx) {
+            if (slot >= 0) {
+                add_notice(s, "%s opens again", lang);
+                s->failed[slot].key[0] = 0;
+            }
+            remember_good(s, lang);
+            return vx;
+        }
+    }
+    char why[256];
+    snprintf(why, sizeof why, "%s", s->err[0] ? s->err : "unknown error");
+    char cand[4][96];
+    compact_of(lang, cand[0], sizeof cand[0]);
+    snprintf(cand[1], sizeof cand[1], "%s", s->good_key);
+    pthread_mutex_lock(&g_good_mu);
+    snprintf(cand[2], sizeof cand[2], "%s", g_good_key);
+    pthread_mutex_unlock(&g_good_mu);
+    pthread_mutex_lock(&s->mu);
+    snprintf(cand[3], sizeof cand[3], "%s", s->safe_key);
+    pthread_mutex_unlock(&s->mu);
+    Vx *vx = NULL;
+    const char *with = "";
+    for (int i = 0; i < 4 && !vx; i++) {
+        if (!cand[i][0] || !strcmp(cand[i], lang) || is_mt_key(cand[i])) continue;
+        int tried = 0;
+        for (int j = 0; j < i; j++) tried |= !strcmp(cand[j], cand[i]);
+        if (tried) continue;
+        vx = engine_for(s, cand[i], pack);
+        if (vx) with = cand[i];
+    }
+    if (slot < 0) {  // a new one; else the same voice failed again
+        slot = 0;
+        for (int i = 0; i < 8; i++) {
+            if (!s->failed[i].key[0]) { slot = i; break; }
+            if (s->failed[i].at < s->failed[slot].at) slot = i;
+        }
+        snprintf(s->failed[slot].key, sizeof s->failed[slot].key, "%s", lang);
+        s->failed[slot].reported = 0;
+    }
+    snprintf(s->failed[slot].with, sizeof s->failed[slot].with, "%s", with);
+    s->failed[slot].at = now;
+    if (!s->failed[slot].reported) {
+        s->failed[slot].reported = 1;
+        if (vx) add_notice(s, "%s could not be loaded (%s); speaking with %s instead", lang, why, with);
+        else add_notice(s, "%s could not be loaded (%s), and no other voice could be loaded instead", lang, why);
+    }
+    if (vx) snprintf(lang, 96, "%s", with);
+    return vx;
+}
+
 // The speaking thread goes before ordinary work (a fast code build, a busy
 // program), so speech keeps ahead of playback while the computer is loaded.
 // macOS and iOS: its QoS class, set where it is created.
@@ -1044,7 +1187,7 @@ static void *worker(void *arg) {
             if (is_mt_key(lang)) {
                 MtEngine *mt = mt_for(s, lang);
                 if (mt) mte_prepare(mt, strchr(lang, '/') + 1);
-            } else engine_for(s, lang, pack);
+            } else engine_or_stand_in(s, lang, pack);  // lang: a copy
             pthread_mutex_lock(&s->mu);
             continue;
         }
@@ -1104,7 +1247,10 @@ static void *worker(void *arg) {
             continue;
         }
         if (rate < 50) rate = 50;
-        Vx *vx = engine_for(s, lang, s->cur_pack);
+        char asked[96];
+        snprintf(asked, sizeof asked, "%s", lang);
+        Vx *vx = engine_or_stand_in(s, lang, s->cur_pack);
+        if (strcmp(asked, lang)) fallback[0] = 0;  // another voice speaks for it: all of the text
         if (vx) k.rate = vx_sample_rate(vx);
         if (vx && !atomic_load(&s->cancel)) {
             vx_set_param(vx, 3, (uint32_t)rate);

@@ -2125,3 +2125,52 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
     iPhone/Mac (SpeechSettings steadyPauses / spellingPauses, read by the
     extension). Off and on, the text the engine gets is exactly what it was
     before 0.5.2.
+- **Big voices in 32-bit programs; a voice that won't open (2026-11-11).** A
+  forum user's Ava premium was silent. Mavericks Ava's synth file is 484 MB,
+  past the 512 MB guest the 32-bit builds had (432 MB for voice data): "guest
+  map region exhausted", nothing said, in 32-bit NVDA (before 2026.1), 32-bit
+  SAPI programs and 32-bit Android. Reproduced with a 512 MB build on Linux.
+  - Every build now has the 1.06 GB guest (GUEST_MEM_SIZE no longer set for
+    32-bit; MAX_ENGINES stays 1 there). vx_open reserves it, and when a 32-bit
+    program has no free block that big, 768 MB, then 512 MB (vx->mem_size,
+    map_hi 16 MB below the end): every voice but the largest still opens
+    rather than none. gstr/check_range use the size reserved.
+    CV_GUEST_MEM_MB=N (tests) acts as if no more than N MB could be reserved:
+    Ava speaks at 1024 (768 MB reserved), not at 512.
+  - Fast code built for 512 MB keeps running until rebuilt (native_limit: past
+    it, the interpreter; Ava in 32-bit cvtest on the VM: first audio 417 ms,
+    754 interpreted, 30 with new fast code). The stamp is unchanged, so 64-bit
+    and Arm users (and Linux, Android) rebuild nothing. Each Windows build
+    writes cvnative_<build>_32.guest ("full"); a build without it counts as
+    out of date only for 32-bit NVDA, which runs the 32-bit file: in it, or
+    where one is installed (NVDA before 2026.1 in the 32-bit uninstall view),
+    since with the app installed the app (64-bit) does the rebuilding
+    (fastcode.py _old_32bit). Otherwise 32-bit SAPI programs keep the old
+    32-bit file until the next rebuild. Android data packs for 32-bit ABIs get the full guest when next
+    made.
+  - A voice that won't open (any reason: too big, files missing, firmware
+    not imported) is spoken by another (vxstream.c engine_or_stand_in): its
+    compact version, else the last voice that opened in any stream, else the
+    program's safe voice (vxs_set_safe_voice; NVDA: a built-in iOS compact of
+    the voice's language, else English). Known failures go straight to the
+    stand-in and are tried again after 5 minutes; preload goes the same way.
+    Each failed voice is reported once (vxs_take_notice; os_log_error too,
+    which is stderr on Linux, so Speech Dispatcher's module log, and logcat
+    on Android).
+  - Logs: NVDA's log as an error ("Classic Voices: mac109/Ava could not be
+    loaded (...); speaking with mac109/AvaCompact instead"), so NVDA plays its
+    error sound when "Play a sound for logged errors" is on; "opens again" is
+    info. SAPI: %LOCALAPPDATA%\Classic Voices\sapi-log.txt (program name and
+    bitness; sapi-log-old.txt past 256 KB). The Windows/Linux app: its
+    log.txt ("Voice: ..."). cvsay -S SAFE sets the safe voice. cvengine ABI 6.
+  - Mavericks premium voices run on iOS 10's engine, compacts on iOS 7's. The
+    voice lists leave out a premium voice whose engine isn't imported
+    (voices.py has_engine), so that isn't what the forum user hit.
+  - Tested in NVDA on the UTM VM with test configs (-c, the 0.5.3 add-on, Ava
+    selected, volume 0): 64-bit NVDA 2026.3 (ARM64EC engine) and a portable
+    32-bit NVDA 2025.3.2 both speak Ava premium with no error; with her synth
+    file hidden both log "ERROR ... Classic Voices: mac109/Ava could not be
+    loaded (ttsSetParamList failed: 0x80000014); speaking with
+    mac109/AvaCompact instead". CV_GUEST_MEM_MB doesn't reach NVDA started
+    from a task (cvtest covers it). Notices are read after each utterance, so
+    a voice that fails at preload is logged with the first thing said.

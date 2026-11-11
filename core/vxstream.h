@@ -36,6 +36,18 @@ void vxs_start_with_fallback(VxStream *s, const char *voice_key, const char *fal
                              int rate, int pitch, int volume, int trailing_pause_ms);
 void vxs_cancel(VxStream *s);
 
+// A voice that won't open (too big for a 32-bit program's memory, files
+// missing or damaged) doesn't leave the program silent: its compact version
+// speaks for it, else the last voice that opened (in any stream), else this
+// safe voice (a built-in compact the program knows it has; NULL: none). The
+// failed voice is tried again after 5 minutes.
+void vxs_set_safe_voice(VxStream *s, const char *voice_key);
+// What went wrong with a voice and what spoke instead, for the program's log:
+// one message per call into out (NUL-terminated, cut to cap), oldest first;
+// returns its length, 0 when there's none. Each failed voice is reported
+// once. Any thread.
+size_t vxs_take_notice(VxStream *s, char *out, size_t cap);
+
 // Real-time safe. Copies up to `frames` samples into `out`. *done is set to 1
 // once the current utterance has been fully produced and drained.
 size_t vxs_read(VxStream *s, float *out, size_t frames, int *done);

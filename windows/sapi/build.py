@@ -89,8 +89,8 @@ def main():
     if cc64:
         build(cc64, 64, ["-DMAX_ENGINES=2"])
     if cc86:
-        # 32-bit programs: a 512 MB guest and one cached engine, as cvengine32.dll
-        build(cc86, 32, ["-DGUEST_MEM_SIZE=0x20000000u", "-DMAX_ENGINES=1"])
+        # 32-bit programs: one cached engine (its 1.06 GB of addresses), as cvengine32.dll
+        build(cc86, 32, ["-DMAX_ENGINES=1"])
     ccec = find_cc(args.cc_arm64ec, ["arm64ec-w64-mingw32-clang"])
     if ccec:
         build(ccec, "arm64ec", ["-DMAX_ENGINES=2"])

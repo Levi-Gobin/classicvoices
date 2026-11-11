@@ -64,6 +64,11 @@ def _check(cmd, **kw):
 FAST_FLAGS = ["-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
 # Bumped when the compiler flags change what's built (f2: FAST_FLAGS).
 FLAGS_VERSION = "f2"
+# Windows: since 0.5.3 the 32-bit file is built for the same 1.06 GB guest as
+# the 64-bit one (0.5.2's had 512 MB, too little for the largest premium
+# voices). The stamp is unchanged, so 64-bit and Arm users rebuild nothing;
+# cvnative_<build>_32.guest says a 32-bit file was built this way.
+GUEST32_FULL = "full"
 SEMANTICS = ("thumb.h", "thumb_ops.h", "recomp_rt.h")
 BUILDS = ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10")  # a profile each
 
@@ -304,6 +309,40 @@ def stamp_file(native_dir, build):
     return os.path.join(native_dir, "cvnative_%s.stamp" % build)
 
 
+def _guest32_file(native_dir, build):
+    return os.path.join(native_dir, "cvnative_%s_32.guest" % build)
+
+
+def _nvda32_installed():
+    """An installed NVDA older than 2026.1, which is a 32-bit program (its
+    uninstall entry is in the 32-bit view; 2026.1 and later in the 64-bit one)."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\NVDA",
+                            0, winreg.KEY_READ | winreg.KEY_WOW64_32KEY) as k:
+            version = str(winreg.QueryValueEx(k, "DisplayVersion")[0])
+    except (ImportError, OSError):
+        return False
+    m = re.match(r"(\d+)\.(\d+)", version)
+    return bool(m) and (int(m.group(1)), int(m.group(2))) < (2026, 1)
+
+
+def _old_32bit(native_dir, build):
+    """32-bit NVDA (before 2026.1) runs the 32-bit file: one built for 0.5.2's
+    512 MB guest leaves the largest premium voices to the interpreter (slow,
+    but they speak), so it's built again where that NVDA runs, or is installed
+    (the Classic Voices app, 64-bit, builds for it then). Otherwise only 32-bit
+    SAPI programs load it, and it waits for the next rebuild."""
+    if not IS_WIN or (sys.maxsize > 2 ** 32 and not _nvda32_installed()):
+        return False
+    try:
+        with open(_guest32_file(native_dir, build), encoding="utf-8") as f:
+            return f.read().strip() != GUEST32_FULL
+    except OSError:
+        return True
+
+
 def write_stamp(native_dir, build, value):
     with open(stamp_file(native_dir, build), "w", encoding="utf-8") as f:
         f.write(value + "\n")
@@ -320,7 +359,7 @@ def up_to_date(native_dir, build, candidates=()):
         return True
     try:
         with open(stamp_file(native_dir, build), encoding="utf-8") as f:
-            return f.read().strip() == want
+            return f.read().strip() == want and not _old_32bit(native_dir, build)
     except OSError:  # built before 0.5.0
         return False
 
@@ -328,14 +367,15 @@ def up_to_date(native_dir, build, candidates=()):
 def native_targets(cc):
     """(output file name pattern, compiler command, what it's for or None) per
     file a build needs, for the compiler cc."""
-    small = ["-DGUEST_MEM_SIZE=0x20000000u"]  # 32-bit programs: a 512 MB guest
+    # 32-bit programs have the same 1.06 GB guest as 64-bit ones (before
+    # 0.5.3, 512 MB: the largest premium voices didn't fit; see GUEST32_FULL)
     if arm_windows():  # llvm-mingw's target-named clangs
         bindir = os.path.dirname(cc[0])
         return [("cvnative_%s_arm64ec.dll", [os.path.join(bindir, "arm64ec-w64-mingw32-clang.exe")], "64-bit programs"),
-                ("cvnative_%s_32.dll", [os.path.join(bindir, "i686-w64-mingw32-clang.exe")] + small, "32-bit programs")]
+                ("cvnative_%s_32.dll", [os.path.join(bindir, "i686-w64-mingw32-clang.exe")], "32-bit programs")]
     if IS_WIN:
         return [("cvnative_%s_64.dll", cc + ["-target", "x86_64-windows-gnu"], "64-bit programs"),
-                ("cvnative_%s_32.dll", cc + ["-target", "x86-windows-gnu"] + small, "32-bit programs")]
+                ("cvnative_%s_32.dll", cc + ["-target", "x86-windows-gnu"], "32-bit programs")]
     return [("cvnative_%s.so", cc + ["-fPIC"], None)]
 
 
@@ -394,6 +434,9 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
             if f.endswith(".c.lib"):
                 os.remove(os.path.join(native_dir, f))
         remove_old(native_dir)
+        if IS_WIN:
+            with open(_guest32_file(native_dir, build), "w", encoding="utf-8") as f:
+                f.write(GUEST32_FULL + "\n")
         write_stamp(native_dir, build, value)
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -31,7 +31,7 @@ class Speaker:
     worker thread; the caller (the synth driver) forwards them to NVDA."""
 
     def __init__(self, voices_root, downloads_root, on_index, on_done, feed, idle,
-                 native_root=None):
+                 native_root=None, on_notice=None):
         self._lib = lib.load()
         if native_root:
             self._lib.cv_set_native_dir(native_root.encode("utf-8"))
@@ -43,6 +43,7 @@ class Speaker:
         self._on_done = on_done
         self._feed = feed  # feed(bytes, onDone=None); may block on the audio device
         self._idle = idle  # called when an utterance finished feeding
+        self._on_notice = on_notice  # on_notice(message): a voice wouldn't open, and what spoke instead
         self._q = queue.Queue()
         self._gen = 0  # bumped by cancel(); the worker drops stale work
         self._lock = threading.Lock()
@@ -72,6 +73,20 @@ class Speaker:
     def set_spelling_pauses(self, on):
         """Spelling pauses before, between and after the letters (from the next utterance)."""
         self._lib.vxs_set_spelling_pauses(self._s, 1 if on else 0)
+
+    def set_safe_voice(self, voice_key):
+        """The voice that speaks when one won't open and neither will its
+        compact version or the last voice that worked (None: none)."""
+        self._lib.vxs_set_safe_voice(self._s, voice_key.encode("utf-8") if voice_key else None)
+
+    def notices(self):
+        """What went wrong with voices since last asked (core/vxstream.h,
+        vxs_take_notice), oldest first."""
+        out = []
+        buf = ctypes.create_string_buffer(512)
+        while self._s and self._lib.vxs_take_notice(self._s, buf, len(buf)):
+            out.append(buf.value.decode("utf-8", "replace"))
+        return out
 
     def preload(self, voice_key, pack=None):
         self._lib.vxs_set_rules_pack(self._s, pack.encode("utf-8") if pack else None)
@@ -150,6 +165,12 @@ class Speaker:
             if not self._current(gen):
                 continue
             reached, pending = self._speak(gen, utt) if utt.text else ([], b"")
+            if self._on_notice:
+                for message in self.notices():
+                    try:
+                        self._on_notice(message)
+                    except Exception:
+                        pass
             if not self._current(gen):
                 continue
             # Indexes the engine never got to (past the end of the audio, or

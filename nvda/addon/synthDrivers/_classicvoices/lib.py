@@ -55,6 +55,10 @@ def load():
     lib.vxs_engine_pitch.argtypes = [c.c_int]
     lib.vxs_last_error.restype = c.c_char_p
     lib.vxs_last_error.argtypes = [c.c_void_p]
+    lib.vxs_take_notice.restype = c.c_size_t
+    lib.vxs_take_notice.argtypes = [c.c_void_p, c.c_char_p, c.c_size_t]
+    lib.vxs_set_safe_voice.restype = None
+    lib.vxs_set_safe_voice.argtypes = [c.c_void_p, c.c_char_p]
     lib.vxs_last_first_audio_ms.restype = c.c_double
     lib.vxs_last_first_audio_ms.argtypes = [c.c_void_p]
     lib.vx_phoneme_text.restype = c.c_void_p
@@ -81,7 +85,7 @@ def load():
     lib.vx_lang_choose.restype = c.c_int
     lib.vx_lang_choose.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.POINTER(c.c_char_p),
                                    c.POINTER(c.c_char_p), c.c_size_t]
-    if lib.cv_abi_version() != 5:
+    if lib.cv_abi_version() != 6:
         raise OSError("cvengine ABI mismatch")
     _lib = lib
     return lib

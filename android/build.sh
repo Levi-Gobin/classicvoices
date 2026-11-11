@@ -32,9 +32,9 @@ XZFLAGS="-Ithird_party/xz-embedded -DXZ_USE_CRC64 -DXZ_DEC_ANY_CHECK -DXZ_DEC_X8
 for abi in $ABIS; do
     case $abi in
         arm64-v8a) T=aarch64-linux-android; X="" ;;
-        armeabi-v7a) T=armv7a-linux-androideabi; X="-DGUEST_MEM_SIZE=0x20000000u -DMAX_ENGINES=1 -mthumb" ;;
+        armeabi-v7a) T=armv7a-linux-androideabi; X="-DMAX_ENGINES=1 -mthumb" ;;
         x86_64) T=x86_64-linux-android; X="" ;;
-        x86) T=i686-linux-android; X="-DGUEST_MEM_SIZE=0x20000000u -DMAX_ENGINES=1" ;;
+        x86) T=i686-linux-android; X="-DMAX_ENGINES=1" ;;
     esac
     CC="$TC/clang --target=$T$MIN"
     O=$OUT/obj/$abi

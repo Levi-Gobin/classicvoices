@@ -25,7 +25,7 @@
 #define TRAP_MAPPING   0x0030F100u  // 5 consecutive slots
 #define DATA_SYMS      0x00380000u
 #define MAP_LO         0x04000000u  // file mappings: 1 GB (Mavericks Anna's premium voice needs 992 MB)
-#define MAP_HI         GUEST_MEM_SIZE
+                                    // up to vx->map_hi (GUEST_MEM_SIZE unless less could be reserved, vx_open)
 #define HEAP_LO        0x01400000u
 #define HEAP_HI        0x03C00000u
 #define STACK_TOP      0x04000000u
@@ -95,7 +95,8 @@ struct Vx {
     // files
     FILE *files[MAX_FILES];
     int fds[MAX_FILES];
-    uint32_t map_next;
+    uint32_t map_next, map_hi;
+    size_t mem_size;        // what vx_open reserved for mem: GUEST_MEM_SIZE, or less in a crowded 32-bit program
     uint32_t native_limit;  // fast code built for a smaller guest space: none past this (0: no limit)
     Mapping maps[MAX_MAPS];
 
@@ -132,9 +133,9 @@ static inline void ret(Vx *vx, uint32_t v) { vx->cpu.k.r[0] = v; }
 static inline void ret64(Vx *vx, uint64_t v) { vx->cpu.k.r[0] = (uint32_t)v; vx->cpu.k.r[1] = (uint32_t)(v >> 32); }
 
 static const char *gstr(Vx *vx, uint32_t a) {
-    if (!a || a >= GUEST_MEM_SIZE) return NULL;
+    if (!a || a >= vx->mem_size) return NULL;
     // guest strings are NUL-terminated within guest memory
-    if (!memchr(vx->mem + a, 0, GUEST_MEM_SIZE - a)) cpu_fault(&vx->cpu, "unterminated string at %#x", a);
+    if (!memchr(vx->mem + a, 0, vx->mem_size - a)) cpu_fault(&vx->cpu, "unterminated string at %#x", a);
     return (const char *)vx->mem + a;
 }
 
@@ -260,7 +261,7 @@ static void h_realloc(Vx *vx) {
 }
 
 static void check_range(Vx *vx, uint32_t a, uint32_t n) {
-    if (n && ((uint64_t)a + n > GUEST_MEM_SIZE || a < 0x1000))
+    if (n && ((uint64_t)a + n > vx->mem_size || a < 0x1000))
         cpu_fault(&vx->cpu, "bad range %#x+%u (lr=%#x)", a, n, vx->cpu.k.r[14]);
 }
 static void h_memcpy(Vx *vx) {
@@ -828,7 +829,9 @@ static uint32_t map_file_fd(Vx *vx, int fd, uint64_t off, uint32_t len) {
     size_t page = (size_t)getpagesize();
     uint32_t a = (uint32_t)((vx->map_next + page - 1) & ~(page - 1));
     size_t span = (len + page - 1) & ~(page - 1);
-    if ((uint64_t)a + span > MAP_HI) cpu_fault(&vx->cpu, "guest map region exhausted");
+    if ((uint64_t)a + span > vx->map_hi)
+        cpu_fault(&vx->cpu, "the voice doesn't fit in the engine's memory (%u MB for voice data)",
+                  (unsigned)((vx->map_hi - MAP_LO) >> 20));
     if (fd >= 0) {
         void *p = mmap(vx->mem + a, span, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, (off_t)off);
         if (p == MAP_FAILED) cpu_fault(&vx->cpu, "mmap failed: %s", strerror(errno));
@@ -1559,19 +1562,37 @@ static int vx_start(Vx *vx, const char *voiced_path, const char *lang_dir, const
 
 Vx *vx_open(const char *voiced_path, const char *lang_dir, const char *common_dir, char *err, size_t errlen) {
     Vx *vx = calloc(1, sizeof *vx);
+    // The whole guest space in one piece, reserved rather than used (pages
+    // come as they're touched; on Windows mostly file views, vx_win.c). A
+    // 32-bit program may not have 1.06 GB of free addresses in one block
+    // (another engine open, a crowded process): then less, which every voice
+    // but the largest premium ones fits in, rather than no voice at all.
+    // Fast code built for the full space still runs there: guest accesses
+    // stay in what was mapped, and map_hi keeps a margin below the end.
+    static const size_t sizes[] = {GUEST_MEM_SIZE, 0x30000000u, 0x20000000u};
+    void *mem = MAP_FAILED;
+    size_t size = 0;
+    const char *cap_env = getenv("CV_GUEST_MEM_MB");  // tests: act as if no more than this could be reserved
+    size_t cap = cap_env ? (size_t)strtoul(cap_env, NULL, 10) << 20 : 0;
+    for (size_t i = 0; vx && mem == MAP_FAILED && i < sizeof sizes / sizeof sizes[0]; i++) {
+        if (sizes[i] > GUEST_MEM_SIZE || (i && sizes[i] == sizes[i - 1]) || (cap && sizes[i] > cap)) continue;
+        size = sizes[i];
 #ifdef _WIN32
-    // the low part committed; mappings take the rest as they come (vx_win.c)
-    void *mem = vx_mmap_reserve(GUEST_MEM_SIZE, MAP_LO);
-    if (!mem) mem = mmap(NULL, GUEST_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        // the low part committed; mappings take the rest as they come (vx_win.c)
+        mem = vx_mmap_reserve(size, MAP_LO);
+        if (!mem) mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 #else
-    void *mem = mmap(NULL, GUEST_MEM_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+        mem = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 #endif
+    }
     if (!vx || mem == MAP_FAILED) {
         if (err) snprintf(err, errlen, "out of memory");
         free(vx);
         return NULL;
     }
     vx->mem = mem;
+    vx->mem_size = size;
+    vx->map_hi = size == GUEST_MEM_SIZE ? GUEST_MEM_SIZE : (uint32_t)(size - 0x01000000u);  // 16 MB margin
     for (int i = 0; i < MAX_FILES; i++) vx->fds[i] = -1;
     cpu_init(&vx->cpu, vx->mem);
     vx->cpu.trap_lo = TRAP_LO;
@@ -1599,7 +1620,7 @@ void vx_close(Vx *vx) {
         if (vx->fds[i] >= 0) close(vx->fds[i]);
     }
     for (int i = 0; i < vx->nimports; i++) free((void *)vx->hle_name[i]);
-    munmap(vx->mem, GUEST_MEM_SIZE);
+    munmap(vx->mem, vx->mem_size);
     free(vx);
 }
 

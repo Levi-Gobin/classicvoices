@@ -347,6 +347,25 @@ class WinPlayer(Player):
             for hdr, _ in queued:
                 winmm.waveOutUnprepareHeader(h, ctypes.byref(hdr), ctypes.sizeof(hdr))
             winmm.waveOutClose(h)
+            log_notices(self._lib, s)
+
+
+def log_notices(lib, stream):
+    """A voice that wouldn't open and what spoke instead (vxs_take_notice), into the app's log."""
+    from . import crashlog
+    buf = ctypes.create_string_buffer(512)
+    while lib.vxs_take_notice(stream, buf, len(buf)):
+        crashlog.write("Voice: " + buf.value.decode("utf-8", "replace"))
+
+
+def _log_errors(pipe):
+    """classicvoices-say's errors (the engine's, such as a voice that wouldn't open), into the app's log."""
+    from . import crashlog
+    for line in iter(pipe.readline, b""):
+        line = line.decode("utf-8", "replace").rstrip()
+        if line:
+            crashlog.write("Voice: " + line)
+    pipe.close()
 
 
 class CliPlayer(Player):
@@ -387,7 +406,8 @@ class CliPlayer(Player):
             args.append("-N")
         if get_setting("AppleTone"):
             args.append("-T")
-        p1 = subprocess.Popen(args + ["--", text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        p1 = subprocess.Popen(args + ["-q", "--", text], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        threading.Thread(target=_log_errors, args=(p1.stderr,), daemon=True).start()
         p2 = subprocess.Popen(sink, stdin=p1.stdout, stderr=subprocess.DEVNULL)
         p1.stdout.close()
         self._procs = [p1, p2]

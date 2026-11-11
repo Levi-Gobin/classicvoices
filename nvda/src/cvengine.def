@@ -24,6 +24,8 @@ EXPORTS
     vxs_last_synth_ms
     vxs_last_audio_ms
     vxs_last_error
+    vxs_take_notice
+    vxs_set_safe_voice
     vxs_benchmark
     vx_lang_pick
     vx_lang_choose

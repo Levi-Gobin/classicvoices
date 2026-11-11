@@ -2,13 +2,15 @@
 // stdout, list voices, and time the engine. Linux (and macOS, for testing).
 //
 //   classicvoices-say -l
-//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-T] [-o out.wav] TEXT...
+//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-T] [-S SAFE] [-o out.wav] TEXT...
 //
 // RATE and PITCH are percent of normal (100). VOICE is a name from -l
 // ("Samantha (iOS 6)"), a key ("ios6/en-US") or just "Samantha". TEXT may be
 // SSML. -n leaves out Apple's pronunciation rules; -N adds the newer ones
 // (classicvoices-data pronunciation). -T rolls off the top of the band as
-// iPhone and Mac playback does (vxs_set_apple_tone). Without -o the WAV goes to stdout.
+// iPhone and Mac playback does (vxs_set_apple_tone). -S names the voice that
+// speaks when VOICE and its compact version won't open (vxs_set_safe_voice).
+// Without -o the WAV goes to stdout.
 // Data: $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
 // (~/.local/share/classicvoices).
 #include <ctype.h>
@@ -37,9 +39,9 @@ static double now_ms(void) {
 static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 
 int main(int argc, char **argv) {
-    const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL;
+    const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL, *safe = NULL;
     int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, tone = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNTA:")) != -1) {
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNTA:S:")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -52,8 +54,9 @@ int main(int argc, char **argv) {
         case 'N': newer = 1; break;
         case 'T': tone = 1; break;
         case 'A': autofor = optarg; break;
+        case 'S': safe = optarg; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] TEXT...\n"
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] [-S SAFE_VOICE_KEY] TEXT...\n"
                     "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n", argv[0], argv[0]);
             return 2;
         }
@@ -112,6 +115,7 @@ int main(int argc, char **argv) {
     VxStream *s = vxs_create(paths.voices);
     vxs_set_asset_root(s, paths.downloads);
     vxs_set_apple_tone(s, tone);
+    if (safe) vxs_set_safe_voice(s, safe);
     CvUtterance u;
     CvPhonemeVoice pv = {paths.voices, paths.downloads, v->key, v->language};
     char pack[1300];
@@ -155,6 +159,13 @@ int main(int argc, char **argv) {
             frames += n;
         }
     }
+    char notice[512];  // a voice that wouldn't open (on Linux the engine has said so on stderr already)
+    while (vxs_take_notice(s, notice, sizeof notice))
+#ifdef __APPLE__
+        fprintf(stderr, "%s\n", notice);
+#else
+        ;
+#endif
     double total = now_ms() - t0;
     if (outp && fseek(out, 0, SEEK_SET) == 0) {
         put32(hdr + 4, (uint32_t)(36 + frames * 2));

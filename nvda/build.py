@@ -99,7 +99,7 @@ def build_dlls(cc64, cc86, ccec=None):
     else:
         print("WARNING: no arm64ec compiler (llvm-mingw); skipping cvengine_arm64ec.dll")
     if cc86:
-        built.append(build_dll(cc86, 32, ["-DGUEST_MEM_SIZE=0x20000000u", "-DMAX_ENGINES=1"]))
+        built.append(build_dll(cc86, 32, ["-DMAX_ENGINES=1"]))
     else:
         print("WARNING: no i686 compiler found; skipping cvengine32.dll")
     if not built:

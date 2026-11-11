@@ -335,9 +335,9 @@ def cmd_native(args):
 # iPhone a 512 MB address space, and the fast code must be compiled to match.
 ANDROID_ABIS = {
     "arm64-v8a": ("aarch64-linux-android21", []),
-    "armeabi-v7a": ("armv7a-linux-androideabi21", ["-DGUEST_MEM_SIZE=0x20000000u", "-mthumb"]),
+    "armeabi-v7a": ("armv7a-linux-androideabi21", ["-mthumb"]),
     "x86_64": ("x86_64-linux-android21", []),
-    "x86": ("i686-linux-android21", ["-DGUEST_MEM_SIZE=0x20000000u"]),
+    "x86": ("i686-linux-android21", []),
 }
 
 
