@@ -11,6 +11,7 @@ import hashlib
 import os
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -40,7 +41,7 @@ def source():
     os.makedirs(os.path.dirname(SRC), exist_ok=True)
     archive = SRC + ".tar.bz2"
     if not os.path.isfile(archive):
-        print("fetching", URL, flush=True)
+        print("fetching", URL, file=sys.stderr, flush=True)
         with urllib.request.urlopen(URL, timeout=120) as r, open(archive + ".part", "wb") as f:
             shutil.copyfileobj(r, f)
         os.replace(archive + ".part", archive)
