@@ -826,8 +826,12 @@ static char *convert(const Token *t, int n, const Inventory *inv, const char *la
             str_puts(&o, "'");
             continue;
         }
-        // Secondary stress is left out (Nico: Vocalizer gives a word with it the same falling pitch as
-        // one without syllable marks); it still starts a syllable.
+        // secondary stress is the voice's '2, after a syllable mark the same way
+        if (t[i].kind == K_STRESS && t[i].stress == 2) {
+            if (o.n && o.s[o.n - 1] != '_' && o.s[o.n - 1] != '.') str_puts(&o, ".");
+            str_puts(&o, "'2");
+            continue;
+        }
         if (t[i].kind == K_STRESS || t[i].kind == K_SYL) {
             char last = o.n ? o.s[o.n - 1] : '_';
             if (last != '_' && last != '.' && last != '\'') str_puts(&o, ".");
@@ -861,34 +865,11 @@ static char *convert(const Token *t, int n, const Inventory *inv, const char *la
             if (danish && t[i].nbase == 1 && (c == 'p' || c == 't' || c == 'k') && !has_mod(&t[i], 0x2B0) && starts &&
                 (!nx || nx->kind == K_WORD || tok_vowel(nx) || is_liquid_glide(next) || next == 'v' || next == 0x28B))
                 mods[nm++] = 0x2B0;
-            // English voices aspirate a p t k themselves, where a stressed syllable starts, and ignore aspiration
-            // written in phonemes: a written one (t_h, as in FaceTime's "time") puts secondary stress on its
-            // syllable, unless it has stress already, which is what makes the voice aspirate it
-            // (the syllable starts at it: a t after s in its syllable, as in "stime", isn't aspirated)
-            if (english && has_mod(&t[i], 0x2B0)) {
-                size_t b = o.n;
-                while (b > 0 && o.s[b - 1] != '.' && o.s[b - 1] != '_') b--;
-                size_t m = b;  // past the syllable's stress mark ('  or '2)
-                if (m < o.n && o.s[m] == '\'') m += (m + 1 < o.n && o.s[m + 1] == '2') ? 2 : 1;
-                char mark[3] = "'2";
-                if (m > b) snprintf(mark, sizeof mark, "%.*s", (int)(m - b), o.s + b);
-                if (m < o.n) {  // sounds before it in its syllable: they go to the syllable before, its mark with it
-                    memmove(o.s + b, o.s + m, o.n - m);
-                    o.n -= m - b;
-                    if (b > 0 && o.s[b - 1] == '.') {  // no syllable boundary left between them and the one before
-                        memmove(o.s + b - 1, o.s + b, o.n - b);
-                        o.n--;
-                    }
-                    o.s[o.n] = 0;
-                    if (o.n && o.s[o.n - 1] != '_') str_puts(&o, ".");
-                    str_puts(&o, mark);
-                } else if (m == b) {  // first in an unstressed syllable
-                    str_add(&o, "  ", 2);
-                    memmove(o.s + b + 2, o.s + b, o.n - 2 - b);
-                    o.s[b] = '\'';
-                    o.s[b + 1] = '2';
-                }
-            }
+            // English voices aspirate a p t k themselves, where a stressed syllable starts (not after s in it), and
+            // a written aspiration only sounds the same: it's left out (secondary stress, %, gets one, as in "feIs%taIm)
+            if (english)
+                for (int k = 0; k < nm; k++)
+                    if (mods[k] == 0x2B0) { mods[k--] = mods[--nm]; }
             Spellings l;
             spellings(t[i].base, t[i].nbase, mods, nm, lang, 0, &l);
             const Spelling *s = pick(&l, inv);

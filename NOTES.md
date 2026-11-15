@@ -2257,7 +2257,8 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   stress mark already starts its syllable. NVDA's own PhonemeCommands
   (MathCAT) get the same. iOS 4's ESC/+ input takes the marks too.
 - Secondary stress (Nico): words with '2 got the same falling pitch, so
-  vxphonemes writes a secondary stress as a plain syllable mark.
+  vxphonemes wrote a secondary stress as a plain syllable mark. Back as '2 since 2026-11-15 (see "English r
+  and aspiration" below): with syllable marks it made no pitch difference mid-sentence or at the end.
 - Spliced words had the falling pitch too: the rest went in as "I d" after
   a space and without syllable marks. spliced_word() now reads the start back
   as the voice's symbols (longest match over the phoneme table), joins the
@@ -2579,6 +2580,9 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound
   the same as t) and aspirates p/t/k itself at the start of a stressed syllable, primary or secondary, unless
-  s comes before it in that syllable ("stime"). So an English _h (t_h) makes its syllable start at that
-  consonant (anything before it in the syllable goes to the one before) and gives it secondary stress '2
-  when it has none: "feIst_haIm -> 'fe&Is.'2ta&Im, said with t{ (FaceTime); t_h{t -> '2t@t.
+  s comes before it in that syllable ("stime"). A first try had _h move the syllable start and add '2; Nico
+  chose instead to bring secondary stress back: % is the voice's '2 again (after a syllable mark, like '),
+  and English _h is left out. So "feIs%taIm says FaceTime with an aspirated t ('fe&Is.'2ta&Im). Measured
+  first: Samantha (all 168 en.dic spans with %, by ear), all five English voices sentence-final, and mid-
+  sentence (metaphor, screenshot, exponential: the same audio as without '2); every iOS 6 voice takes '2
+  as stress (nothing read out, durations the same).
