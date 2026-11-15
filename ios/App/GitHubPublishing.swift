@@ -63,9 +63,10 @@ enum GitHub {
     private static func env(_ k: String) -> String? {
         ProcessInfo.processInfo.environment[k].flatMap { $0.isEmpty ? nil : $0 }
     }
-    /// The GitHub App's client ID and name in its address: empty until Nico registers it.
-    static let clientID = env("CV_GITHUB_CLIENT_ID") ?? ""
-    static let appSlug = env("CV_GITHUB_APP_SLUG") ?? ""
+    /// The Classic Voices GitHub App (Nico's, github.com/apps/classic-voices): its client ID, which isn't secret
+    /// (the device flow uses no client secret), and its name in its address.
+    static let clientID = env("CV_GITHUB_CLIENT_ID") ?? "Iv23liprOaNWuXD30i5d"
+    static let appSlug = env("CV_GITHUB_APP_SLUG") ?? "classic-voices"
     static let api = env("CV_GITHUB_API") ?? "https://api.github.com"
     static let web = env("CV_GITHUB_WEB") ?? "https://github.com"
     static var configured: Bool { !clientID.isEmpty }

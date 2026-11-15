@@ -22,9 +22,9 @@ import urllib.request
 from . import dicts
 from . import gitsync
 
-# The Classic Voices GitHub App (Nico registers it; empty until then: no sign-in is offered)
-CLIENT_ID = ""
-APP_SLUG = ""
+# The Classic Voices GitHub App (github.com/apps/classic-voices)
+CLIENT_ID = "Iv23liprOaNWuXD30i5d"  # the Classic Voices GitHub App (Nico's); not secret
+APP_SLUG = "classic-voices"
 
 UA = "ClassicVoices"
 REFRESH_BEFORE = 300  # seconds before the key runs out that a new one is asked for
