@@ -2,12 +2,13 @@
 // stdout, list voices, and time the engine. Linux (and macOS, for testing).
 //
 //   classicvoices-say -l
-//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-T] [-S SAFE] [-o out.wav] TEXT...
+//   classicvoices-say [-v VOICE] [-L LANG] [-r RATE] [-p PITCH] [-n] [-N] [-D] [-T] [-S SAFE] [-o out.wav] TEXT...
 //
 // RATE and PITCH are percent of normal (100). VOICE is a name from -l
 // ("Samantha (iOS 6)"), a key ("ios6/en-US") or just "Samantha". TEXT may be
 // SSML. -n leaves out Apple's pronunciation rules; -N adds the newer ones
-// (classicvoices-data pronunciation). -T rolls off the top of the band as
+// (classicvoices-data pronunciation). -D applies the community pronunciation
+// dictionaries in <data>/Dictionaries (cv_dict.h). -T rolls off the top of the band as
 // iPhone and Mac playback does (vxs_set_apple_tone). -S names the voice that
 // speaks when VOICE and its compact version won't open (vxs_set_safe_voice).
 // Without -o the WAV goes to stdout.
@@ -24,6 +25,7 @@
 #include "cv_catalog.h"
 #include "cv_paths.h"
 #include "cv_rules.h"
+#include "cv_dict.h"
 #include "cv_ssml.h"
 #include "vxlang.h"
 #include "vxstream.h"
@@ -40,8 +42,8 @@ static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] 
 
 int main(int argc, char **argv) {
     const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL, *safe = NULL;
-    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, tone = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNTA:S:")) != -1) {
+    int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, tone = 0, dicts = 0, lower = 0, opt;
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNDTcA:S:")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -51,12 +53,14 @@ int main(int argc, char **argv) {
         case 'o': outp = optarg; break;
         case 'q': quiet = 1; break;
         case 'n': norules = 1; break;
+        case 'D': dicts = 1; break;
         case 'N': newer = 1; break;
         case 'T': tone = 1; break;
+        case 'c': lower = 1; break;
         case 'A': autofor = optarg; break;
         case 'S': safe = optarg; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] [-S SAFE_VOICE_KEY] TEXT...\n"
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] [-c: no \"capital\" when spelling] [-S SAFE_VOICE_KEY] TEXT...\n"
                     "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n", argv[0], argv[0]);
             return 2;
         }
@@ -115,13 +119,22 @@ int main(int argc, char **argv) {
     VxStream *s = vxs_create(paths.voices);
     vxs_set_asset_root(s, paths.downloads);
     vxs_set_apple_tone(s, tone);
+    vxs_set_spell_lowercase(s, lower);
     if (safe) vxs_set_safe_voice(s, safe);
     CvUtterance u;
     CvPhonemeVoice pv = {paths.voices, paths.downloads, v->key, v->language};
     char pack[1300];
     const char *pk = newer ? cv_rules_pack_dir(paths.root, v->key, v->language, pack, sizeof pack) : NULL;
-    cv_parse_ssml_ex(text, rate, pitch, -1, cv_rules_for_voice_pack(paths.voices, paths.downloads, v->key, v->language, !norules, pk),
-                     cv_voice_phonemes, &pv, &u);
+    char dir[1300];
+    snprintf(dir, sizeof dir, "%s/Dictionaries", paths.root);
+    // the person's own entries always, the fetched ones with -D
+    const CvDict *dict = cv_dict_for_voice_ex(dir, v->key, v->language, dicts);
+    for (int i = 0; dicts && !dict && i < 300; i++) {  // a big one loads in the background: wait for it here
+        usleep(10000);
+        dict = cv_dict_for_voice_ex(dir, v->key, v->language, dicts);
+    }
+    cv_parse_ssml_dict(text, rate, pitch, -1, cv_rules_for_voice_pack(paths.voices, paths.downloads, v->key, v->language, !norules, pk),
+                       dict, cv_voice_phonemes, &pv, &u);
 
     FILE *out = outp ? fopen(outp, "wb") : stdout;
     if (!out) { perror(outp); return 1; }

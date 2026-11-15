@@ -162,8 +162,11 @@ def open_folder(path):
 # (vxs_set_apple_tone); Windows and Linux keep it, which sounds brighter.
 # SteadyPauses keeps a pause as long as asked at any rate (vxs_set_steady_pauses);
 # SpellingPauses lets spelling pause around the letters (vxs_set_spelling_pauses).
+# SpellLowercase spells capitals without "capital" before them (vxs_set_spell_lowercase).
+# CommunityDictionaries applies the community pronunciation dictionaries in
+# <data>/Dictionaries (opt in; the app fetches them, cv_dict.h reads them).
 SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True,
-            "AppleTone": True, "SteadyPauses": True, "SpellingPauses": False}
+            "AppleTone": True, "SteadyPauses": True, "SpellingPauses": False, "SpellLowercase": False, "CommunityDictionaries": False}
 
 if IS_WIN:
     def get_setting(name):
@@ -447,6 +450,11 @@ def system_voice_count():
                 pass
         return n
     return len(cv_voices.scan(voices_root(), downloads_root())) if speechd_module_installed() else 0
+
+
+def system_voices_current():
+    """Whether the system lists as many voices as there are (hidden ones left out), as registering them would."""
+    return system_voice_count() == len(cv_voices.scan(voices_root(), downloads_root()))
 
 
 def sapi_dlls():

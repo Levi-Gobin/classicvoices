@@ -33,6 +33,7 @@ CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstre
 SHIM = [os.path.join(NVDA_SRC, f) for f in ("vx_win.c", "mt_stub.c", "vx_native_load.c")]
 HOST = [os.path.join(ROOT, "ports", "host", "cv_catalog.c"), os.path.join(HERE, "cvsapi.c")]
 RULES = os.path.join(ROOT, "ports", "host", "cv_rules.c")  # with UTF-8 paths and PCRE2 built in
+DICT = os.path.join(ROOT, "ports", "host", "cv_dict.c")  # the community dictionaries: UTF-8 paths too
 
 CFLAGS = [
     "-O2", "-std=gnu11", "-ffp-contract=off", "-fvisibility=hidden",
@@ -61,8 +62,8 @@ def build(cc, bits, defines):
     os.makedirs(OUT, exist_ok=True)
     objs = pcre2_build.objects(cc, os.path.join(OUT, "pcre2"), str(bits))
     pcre = ["-DCV_PCRE2_STATIC", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-I" + pcre2_build.include_dir()]
-    for src in CORE + SHIM + HOST + [RULES]:
-        extra = CORE_EXTRA if src in CORE or src == RULES else []
+    for src in CORE + SHIM + HOST + [RULES, DICT]:
+        extra = CORE_EXTRA if src in CORE or src in (RULES, DICT) else []
         if src in (RULES, HOST[1]):
             extra = extra + pcre
         obj = os.path.join(OUT, "%s_%s.o" % (bits, os.path.splitext(os.path.basename(src))[0]))

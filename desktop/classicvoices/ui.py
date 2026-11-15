@@ -606,6 +606,11 @@ class SettingsPanel(wx.ScrolledWindow):
         if on:
             self.frame.lib.get_pronunciation()
 
+    def set_dictionaries(self, on):
+        system.set_setting("CommunityDictionaries", on)
+        if on:
+            self.frame.refresh_dictionaries(force=True)
+
     def render(self):
         self.Freeze()
         self.DestroyChildren()
@@ -622,6 +627,10 @@ class SettingsPanel(wx.ScrolledWindow):
                 lambda v: system.set_setting("SteadyPauses", v))
         p.check("Pauses when spelling", system.get_setting("SpellingPauses"),
                 lambda v: system.set_setting("SpellingPauses", v))
+        p.check("Don\u2019t say \u201ccapital\u201d when spelling", system.get_setting("SpellLowercase"),
+                lambda v: system.set_setting("SpellLowercase", v))
+        p.check("Community pronunciation dictionaries", system.get_setting("CommunityDictionaries"),
+                self.set_dictionaries)
         p.text("Apple’s rules are the text fixes each voice’s own iOS or Mac OS X release made "
                "before the engine read it (“iOS”, “OS X” …). The newer rules add Apple’s later "
                "pronunciation dictionary and rules to every voice; turning them on downloads them "
@@ -633,7 +642,12 @@ class SettingsPanel(wx.ScrolledWindow):
                "The voices shorten a pause the faster they speak; with Pauses keep their length on, "
                "a pause your screen reader asks for (such as before a character’s phonetic) lasts "
                "as long at any rate. Pauses when spelling makes the voices pause before, between and "
-               "after spelled letters, as they originally did (iOS 3 and 4 voices always do).")
+               "after spelled letters, as they originally did (iOS 3 and 4 voices always do). "
+               "Don’t say “capital” spells capital letters like small ones (your screen reader can still "
+               "mark them its own way). "
+               "Community pronunciation dictionaries are fixes written by Classic Voices users for every "
+               "voice of a language (github.com/nicopn/classicvoices-dicts); turned on, the app fetches "
+               "them and checks for new ones every few hours while it runs.")
         if system.IS_WIN:
             p.section("Windows programs")
             n = system.system_voice_count()
@@ -688,6 +702,16 @@ class Frame(wx.Frame):
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.updating = False  # the setup program may close the app without asking
         self.Centre()
+        # the community pronunciation dictionaries, when turned on: now and every 6 hours while the app runs
+        self.dict_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, lambda e: self.refresh_dictionaries(), self.dict_timer)
+        self.dict_timer.Start(6 * 3600 * 1000)
+        self.refresh_dictionaries()
+
+    def refresh_dictionaries(self, force=False):
+        if system.get_setting("CommunityDictionaries"):
+            from _classicvoices import dicts as cv_dicts
+            cv_dicts.refresh_all(system.data_root(), force=force)
 
     def on_key(self, e):
         """Ctrl+Tab / Ctrl+Shift+Tab change tabs everywhere (GTK's own keys
@@ -747,8 +771,22 @@ class Frame(wx.Frame):
         self.status.SetStatusText("%s%s" % (job.message, percent(job)) if job else "")
         while self.lib.finished:
             self.status.SetStatusText("Done: " + self.lib.finished.pop(0))
+        if not progress and system.IS_WIN:
+            wx.CallAfter(self.register_new_voices)
         if not progress and tab is self.settings:
             self.settings.render()
+
+    def register_new_voices(self):
+        """Windows: once the downloads and imports asked for are done, register the voices again when Windows
+        programs (SAPI) don't list them all yet: one administrator prompt for the lot, as after a removal."""
+        if not self.lib.voices_added or any(j.kind in ("download", "compacts", "firmware", "copy")
+                                            for j in self.lib.jobs):
+            return
+        self.lib.voices_added = False
+        if not system.sapi_dlls():
+            return
+        if not system.system_voices_current():
+            self.update_system()
 
     def speak(self, item, text, rate):
         try:

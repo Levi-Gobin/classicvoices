@@ -24,6 +24,7 @@
 #include "cv_catalog.h"
 #include "cv_paths.h"
 #include "cv_rules.h"
+#include "cv_dict.h"
 #include "cv_ssml.h"
 #include "spd_module_main.h"
 #include "vxlang.h"
@@ -39,6 +40,8 @@ static int g_newer;  // Apple's later pronunciation packs (<data>/Pronunciation/
 static int g_tone = 1;  // roll off the top of the band as iPhone and Mac playback does
 static int g_steady = 1;  // pauses as long as asked at any rate
 static int g_spell_pauses;  // spelling pauses around the letters, as the voices do
+static int g_spell_lower;   // spelled letters without "capital" before them
+static int g_dicts;  // the community pronunciation dictionaries (<data>/Dictionaries, cv_dict.h): opt in
 static CvPaths g_paths;
 static VxStream *g_stream;
 static CvVoice *g_voices;
@@ -73,6 +76,8 @@ static pthread_t g_worker;
 //   AppleTone 0                           keep the top of the band iPhone and Mac playback rolls off
 //   SteadyPauses 0                        let pauses shorten as the rate goes up, as the voices do
 //   SpellingPauses 1                      pause before, between and after spelled letters
+//   SpellLowercase 1                      spell capitals without saying "capital"
+//   CommunityDictionaries 1               the community pronunciation dictionaries in <data>/Dictionaries
 //   Debug 1                               log to Speech Dispatcher's module log
 // The Classic Voices app writes the speech settings to <data>/settings.conf, which wins.
 static void read_config(const char *path) {
@@ -91,6 +96,8 @@ static void read_config(const char *path) {
             else if (!strcasecmp(key, "AppleTone")) g_tone = atoi(val) != 0;
             else if (!strcasecmp(key, "SteadyPauses")) g_steady = atoi(val) != 0;
             else if (!strcasecmp(key, "SpellingPauses")) g_spell_pauses = atoi(val) != 0;
+            else if (!strcasecmp(key, "SpellLowercase")) g_spell_lower = atoi(val) != 0;
+            else if (!strcasecmp(key, "CommunityDictionaries")) g_dicts = atoi(val) != 0;
         }
     }
     fclose(f);
@@ -274,12 +281,16 @@ static void speak_job(char *text, SPDMessageType type, unsigned gen) {
     const char *pk = g_newer ? cv_rules_pack_dir(g_paths.root, v->key, v->language, pack, sizeof pack) : NULL;
     const CvRules *rules = cv_rules_for_voice_pack(g_paths.voices, g_paths.downloads, v->key, v->language, g_rules, pk);
     CvPhonemeVoice pv = {g_paths.voices, g_paths.downloads, v->key, v->language};
-    cv_parse_ssml_ex(ssml ? ssml : text, rate, pitch, volume, rules, cv_voice_phonemes, &pv, &u);
+    char dicts[1300];
+    snprintf(dicts, sizeof dicts, "%s/Dictionaries", g_paths.root);
+    const CvDict *dict = cv_dict_for_voice_ex(dicts, v->key, v->language, g_dicts);  // own entries always
+    cv_parse_ssml_dict(ssml ? ssml : text, rate, pitch, volume, rules, dict, cv_voice_phonemes, &pv, &u);
     free(ssml);
     const char *fallback = g_fallback && v->fallback[0] ? v->fallback : NULL;
     vxs_set_apple_tone(g_stream, g_tone);
     vxs_set_steady_pauses(g_stream, g_steady);
     vxs_set_spelling_pauses(g_stream, g_spell_pauses);
+    vxs_set_spell_lowercase(g_stream, g_spell_lower);
     vxs_set_rules_pack(g_stream, pk);
     DBG("speak %s (%zu segments) %s", v->key, u.n, text);
 

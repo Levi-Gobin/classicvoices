@@ -182,6 +182,7 @@ class Library:
         self.jobs = []      # queued and running
         self.errors = []    # (label, message) of failed jobs, until dismissed
         self.finished = []  # labels of jobs that just finished, for announcing
+        self.voices_added = False  # a download or import finished: Windows programs may not have the voices yet
         self._lock = threading.Lock()
         self._wake = threading.Condition(self._lock)
         threading.Thread(target=self._worker, daemon=True).start()
@@ -531,6 +532,8 @@ class Library:
                 ok = not job.cancelled and not job.error
                 if ok:
                     self.finished.append(job.label)
+                    if job.kind in ("download", "compacts", "firmware", "copy"):
+                        self.voices_added = True
                 if job.kind == "fast":
                     try:
                         system.set_setting("FastCodeAuto", ok)

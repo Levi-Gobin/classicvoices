@@ -27,6 +27,8 @@
 
 #include "cv_catalog.h"
 #include "cv_rules.h"
+#include "cv_dict.h"
+#include "vxphonemes.h"
 #include "vxphonemes.h"
 #include "vxstream.h"
 
@@ -544,18 +546,29 @@ static DWORD user_setting(const WCHAR *name, DWORD fallback) {
     return fallback;
 }
 
-// Apple's pronunciation rules (the voice's own, unless turned off, and the
-// newer ones when on). Word positions stay on the text SAPI gave: rewritten
-// text maps to its original.
+static char *voice_phonemes(void *ctx, const char *ipa, int joined) {
+    Engine *e = ctx;
+    return vx_phoneme_text(e->voices, e->downloads, e->key, e->language, ipa, joined);
+}
+
+// The community pronunciation dictionaries (opt in: <data>\Dictionaries,
+// cv_dict.h), then Apple's pronunciation rules (the voice's own, unless turned
+// off, and the newer ones when on). Word positions stay on the text SAPI gave:
+// rewritten text maps to its original, phonemes to the word they stand for.
 static void apply_rules(Engine *e, Text *t) {
-    char pack[MAX_PATH * 3 + 64];
+    char pack[MAX_PATH * 3 + 64], dicts[MAX_PATH * 3 + 32];
     int own = (int)user_setting(L"PronunciationRules", 1);
     const char *pk = newer_pack(e, pack, sizeof pack);
-    if ((!own && !pk) || !e->build[0]) return;
-    const CvRules *rules = cv_rules_for_voice_pack(e->voices, e->downloads, e->key, e->language, own, pk);
-    if (!rules) return;
+    if (!e->build[0]) return;
+    // the person's own entries always, the fetched ones when the community dictionaries are on
+    snprintf(dicts, sizeof dicts, "%s\\Dictionaries", e->root);
+    const CvDict *dict = cv_dict_for_voice_ex(dicts, e->key, e->language, (int)user_setting(L"CommunityDictionaries", 0));
+    if (!own && !pk && !dict) return;
+    const CvRules *rules = own || pk ? cv_rules_for_voice_pack(e->voices, e->downloads, e->key, e->language, own, pk) : NULL;
+    if (!rules && !dict) return;
     int32_t *map = NULL;
-    char *s = cv_rules_apply_mapped(rules, t->s, (const int32_t *)t->src, &map);
+    char *s = dict ? cv_dict_speech_text_mapped(dict, rules, t->s, (const int32_t *)t->src, &map, voice_phonemes, e)
+                   : cv_rules_apply_mapped(rules, t->s, (const int32_t *)t->src, &map);
     if (!s || !map) { free(s); free(map); return; }
     free(t->s);
     free(t->src);
@@ -612,6 +625,7 @@ static HRESULT STDMETHODCALLTYPE eng_Speak(ISpTTSEngine *This, DWORD flags, REFG
     // pauses as long as asked at any rate; spelling without pauses around the letters (the app's settings)
     vxs_set_steady_pauses(e->vxs, (int)user_setting(L"SteadyPauses", 1));
     vxs_set_spelling_pauses(e->vxs, (int)user_setting(L"SpellingPauses", 0));
+    vxs_set_spell_lowercase(e->vxs, (int)user_setting(L"SpellLowercase", 0));
     long rate = 0;
     USHORT volume = 100;
     site->lpVtbl->GetRate(site, &rate);
