@@ -5,6 +5,8 @@ import SwiftUI
 struct ClassicVoicesApp: App {
     #if canImport(UIKit)
     @UIApplicationDelegateAdaptor private var appDelegate: AppDelegate
+    #elseif os(macOS)
+    @NSApplicationDelegateAdaptor private var macDelegate: MacAppDelegate
     #endif
 
     init() {
@@ -615,3 +617,31 @@ final class DirectPlayer: ObservableObject {
         return fm.fileExists(atPath: base.appendingPathComponent(build).appendingPathComponent(parts[1]).path)
     }
 }
+
+#if os(macOS)
+/// Quitting from the Dictionaries tab with unpublished changes and no way to publish asks whether to sign in to
+/// GitHub (Yes, No, Don't Show Again), as leaving the tab does.
+final class MacAppDelegate: NSObject, NSApplicationDelegate {
+    @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let p = DictionaryPublisher.shared
+        guard DictionariesTab.isOpen, !p.canPublish, GitHub.configured, !DictionaryPublisher.dontAsk,
+              !DictionaryChanges.pending().isEmpty else { return .terminateNow }
+        let a = NSAlert()
+        a.messageText = "Sign in to GitHub to publish your changes?"
+        a.informativeText = "Your dictionary changes are only on this Mac until they’re published."
+        a.addButton(withTitle: "Yes")
+        a.addButton(withTitle: "No")
+        a.addButton(withTitle: "Don’t Show Again")
+        switch a.runModal() {
+        case .alertFirstButtonReturn:
+            p.open(signIn: true)
+            return .terminateCancel
+        case .alertThirdButtonReturn:
+            DictionaryPublisher.dontAsk = true
+            return .terminateNow
+        default:
+            return .terminateNow
+        }
+    }
+}
+#endif

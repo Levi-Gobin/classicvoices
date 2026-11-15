@@ -514,7 +514,9 @@ def changes(data_root, name):
 def apply_changes(lines, added, changed, removed):
     """A fetched file's lines with the person's changes made in them: changed lines in place, removed ones
     gone, added ones at the end; comments and order kept (what a commit writes)."""
+    # an added entry the file has already (published to a fork before, say) is put in its place, not twice
     by_key = {e.key: e for e in changed}
+    by_key.update((e.key, e) for e in added)
     gone = {e.key for e in removed}
     out = []
     for l in lines:
@@ -527,7 +529,7 @@ def apply_changes(lines, added, changed, removed):
             out.append(by_key.pop(e.key).line())
         else:
             out.append(l)
-    out += [e.line() for e in added] + [e.line() for e in by_key.values()]
+    out += [e.line() for e in added + changed if by_key.pop(e.key, None) is not None]
     return out
 
 

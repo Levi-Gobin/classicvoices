@@ -321,6 +321,7 @@ struct RootView: View {
     @State private var library = VoiceLibrary.shared
     @State private var updates = UpdateCheck.shared
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView {
@@ -339,6 +340,13 @@ struct RootView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
         .environment(library)
+        .modifier(PublishingPrompts())  // the Publishing sheet; "sign in to publish?" on leaving the dictionaries
+        #if os(iOS)
+        .task(id: scenePhase) {
+            // the person's dictionary changes, once a day when that's turned on and the app comes to the front
+            if scenePhase == .active { await DictionaryPublisher.shared.publishAutomatically() }
+        }
+        #endif
         .task {
             await updates.check()
             #if CV_PUBLIC
@@ -361,7 +369,7 @@ struct RootView: View {
             // the person's dictionary changes, published once a day where git can push them and that's turned on
             try? await Task.sleep(for: .seconds(180))
             while !Task.isCancelled {
-                _ = await GitPublisher.shared.publish(force: false)
+                await DictionaryPublisher.shared.publishAutomatically()
                 try? await Task.sleep(for: .seconds(3600))
             }
         }

@@ -14,7 +14,6 @@ import Foundation
 final class GitPublisher {
     static let shared = GitPublisher()
     nonisolated static let every: TimeInterval = 24 * 3600
-    nonisolated static let maxNames = 5
 
     private(set) var busy = false
     private(set) var lastError: String?
@@ -61,29 +60,12 @@ final class GitPublisher {
         return (p.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 
-    /// {file name: changes} for every file the person changed.
-    nonisolated static func pending() -> [String: (added: [DictionaryStore.Entry], changed: [DictionaryStore.Entry], removed: [DictionaryStore.Entry])] {
-        var out: [String: (added: [DictionaryStore.Entry], changed: [DictionaryStore.Entry], removed: [DictionaryStore.Entry])] = [:]
-        for name in DictionaryStore.fileNames() {
-            let c = DictionaryStore.changes(name)
-            if !c.added.isEmpty || !c.changed.isEmpty || !c.removed.isEmpty { out[name] = c }
-        }
-        return out
-    }
+    /// {file name: changes} for every file the person changed (DictionaryChanges, shared with the API path).
+    nonisolated static func pending() -> [String: DictionaryChanges.Lists] { DictionaryChanges.pending() }
 
-    /// The commit message: up to `maxNames` patterns per kind on the first line, the full lists in the body.
     nonisolated static func message(_ name: String, added: [DictionaryStore.Entry], changed: [DictionaryStore.Entry],
                                     removed: [DictionaryStore.Entry]) -> String {
-        func part(_ verb: String, _ l: [DictionaryStore.Entry]) -> String {
-            let names = l.map(\.pattern)
-            let shown = names.prefix(maxNames).joined(separator: ", ") + (l.count > maxNames ? " and \(l.count - maxNames) more" : "")
-            return "\(verb) \(l.count) entr\(l.count == 1 ? "y" : "ies") - \(shown)"
-        }
-        let kinds = [("add", added), ("modify", changed), ("remove", removed)].filter { !$0.1.isEmpty }
-        let subject = "\(name): " + kinds.map { part($0.0, $0.1) }.joined(separator: "; ")
-        let body = [("Added", added), ("Modified", changed), ("Removed", removed)].filter { $0.1.count > maxNames }
-            .map { "\($0.0):\n" + $0.1.map { "- " + $0.pattern }.joined(separator: "\n") }
-        return body.isEmpty ? subject : subject + "\n\n" + body.joined(separator: "\n\n")
+        DictionaryChanges.message(name, added: added, changed: changed, removed: removed)
     }
 
     /// The remote's address (tests may point it elsewhere with CV_DICT_REMOTE).
@@ -122,13 +104,23 @@ final class GitPublisher {
     }
 
     /// Commits and pushes the changes: (files published, or why it couldn't).
-    nonisolated static func publishNow() -> (Int, String?) {
+    nonisolated static func publishNow() -> (Int, String?) { publishNowSummary().0 }
+
+    /// The same, with what went out.
+    nonisolated static func publishNowSummary() -> ((Int, String?), DictionaryChanges.Summary) {
+        var summary = DictionaryChanges.Summary()
+        let r = publishNowInner(&summary)
+        return (r, summary)
+    }
+
+    nonisolated private static func publishNowInner(_ summary: inout DictionaryChanges.Summary) -> (Int, String?) {
         let todo = pending()
         guard !todo.isEmpty else { return (0, nil) }
         guard let git else { return (0, "git isn't installed") }
         for attempt in 0..<2 {  // pushed meanwhile by someone else: once more on the new copy
             if let err = prepare(git) { return (0, err.trimmingCharacters(in: .whitespacesAndNewlines)) }
             var made = 0
+            summary = DictionaryChanges.Summary()
             for name in todo.keys.sorted() {
                 let c = todo[name]!
                 let file = workDir.appendingPathComponent(name)
@@ -140,6 +132,7 @@ final class GitPublisher {
                 if r?.0 == 0 { r = try? run(git, ["commit", "--quiet", "-m", message(name, added: c.added, changed: c.changed, removed: c.removed)], cwd: workDir) }
                 if r?.0 != 0 { return (0, (r?.1 ?? "git didn't run").trimmingCharacters(in: .whitespacesAndNewlines)) }
                 made += 1
+                summary.add(name, c)
             }
             if made == 0 { return (0, nil) }
             guard let (rc, out) = try? run(git, ["push", "--quiet", "origin", "HEAD"], cwd: workDir, timeout: 300) else { return (0, "git didn't run") }

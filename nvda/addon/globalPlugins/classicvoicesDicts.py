@@ -3,6 +3,10 @@
 # file, as NVDA's own speech dictionary dialog shows them; an entry's replacement can hold phonemes (X-SAMPA in
 # ~~...~~), picked from the voice's own sounds. While the dialog is open the voices use no dictionary at all, so
 # the patterns are heard as the voice reads them by itself; the edits are used from the moment it closes.
+import threading
+import webbrowser
+
+import api
 import globalPluginHandler
 import gui
 import synthDriverHandler
@@ -11,6 +15,7 @@ import wx
 from logHandler import log
 
 from synthDrivers._classicvoices import dicts as cv_dicts
+from synthDrivers._classicvoices import ghpublish as cv_gh
 from synthDrivers._classicvoices import gitsync as cv_git
 from synthDrivers._classicvoices import lib as cv_lib
 from synthDrivers._classicvoices import paths as cv_paths
@@ -290,6 +295,306 @@ class SourceDialog(wx.Dialog):
         evt.Skip()
 
 
+def _window(w):
+    """w if it's still open, else NVDA's main frame (the dictionaries dialog may have closed meanwhile)."""
+    try:
+        if w:
+            return w
+    except RuntimeError:
+        pass
+    return gui.mainFrame
+
+
+def _popup(parent, show):
+    """show(window) with the window to put a message on, in front even when the dialog is gone."""
+    w = _window(parent)
+    if w is gui.mainFrame:
+        gui.mainFrame.prePopup()
+        try:
+            return show(w)
+        finally:
+            gui.mainFrame.postPopup()
+    return show(w)
+
+
+def _box(parent, text, title, style=wx.OK | wx.ICON_INFORMATION):
+    _popup(parent, lambda w: gui.messageBox(text, title, style, w))
+
+
+def _ask(parent, text, title, yes, no):
+    """A question with two buttons named yes and no; whether yes was chosen."""
+    def show(w):
+        d = wx.MessageDialog(w, text, title, wx.YES_NO | wx.ICON_QUESTION)
+        d.SetYesNoLabels(yes, no)
+        try:
+            return d.ShowModal() == wx.ID_YES
+        finally:
+            d.Destroy()
+    return _popup(parent, show)
+
+
+def _summary(todo):
+    """ "3 entries added, 1 changed and 1 removed in en.dic" for {file: (added, changed, removed)}."""
+    counts = [sum(len(v[i]) for v in todo.values()) for i in range(3)]
+    # Translators: kinds of change in "3 entries added, 1 changed and 1 removed in en.dic".
+    verbs = (_("added"), _("changed"), _("removed"))
+    parts = []
+    for n, verb in zip(counts, verbs):
+        if not n:
+            continue
+        if not parts:
+            # Translators: the first kind of change, e.g. "3 entries added" or "1 entry changed".
+            parts.append((_("{n} entry {verb}") if n == 1 else _("{n} entries {verb}")).format(n=n, verb=verb))
+        else:
+            parts.append("{n} {verb}".format(n=n, verb=verb))
+    # Translators: joins the last kind of change, e.g. "3 entries added and 1 removed".
+    text = parts[0] if len(parts) == 1 else _("{list} and {last}").format(list=", ".join(parts[:-1]), last=parts[-1])
+    if len(todo) == 1:
+        # Translators: where the changes were published, e.g. "... in en.dic".
+        return _("{changes} in {file}").format(changes=text, file=next(iter(todo)))
+    # Translators: e.g. "... across 2 files".
+    return _("{changes} across {n} files").format(changes=text, n=len(todo))
+
+
+class SignInDialog(wx.Dialog):
+    """GitHub's device sign-in: the code to type at github.com/login/device; closes by itself once the person
+    has signed in there."""
+
+    def __init__(self, parent, data):
+        # Translators: title of the GitHub sign-in dialog.
+        super().__init__(parent, title=_("Sign in to GitHub"))
+        self.data = data
+        self.code = None
+        self.stop = threading.Event()  # set when the dialog goes: the waiting thread gives up
+        main = wx.BoxSizer(wx.VERTICAL)
+        # Translators: label of the text explaining the GitHub sign-in.
+        main.Add(wx.StaticText(self, label=_("What to do:")), flag=wx.LEFT | wx.TOP, border=5)
+        # Translators: shown while the sign-in code is asked for.
+        self.text = wx.TextCtrl(self, value=_("Asking GitHub for a sign-in code..."),
+                                style=wx.TE_MULTILINE | wx.TE_READONLY, size=(480, 100))
+        main.Add(self.text, flag=wx.EXPAND | wx.ALL, border=5)
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        # Translators: button copying the sign-in code and opening GitHub's page for it.
+        self.copyBtn = wx.Button(self, label=_("&Copy code and open GitHub"))
+        self.copyBtn.Bind(wx.EVT_BUTTON, self.onCopy)
+        self.copyBtn.Disable()
+        btns.Add(self.copyBtn)
+        # Translators: button giving up on signing in.
+        cancel = wx.Button(self, wx.ID_CANCEL, label=_("Cancel"))
+        cancel.Bind(wx.EVT_BUTTON, self.onCancel)
+        btns.Add(cancel)
+        self.SetEscapeId(wx.ID_CANCEL)
+        main.Add(btns, flag=wx.ALL, border=5)
+        self.SetSizerAndFit(main)
+        self.text.SetFocus()
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def _work(self):
+        try:
+            code = cv_gh.start_sign_in()
+            wx.CallAfter(self._show_code, code)
+            who = cv_gh.finish_sign_in(self.data, code, cancelled=self.stop.is_set)
+            if who is not None:
+                wx.CallAfter(self._done, who)
+        except Exception as e:
+            wx.CallAfter(self._failed, getattr(e, "message", None) or str(e) or e.__class__.__name__)
+
+    def _alive(self):
+        if self.stop.is_set():
+            return False
+        try:
+            return bool(self)
+        except RuntimeError:
+            return False
+
+    def _show_code(self, code):
+        if not self._alive():
+            return
+        self.code = code
+        # Translators: the GitHub sign-in instructions; {url} is GitHub's page, {code} the code to type there.
+        self.text.SetValue(_("Go to {url} and enter the code {code}. The Copy code and open GitHub button "
+                             "copies the code and opens that page. This window closes by itself once you've "
+                             "signed in.").format(url=code["verification_uri"], code=code["user_code"]))
+        self.copyBtn.Enable()
+        self.copyBtn.SetFocus()
+        # Translators: announced when the sign-in code arrives.
+        ui.message(_("Your GitHub sign-in code is {code}").format(code=" ".join(code["user_code"])))
+
+    def onCopy(self, evt):
+        if self.code:
+            api.copyToClip(self.code["user_code"])
+            webbrowser.open(self.code["verification_uri"])
+
+    def _done(self, who):
+        if not self._alive():
+            return
+        # Translators: announced once signed in to GitHub; {login} is the GitHub account.
+        ui.message(_("Signed in as {login}").format(login=who))
+        self.EndModal(wx.ID_OK)
+
+    def _failed(self, why):
+        if not self._alive():
+            return
+        # Translators: the sign-in didn't work; {why} is GitHub's reason.
+        msg = _("Couldn't sign in: {why}").format(why=why)
+        self.text.SetValue(msg)
+        self.copyBtn.Disable()
+        ui.message(msg)
+
+    def onCancel(self, evt):
+        self.stop.set()
+        self.EndModal(wx.ID_CANCEL)
+
+
+def sign_in(parent, data):
+    """The sign-in dialog; whether the person is signed in at the end."""
+    def show(w):
+        d = SignInDialog(w, data)
+        try:
+            return d.ShowModal() == wx.ID_OK
+        finally:
+            d.stop.set()
+            d.Destroy()
+    return _popup(parent, show)
+
+
+class AskSignInDialog(wx.Dialog):
+    """On closing the dictionaries with changes nothing here can publish: sign in to GitHub?"""
+
+    DONT = wx.NewIdRef()
+
+    def __init__(self, parent):
+        # Translators: title of the question asked on closing the dictionaries with unpublished changes.
+        super().__init__(parent, title=_("Publish your changes?"))
+        main = wx.BoxSizer(wx.VERTICAL)
+        # Translators: the question asked on closing the dictionaries with unpublished changes.
+        main.Add(wx.StaticText(self, label=_("Sign in to GitHub to publish your changes?")), flag=wx.ALL, border=10)
+        btns = wx.BoxSizer(wx.HORIZONTAL)
+        # Translators: answers to "Sign in to GitHub to publish your changes?".
+        for i, label in ((wx.ID_YES, _("&Yes")), (wx.ID_NO, _("&No")), (self.DONT, _("&Don't show again"))):
+            b = wx.Button(self, i, label=label)
+            b.Bind(wx.EVT_BUTTON, lambda evt, i=i: self.EndModal(i))
+            btns.Add(b)
+        self.SetEscapeId(wx.ID_NO)
+        main.Add(btns, flag=wx.ALL, border=5)
+        self.SetSizerAndFit(main)
+        self.FindWindowById(wx.ID_YES, self).SetFocus()
+
+
+_publishing = False
+
+
+def publish_with_ui(parent, data, after=None):
+    """Publish now: git where it's installed, else GitHub's API (signing in first when needed; offering the
+    person's own copy when they can't write to the repository), then a message saying how it went. after() runs
+    once it's over (the dialog refreshes its list)."""
+    global _publishing
+    todo = cv_git.pending(data)
+    if not todo:
+        # Translators: title and text when there's nothing of the person's to publish.
+        _box(parent, _("You have no changes of your own that aren't published yet."), _("Nothing to Publish"))
+        return
+    git = cv_git.find_git() is not None
+    if not git:
+        if not cv_gh.configured():
+            # Translators: no git and no GitHub sign-in in this build.
+            _box(parent, _("Publishing needs git, and publishing through GitHub isn't set up in this build yet. "
+                           "Your changes stay on this computer."), _("Couldn't Publish"), wx.OK | wx.ICON_WARNING)
+            return
+        if not cv_gh.signed_in(data):
+            if sign_in(parent, data):
+                if after:
+                    after()
+                publish_with_ui(parent, data, after)
+            return
+    if _publishing:
+        # Translators: Publish now pressed while publishing.
+        ui.message(_("Still publishing..."))
+        return
+    _publishing = True
+    # Translators: announced while the changes are published.
+    ui.message(_("Publishing..."))
+    source = cv_dicts.source(data)[0]
+
+    def run():
+        kind, n, err, target, url = "done", 0, None, None, None
+        try:
+            if git:
+                n, err = cv_git.publish(data, force=True)
+                target = source
+            else:
+                n, err, target = cv_gh.publish(data, force=True)
+        except cv_gh.NotSignedIn:
+            kind = "signin"
+        except cv_gh.NeedsFork:
+            kind = "fork"
+        except cv_gh.NeedsInstall as e:
+            kind, url = "install", e.url
+        except Exception as e:
+            n, err = 0, str(e) or e.__class__.__name__
+        wx.CallAfter(_published, parent, data, todo, kind, n, err, target, url, after)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _published(parent, data, todo, kind, n, err, target, url, after):
+    global _publishing
+    _publishing = False
+    if after:
+        after()
+    source = cv_dicts.source(data)[0]
+    if kind == "signin":
+        if sign_in(parent, data):
+            publish_with_ui(parent, data, after)
+    elif kind == "fork":
+        # Translators: offered to someone who can't write to the dictionaries' repository; {repo} is it.
+        if _ask(parent, _("You can't publish to {repo}. Classic Voices can make your own copy of it (a fork) on "
+                          "GitHub and publish your changes there. To offer them for everyone, open a pull request "
+                          "from your copy on GitHub.").format(repo=source),
+                _("Publish to your own copy?"), _("&Make my copy"), _("Cancel")):
+            # Translators: announced while the person's copy of the repository is made.
+            ui.message(_("Making your copy..."))
+
+            def make():
+                try:
+                    cv_gh.make_fork(data)
+                    wx.CallAfter(publish_with_ui, parent, data, after)
+                except cv_gh.NeedsInstall as e:
+                    wx.CallAfter(_install, parent, e.url)
+                except Exception as e:
+                    wx.CallAfter(_box, parent, (getattr(e, "message", None) or str(e)) + "\n\n" +
+                                 _("Your changes stay on this computer."), _("Couldn't Publish"),
+                                 wx.OK | wx.ICON_WARNING)
+            threading.Thread(target=make, daemon=True).start()
+    elif kind == "install":
+        _install(parent, url)
+    elif err:
+        # Translators: publishing failed; the reason comes first.
+        _box(parent, err + "\n\n" + _("Your changes stay on this computer."), _("Couldn't Publish"),
+             wx.OK | wx.ICON_WARNING)
+    elif not n:
+        if target and target != source:
+            # Translators: the person's copy of the repository has their changes already.
+            _box(parent, _("Your copy, {repo}, has all your changes already.").format(repo=target),
+                 _("Nothing to Publish"))
+        else:
+            _box(parent, _("You have no changes of your own that aren't published yet."), _("Nothing to Publish"))
+    else:
+        text = _summary(todo) + "."
+        if target and target != source:
+            # Translators: added when the changes went to the person's own copy of the repository.
+            text += " " + _("Published to your copy, {repo}.").format(repo=target)
+        # Translators: title of the message after publishing.
+        _box(parent, text, _("Dictionaries Published"))
+
+
+def _install(parent, url):
+    # Translators: GitHub needs the Classic Voices app allowed on the person's account to make their copy.
+    if _ask(parent, _("To make your copy, GitHub needs Classic Voices allowed on your account. Choose All "
+                      "repositories, then publish again."), _("Allow Classic Voices on GitHub"),
+            _("&Open GitHub"), _("Cancel")):
+        webbrowser.open(url)
+
+
 class DictsDialog(wx.Dialog):
     _instance = None
 
@@ -333,12 +638,15 @@ class DictsDialog(wx.Dialog):
         self.sourceBtn = wx.Button(self, label=_("&Source..."))
         # Translators: button fetching the newest community dictionaries now.
         self.fetchBtn = wx.Button(self, label=_("Download the &latest dictionaries"))
-        # Translators: button committing and pushing the person's changes with git now.
+        # Translators: button publishing the person's changes now (with git, or through GitHub).
         self.publishBtn = wx.Button(self, label=_("&Publish now"))
-        self.publishBtn.Show(cv_git.find_git() is not None)
+        # Without git: signing in to GitHub (its API publishes); its label says which way it goes
+        self.githubBtn = wx.Button(self, label=_("Sign in to &GitHub"))
+        self.githubBtn.Show(cv_git.find_git() is None and cv_gh.configured())
+        self._update_github()
         for b, h in ((self.addBtn, self.onAdd), (self.editBtn, self.onEdit), (self.removeBtn, self.onRemove),
                      (self.restoreBtn, self.onRestore), (self.sourceBtn, self.onSource), (self.fetchBtn, self.onFetch),
-                     (self.publishBtn, self.onPublish)):
+                     (self.publishBtn, self.onPublish), (self.githubBtn, self.onGitHub)):
             b.Bind(wx.EVT_BUTTON, h)
             btns.Add(b)
         close = wx.Button(self, wx.ID_CLOSE)
@@ -481,35 +789,51 @@ class DictsDialog(wx.Dialog):
             wx.CallAfter(show)
         cv_dicts.refresh_all(self.data, force=True, done=done)
 
-    def onPublish(self, evt):
-        if not cv_git.pending(self.data):
-            # Translators: nothing of the person's to publish.
-            ui.message(_("You haven't changed anything to publish."))
-            return
-        self.publishBtn.Disable()
-        # Translators: announced while the changes are committed and pushed.
-        ui.message(_("Publishing..."))
+    def _update_github(self):
+        # Translators: the GitHub button: sign in, or (signed in) sign out.
+        self.githubBtn.SetLabel(_("Sign out of &GitHub") if cv_gh.signed_in(self.data) else _("Sign in to &GitHub"))
 
-        def done(n, err):
-            def show():
-                if self:
-                    self.publishBtn.Enable()
-                    self.fill()
-                if err:
-                    # Translators: the changes couldn't be pushed; %s is git's reason.
-                    gui.messageBox(_("Your changes stay on this computer: git couldn't publish them.\n\n%s") % err,
-                                   _("Classic Voices"), wx.OK | wx.ICON_WARNING)
-                else:
-                    # Translators: after publishing; {n} is how many dictionary files were committed.
-                    ui.message(_("Published {n} dictionary files.").format(n=n) if n != 1
-                               else _("Published 1 dictionary file."))
-            wx.CallAfter(show)
-        cv_git.publish_in_background(self.data, force=True, done=done)
+    def _after_publish(self):
+        try:
+            if self:
+                self.fill()
+                self._update_github()
+        except RuntimeError:
+            pass  # closed meanwhile
+
+    def onPublish(self, evt):
+        publish_with_ui(self, self.data, after=self._after_publish)
+
+    def onGitHub(self, evt):
+        if cv_gh.signed_in(self.data):
+            who = cv_gh.login(self.data)
+            cv_gh.sign_out(self.data)
+            # Translators: announced after signing out of GitHub; {login} is the account.
+            ui.message(_("Signed out of GitHub ({login})").format(login=who) if who else _("Signed out of GitHub"))
+        else:
+            sign_in(self, self.data)
+        self._update_github()
+        self.githubBtn.SetFocus()
 
     def onClose(self, evt):
         cv_dicts.EDITING = False
         DictsDialog._instance = None
+        data = self.data
+        # Nothing here can publish the person's changes: offer to sign in to GitHub (unless they said not to)
+        answer = None
+        try:
+            if (cv_git.find_git() is None and cv_gh.configured() and not cv_gh.signed_in(data)
+                    and not cv_gh.dont_ask(data) and cv_git.pending(data)):
+                d = AskSignInDialog(self)
+                answer = d.ShowModal()
+                d.Destroy()
+                if answer == AskSignInDialog.DONT:
+                    cv_gh.set_dont_ask(data)
+        except Exception:
+            log.debugWarning("Classic Voices: the sign-in question failed", exc_info=True)
         self.Destroy()
+        if answer == wx.ID_YES:
+            wx.CallAfter(publish_with_ui, None, data)
 
 
 def _speech_dicts_menu():
@@ -544,16 +868,21 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
             self.item = self.menu.Append(wx.ID_ANY, _("Classic Voices pronunciation &dictionaries..."),
                                          _("Edit the pronunciation dictionaries of the Classic Voices"))
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onOpen, self.item)
-        # The person's changes are published once a day where git can push them (gitsync.py); checked hourly,
-        # the first time a few minutes after NVDA starts.
+        # The person's changes are published once a day where git can push them (gitsync.py), or without git
+        # through GitHub's API once signed in (ghpublish.py); checked hourly, the first time a few minutes after
+        # NVDA starts.
         self._publish = wx.Timer()
         self._publish.Bind(wx.EVT_TIMER, lambda evt: self._publish_if_due())
         self._publish.StartOnce(3 * 60 * 1000)
 
     def _publish_if_due(self):
         try:
-            if cv_git.find_git() and cv_git.pending(cv_paths.data_root()):
-                cv_git.publish_in_background(cv_paths.data_root())
+            data = cv_paths.data_root()
+            if cv_git.pending(data):
+                if cv_git.find_git():
+                    cv_git.publish_in_background(data)
+                elif cv_gh.configured() and cv_gh.signed_in(data):
+                    cv_gh.publish_in_background(data)  # git isn't here: GitHub's API
         except Exception:
             pass
         self._publish.StartOnce(3600 * 1000)

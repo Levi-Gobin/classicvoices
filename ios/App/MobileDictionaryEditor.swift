@@ -59,6 +59,7 @@ struct MobileDictionariesTab: View {
                     Menu {
                         Button(fetching ? "Downloading…" : "Download the Latest Dictionaries") { fetch() }.disabled(fetching)
                         Button("Source…") { showSource = true }
+                        Button("Publishing…") { DictionaryPublisher.shared.open() }
                     } label: { Label("More", systemImage: "ellipsis.circle") }
                 }
                 ToolbarItem(placement: .primaryAction) {
@@ -78,6 +79,7 @@ struct MobileDictionariesTab: View {
             }
         }
         .onAppear(perform: reload)
+        .onDisappear { DictionaryPublisher.shared.leftEditor() }
         .task(id: phase) { if phase == .active { await DictionariesTab.holdEditingFlag() } }
         .alert(fetched?.0 ?? "", isPresented: Binding(get: { fetched != nil }, set: { if !$0 { fetched = nil } })) {
             Button("OK", role: .cancel) {}

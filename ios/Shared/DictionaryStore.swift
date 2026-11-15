@@ -156,7 +156,8 @@ enum DictionaryStore {
     /// A fetched file's lines with the person's changes made in them: changed lines in place, removed ones gone,
     /// added ones at the end; comments and order kept.
     static func applyChanges(_ lines: [String], added: [Entry], changed: [Entry], removed: [Entry]) -> [String] {
-        var byKey = Dictionary(changed.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        // an added entry the file has already (published to a fork before, say) is put in its place, not twice
+        var byKey = Dictionary((changed + added).map { ($0.key, $0) }, uniquingKeysWith: { _, b in b })
         let gone = Set(removed.map(\.key))
         var out: [String] = []
         for l in lines {
@@ -164,7 +165,7 @@ enum DictionaryStore {
             if gone.contains(e.key) { continue }
             if let c = byKey.removeValue(forKey: e.key) { out.append(c.line) } else { out.append(l) }
         }
-        out += added.map(\.line) + changed.filter { byKey[$0.key] != nil }.map(\.line)
+        for e in added + changed where byKey.removeValue(forKey: e.key) != nil { out.append(e.line) }
         return out
     }
 

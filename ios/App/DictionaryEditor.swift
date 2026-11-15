@@ -146,6 +146,8 @@ struct DictionariesTab: View {
             AccessibilityNotification.Announcement(new.last.map(title) ?? "Dictionaries").post()
         }
         .task(id: phase) { if phase == .active { await editing() } }
+        .onAppear { Self.isOpen = true }
+        .onDisappear { Self.isOpen = false; DictionaryPublisher.shared.leftEditor() }
         #if os(macOS)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in draft.autosave() }
         #endif
@@ -159,6 +161,16 @@ struct DictionariesTab: View {
     }
 
     private func editing() async { await Self.holdEditingFlag() }
+
+    /// Whether the tab is showing (the Mac asks about publishing when quitting from it).
+    @MainActor static var isOpen = false
+
+    @MainActor static var publishingDetail: String {
+        let p = DictionaryPublisher.shared
+        let how = DictionaryPublisher.usesGit ? "with git" : (p.login.map { "as \($0) on GitHub" } ?? "not signed in to GitHub")
+        let n = DictionaryChanges.pending().count
+        return (n == 0 ? "nothing to publish" : "changes in \(n) file\(n == 1 ? "" : "s") not published yet") + ", " + how
+    }
 
     /// While the tab is open and the app is in front: the flag the speech extension checks, renewed every 15
     /// seconds; removed when the tab closes, the app goes to the back or its window closes, and when it quits.
@@ -230,9 +242,9 @@ struct DictionariesTab: View {
                 Text("While this tab is open the voices use no dictionary, so you hear words as they read them by themselves. Your own entries work even with the community dictionaries turned off (Settings).")
                     .fixedSize(horizontal: false, vertical: true)
             }
-            #if os(macOS)
-            PublishSection()
-            #endif
+            PageSection(nil) {
+                OpenButton(title: "Publishing", detail: Self.publishingDetail) { DictionaryPublisher.shared.open() }
+            }
             PageSection("Where they come from") {
                 OpenButton(title: "Source", detail: "github.com/\(src.repo), branch \(src.branch)") { open(.source) }
                 FetchDictionariesButton()
@@ -537,37 +549,3 @@ struct SourcePage: View {
     }
 }
 
-#if os(macOS)
-/// Publish Now, where git can push (GitPublisher), with how it went.
-private struct PublishSection: View {
-    @State private var publisher = GitPublisher.shared
-    @State private var pendingFiles = GitPublisher.pending().count
-    @State private var automatic = GitPublisher.automatic
-
-    var body: some View {
-        if GitPublisher.available {
-                PageSection("Publishing") {
-                    Text(pendingFiles == 0 ? "Nothing of yours to publish." :
-                        "Your changes in \(pendingFiles) file\(pendingFiles == 1 ? "" : "s") aren’t published yet. Publish My Changes Now sends them to the source with git, one commit per file.")
-                        .fixedSize(horizontal: false, vertical: true)
-                    Toggle("Publish automatically once a day", isOn: $automatic)
-                        .onChange(of: automatic) { _, v in GitPublisher.automatic = v }
-                    if let err = publisher.lastError {
-                        Text("Last try: git couldn’t publish them (\(err)). They stay on this Mac.").foregroundStyle(.red)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Button(publisher.busy ? "Publishing…" : "Publish My Changes Now") {
-                        Task {
-                            let (n, err) = await publisher.publish(force: true)
-                            pendingFiles = GitPublisher.pending().count
-                            AccessibilityNotification.Announcement(err == nil ? (n == 0 ? "Nothing to publish" : "Published \(n) file\(n == 1 ? "" : "s")")
-                                                                    : "Couldn’t publish").post()
-                        }
-                    }
-                    .disabled(publisher.busy || pendingFiles == 0)
-                }
-                .onAppear { pendingFiles = GitPublisher.pending().count }
-        }
-    }
-}
-#endif

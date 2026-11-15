@@ -2466,6 +2466,43 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   afresh (no merge conflicts), one commit per file ("en.dic: add 3 entries - a, b, c; modify 1 entry - d;
   remove 1 entry - e", over 5 names: "and N more" with the full list in the body), one push; checked hourly,
   published once a day, and from Publish now. Tested against a local bare repository.
+- Publishing without git, iPhone/iPad/Mac (Nico, 2026-11-15): ios/App/GitHubPublishing.swift (GitHub: device
+  flow, keys in the Keychain "Classic Voices GitHub", refresh, contents GET/PUT one commit per file with
+  DictionaryChanges.message, the git messages; 409 -> again on the new copy; 401 -> refreshed once; 403/404 on the
+  source -> needsFork; makeFork -> POST forks, polled, UserDefaults dictionaries.fork, forgotten on sign-out) and
+  ios/App/PublishingViews.swift (DictionaryPublisher: git on the Mac when installed, else the API; the Publishing
+  sheet RootView presents: how it publishes, Sign In with GitHub / Sign Out, what's waiting, Publish My Changes
+  Now, once a day, last published; SignInPage: the code read letter by letter, Copy Code and Open GitHub; alerts
+  Dictionaries Published / Nothing to Publish / Couldn't Publish, Publish to Your Own Copy?, Allow Classic Voices
+  on GitHub). Publish with no way to publish -> the sign-in page, then publishing. Leaving the Dictionaries tab
+  (iPhone: the tab; Mac: the tab, or quitting from it via MacAppDelegate) with unpublished changes, no way to
+  publish, GitHub set up and not "don't ask": Yes / No / Don't Show Again. Phone: More > Publishing…; Mac: a
+  Publishing row on the Dictionaries page (it replaced the git-only section). Once a day: the Mac's loop, the
+  phone when the app comes to the front. DictionaryStore.applyChanges: an added entry the file already has
+  goes in its place (as dicts.py). Tests: the job's tmp/ghtest (mock.py + a swiftc harness over the real
+  GitHubPublishing/CommunityDictionary/DictionaryStore code, CV_DICT_TEST), all passing. CLIENT_ID/APP_SLUG come
+  from CV_GITHUB_CLIENT_ID/CV_GITHUB_APP_SLUG until Nico registers the app: then the constants get its values.
+- Publishing without git, NVDA (Nico, 2026-11-15): synthDrivers/_classicvoices/ghpublish.py publishes
+  through GitHub's API where git isn't installed (git stays first where it is). Sign-in: GitHub App device
+  flow (CLIENT_ID / APP_SLUG constants, empty until Nico registers the app: then no sign-in is offered), the
+  key and refresh key in <data root>/github.dat (DPAPI for the Windows user), refreshed 5 minutes before the
+  8-hour expiry (device-flow tokens refresh without the client secret; refresh keys rotate; a refused one signs
+  out). Publish: per file GET contents (sha) -> dicts.apply_changes -> PUT with the sha and gitsync.message's
+  text; 409/422 sha mismatch -> once more on the new copy; to the source: community copy written + tidy.
+  403/404 on the source -> NeedsFork: "Publish to your own copy?" (Make my copy / Cancel) -> POST forks
+  (default_branch_only), polled until readable, remembered in Dictionaries/publish.json ("fork": source,
+  repo, login; forgotten on sign-out), later publishes go there (Mine kept: the source hasn't got them).
+  Fork 403/404 -> "Allow Classic Voices on GitHub" -> {web}/apps/<slug>/installations/new (GitHub needs the
+  app on the person's account with All repositories to fork). Pull requests are the person's, on GitHub.
+  Dialog: "&Publish now" always (no git and not signed in -> the sign-in dialog, then publishing); "Sign
+  in/out of &GitHub" without git; sign-in dialog (code, "&Copy code and open GitHub", closes itself once
+  signed in, "Signed in as <login>"); results "Dictionaries Published" ("3 entries added, 1 changed and 1
+  removed in en.dic", "... across 2 files", "Published to your copy, <repo>."), "Nothing to Publish",
+  "Couldn't Publish". Closing the dialog with unpublished changes, no git, not signed in: "Sign in to GitHub
+  to publish your changes?" &Yes / &No / &Don't show again (publish.json "dontAskSignIn"). The daily publish
+  uses the API when signed in and git is missing. dicts.apply_changes now puts an added entry the file
+  already has in its place instead of adding it twice (publishing to a fork again). Tests: a mock GitHub
+  (device flow, refresh, contents with sha/409, forks, 403) in the job's tmp/ghmock, 41 checks.
 - Phoneme example files: build/phoncheck (checker: each line's sound, as the voice says it, must be in the
   voice's own reading of the example word; check.sh merges a base and an override file). Drafts for all
   iOS 6 languages in build/phoncheck/files (X-SAMPA only). The checks found converter gaps (diphthongs as
