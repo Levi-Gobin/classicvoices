@@ -2562,3 +2562,9 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   asks first), the phoneme sheet (double-tap inserts, Preview action), More: Download the Latest
   Dictionaries and Source. No publishing on the phone (no git). Shared helpers in DictionaryEditor.swift
   (voices(for:in:), PhonemePage.sounds/hear, EntryDraft.inserting/problem, holdEditingFlag).
+- Dictionary update notices (Nico, 2026-11-14): each fetch counts entries added, changed and removed (by
+  pattern + type, against the copy on the device) and the languages touched: "3 entries added, 1 changed and
+  2 removed across 2 languages" (parts with nothing left out; "entry/entries" on the first). iPhone/iPad and
+  Android: opt-in notification "Dictionaries Updated" when they change by themselves (local notifications,
+  no push service). Manual downloads (Apple apps, NVDA): the same text in an alert with OK; "Dictionaries
+  Up to Date" when nothing changed.

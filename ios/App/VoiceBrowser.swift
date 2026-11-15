@@ -1066,7 +1066,12 @@ struct SpeechSettingsView: View {
                 Toggle("Community pronunciation dictionaries", isOn: Binding(
                     get: { library.settings.communityDictionaries },
                     set: { v in library.updateSettings { $0.communityDictionaries = v } }))
-                if library.settings.communityDictionaries { FetchDictionariesButton() }
+                if library.settings.communityDictionaries {
+                    FetchDictionariesButton()
+                    #if os(iOS)
+                    DictionaryNotificationsToggle()
+                    #endif
+                }
             } footer: {
                 Text("Pronunciation fixes written by Classic Voices users, for every voice of a language (github.com/nicopn/classicvoices-dicts). Turned on, Classic Voices fetches them and checks for new ones every few hours.")
             }
@@ -1150,20 +1155,22 @@ struct SpeechSettingsView: View {
 /// person's own entries are never sent from here (Publish My Changes Now, on the Mac's Dictionaries tab, does that).
 struct FetchDictionariesButton: View {
     @State private var busy = false
-    @State private var result: String?
+    @State private var shown: (String, String)?
 
     var body: some View {
         Button(busy ? "Downloading the Latest Community Dictionaries…" : "Download the Latest Community Dictionaries") {
             busy = true
             Task {
-                let ok = await CommunityDictionary.fetchAll(force: true)
+                let r = await CommunityDictionary.fetchAllWithChanges(force: true, notify: false)
                 busy = false
-                result = ok ? "The community dictionaries are up to date. (This only downloads; nothing of yours is sent.)"
-                    : "The dictionaries couldn’t be downloaded. Check the connection and try again."
-                AccessibilityNotification.Announcement(result ?? "").post()
+                shown = r.changes.alert(ok: r.ok)
             }
         }
         .disabled(busy)
-        if let result { Text(result).font(.footnote).foregroundStyle(.secondary) }
+        .alert(shown?.0 ?? "", isPresented: Binding(get: { shown != nil }, set: { if !$0 { shown = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shown?.1 ?? "")
+        }
     }
 }

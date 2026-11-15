@@ -137,6 +137,9 @@
     <string name="setting_newer_rules_explained">Apple\'s later pronunciation dictionary and rules, added to the voice\'s own. Turning this on downloads them from Apple for every language (about 5 MB).</string>
     <string name="setting_dictionaries">Community pronunciation dictionaries</string>
     <string name="setting_dictionaries_explained">Pronunciation fixes written by Classic Voices users, for every voice of a language (github.com/nicopn/classicvoices-dicts). Turned on, Classic Voices fetches them and checks for new ones every few hours.</string>
+    <string name="setting_dictionaries_notify">Notify when the dictionaries change</string>
+    <string name="dictionaries_channel">Dictionary updates</string>
+    <string name="dictionaries_updated">Dictionaries Updated</string>
     <string name="newer_rules_job">Newer pronunciation rules</string>
     <string name="newer_rules_catalog">Finding the pronunciation rules</string>
     <string name="newer_rules_bad_catalog">Apple\'s list of pronunciation rules couldn\'t be read</string>

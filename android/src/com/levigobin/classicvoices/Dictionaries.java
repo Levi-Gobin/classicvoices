@@ -14,7 +14,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -36,6 +38,78 @@ final class Dictionaries {
     private Dictionaries() {}
 
     static boolean enabled(Context c) { return Data.prefs(c).getBoolean("community_dictionaries", false); }
+
+    /** A notification when the dictionaries change by themselves (opt in). */
+    static boolean notifyChanges(Context c) { return Data.prefs(c).getBoolean("dictionaries_notify", false); }
+
+    /** What a fetch changed (entries by pattern and type), and its "3 entries added, 1 changed ..." text. */
+    static final class Changes {
+        int added, changed, removed;
+        final Set<String> languages = new HashSet<>();
+
+        void compare(String old, String now, String name) {
+            java.util.Map<String, String> o = entries(old), n = entries(now);
+            int a = 0, r = 0, c = 0;
+            for (String k : n.keySet()) {
+                if (!o.containsKey(k)) a++;
+                else if (!o.get(k).equals(n.get(k))) c++;
+            }
+            for (String k : o.keySet()) if (!n.containsKey(k)) r++;
+            if (a + r + c == 0) return;
+            added += a;
+            removed += r;
+            changed += c;
+            String base = name.endsWith(".dic") ? name.substring(0, name.length() - 4) : name;
+            int dash = base.indexOf('-');
+            languages.add(dash > 0 ? base.substring(0, dash) : base);
+        }
+
+        private static java.util.Map<String, String> entries(String text) {
+            java.util.Map<String, String> out = new java.util.HashMap<>();
+            if (text == null) return out;
+            for (String line : text.split("\r?\n|\r")) {
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                String[] f = line.replace("\uFEFF", "").split("\t", -1);
+                if (f.length < 2 || f[0].isEmpty()) continue;
+                String type = f.length > 3 ? f[3] : "0";
+                out.put(type + "\t" + f[0], line);
+            }
+            return out;
+        }
+
+        /** null when nothing changed. */
+        String text() {
+            List<String> parts = new ArrayList<>();
+            int[] ns = {added, changed, removed};
+            String[] verbs = {"added", "changed", "removed"};
+            for (int i = 0; i < 3; i++) {
+                if (ns[i] == 0) continue;
+                parts.add(parts.isEmpty() ? ns[i] + (ns[i] == 1 ? " entry " : " entries ") + verbs[i] : ns[i] + " " + verbs[i]);
+            }
+            if (parts.isEmpty()) return null;
+            String joined = parts.size() == 1 ? parts.get(0)
+                    : android.text.TextUtils.join(", ", parts.subList(0, parts.size() - 1)) + " and " + parts.get(parts.size() - 1);
+            int n = Math.max(languages.size(), 1);
+            return joined + " across " + n + (n == 1 ? " language" : " languages");
+        }
+    }
+
+    private static void tell(Context c, String body) {
+        android.app.NotificationManager nm = (android.app.NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm == null) return;
+        android.app.Notification.Builder b;
+        if (android.os.Build.VERSION.SDK_INT >= 26) {
+            if (nm.getNotificationChannel("dictionaries") == null)
+                nm.createNotificationChannel(new android.app.NotificationChannel("dictionaries",
+                        c.getString(R.string.dictionaries_channel), android.app.NotificationManager.IMPORTANCE_DEFAULT));
+            b = new android.app.Notification.Builder(c, "dictionaries");
+        } else {
+            b = new android.app.Notification.Builder(c);
+        }
+        b.setSmallIcon(R.drawable.ic_notify).setContentTitle(c.getString(R.string.dictionaries_updated)).setContentText(body)
+                .setStyle(new android.app.Notification.BigTextStyle().bigText(body)).setAutoCancel(true);
+        nm.notify(4242, b.build());
+    }
 
     static File dir(Context c) { return new File(Data.root(c), "Dictionaries"); }
 
@@ -73,6 +147,7 @@ final class Dictionaries {
     }
 
     private static void fetchAll(Context c) throws Exception {
+        Changes changes = new Changes();
         File d = dir(c);
         //noinspection ResultOfMethodCallIgnored
         d.mkdirs();
@@ -90,6 +165,7 @@ final class Dictionaries {
             String[] etag = {f.isFile() ? st.getString("etag:" + n, null) : null};
             byte[] data = get(RAW + n, etag[0], etag);
             if (data == null) continue;  // not changed
+            if (n.endsWith(".dic")) changes.compare(f.isFile() ? readText(f) : null, new String(data, "UTF-8"), n);
             File part = new File(d, n + ".part");
             OutputStream out = new FileOutputStream(part);
             try {
@@ -104,6 +180,7 @@ final class Dictionaries {
         if (here != null) {
             for (File f : here) {
                 if (f.isFile() && f.getName().endsWith(".dic") && !names.contains(f.getName())) {
+                    changes.compare(readText(f), null, f.getName());
                     //noinspection ResultOfMethodCallIgnored
                     f.delete();
                     ed.remove("etag:" + f.getName());
@@ -111,6 +188,25 @@ final class Dictionaries {
             }
         }
         ed.putLong("checked", System.currentTimeMillis()).apply();
+        String text = changes.text();
+        if (text != null && notifyChanges(c)) tell(c, text);
+    }
+
+    private static String readText(File f) {
+        try {
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            try {
+                ByteArrayOutputStream b = new ByteArrayOutputStream();
+                byte[] buf = new byte[8192];
+                int k;
+                while ((k = in.read(buf)) > 0) b.write(buf, 0, k);
+                return new String(b.toByteArray(), "UTF-8");
+            } finally {
+                in.close();
+            }
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /** The body, or null when unchanged (304 for etag); etagOut[0] gets the new ETag. */

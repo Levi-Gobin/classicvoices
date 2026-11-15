@@ -1071,6 +1071,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
                     }
                 });
         text(getString(R.string.setting_dictionaries_explained));
+        check("dictionaries_notify", getString(R.string.setting_dictionaries_notify), Dictionaries.notifyChanges(this),
+                pref("dictionaries_notify"));
         check("pitch_fallback", getString(R.string.setting_fallback), Data.fallbackEnabled(this), pref("pitch_fallback"));
         text(getString(R.string.setting_fallback_explained));
         check("apple_tone", getString(R.string.setting_apple_tone), Data.appleTone(this), pref("apple_tone"));

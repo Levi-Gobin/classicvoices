@@ -111,7 +111,56 @@ def _state_path(d):
     return os.path.join(d, "state.json")
 
 
-def _fetch(d, name, ua):
+class Changes:
+    """What a refresh changed in the dictionaries (entries by pattern and type; phoneme lists don't count)."""
+
+    def __init__(self):
+        self.added = self.changed = self.removed = 0
+        self.languages = set()
+
+    def compare(self, old, new, name):
+        def entries(text):
+            out = {}
+            for line in (text or "").splitlines():
+                e = parse_line(line)
+                if e:
+                    out[e.key] = e.line()
+            return out
+        o, n = entries(old), entries(new)
+        a = sum(1 for k in n if k not in o)
+        r = sum(1 for k in o if k not in n)
+        c = sum(1 for k in n if k in o and o[k] != n[k])
+        if a + r + c:
+            self.added += a
+            self.removed += r
+            self.changed += c
+            self.languages.add(name[:-4].split("-")[0])
+
+    def text(self):
+        """"3 entries added, 1 changed and 2 removed across 2 languages" (what didn't happen left out), or None."""
+        parts = []
+        for n, verb in ((self.added, "added"), (self.changed, "changed"), (self.removed, "removed")):
+            if n:
+                parts.append("%d %s %s" % (n, "entry" if n == 1 else "entries", verb) if not parts else "%d %s" % (n, verb))
+        if not parts:
+            return None
+        joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+        n = max(len(self.languages), 1)
+        return "%s across %d %s" % (joined, n, "language" if n == 1 else "languages")
+
+
+last_changes = Changes()  # what the last refresh_all changed
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _fetch(d, name, ua, changes=None):
     path = os.path.join(d, *name.split("/"))
     try:
         with open(_state_path(d), encoding="utf-8") as f:
@@ -128,6 +177,8 @@ def _fetch(d, name, ua):
         base = _raw(os.path.dirname(d))
         with urllib.request.urlopen(urllib.request.Request(base + name, headers=headers), timeout=30) as r:
             data = r.read()
+            if changes is not None and name.endswith(".dic"):
+                changes.compare(_read_text(path), data.decode("utf-8-sig", "replace"), name)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             tmp = path + ".part"
             with open(tmp, "wb") as f:
@@ -207,7 +258,9 @@ def refresh_all(data_root, ua="ClassicVoices", force=False, done=None):
     d = folder(data_root)
 
     def run():
+        global last_changes
         ok = False
+        changes = Changes()
         try:
             os.makedirs(d, exist_ok=True)
             try:
@@ -231,11 +284,13 @@ def refresh_all(data_root, ua="ClassicVoices", force=False, done=None):
                 json.dump(state, f)
             os.replace(_state_path(d) + ".part", _state_path(d))
             for n in names:
-                _fetch(d, n, ua)
+                _fetch(d, n, ua, changes)
             for sub, ext in (("", ".dic"), ("phonemes", ".txt")):
                 here = os.path.join(d, sub)
                 for f in os.listdir(here) if os.path.isdir(here) else ():
                     if f.endswith(ext) and (sub + "/" + f if sub else f) not in names:
+                        if ext == ".dic":
+                            changes.compare(_read_text(os.path.join(here, f)), None, f)
                         try:
                             os.remove(os.path.join(here, f))
                         except OSError:
@@ -254,6 +309,7 @@ def refresh_all(data_root, ua="ClassicVoices", force=False, done=None):
         except Exception:
             ok = False
         finally:
+            last_changes = changes
             if done:
                 done(ok)
 

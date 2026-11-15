@@ -15,6 +15,7 @@ struct MobileDictionariesTab: View {
     @State private var editing: EditTarget?
     @State private var showSource = false
     @State private var fetching = false
+    @State private var fetched: (String, String)?
 
     struct EditTarget: Identifiable {
         let id = UUID()
@@ -78,6 +79,11 @@ struct MobileDictionariesTab: View {
         }
         .onAppear(perform: reload)
         .task(id: phase) { if phase == .active { await DictionariesTab.holdEditingFlag() } }
+        .alert(fetched?.0 ?? "", isPresented: Binding(get: { fetched != nil }, set: { if !$0 { fetched = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(fetched?.1 ?? "")
+        }
     }
 
     private func reload() { rows = DictionaryStore.rows(file) }
@@ -97,11 +103,10 @@ struct MobileDictionariesTab: View {
     private func fetch() {
         fetching = true
         Task {
-            let ok = await CommunityDictionary.fetchAll(force: true)
+            let r = await CommunityDictionary.fetchAllWithChanges(force: true, notify: false)
             fetching = false
             reload()
-            AccessibilityNotification.Announcement(ok ? "The dictionaries are up to date"
-                                                      : "The dictionaries couldn’t be downloaded").post()
+            fetched = r.changes.alert(ok: r.ok)
         }
     }
 }

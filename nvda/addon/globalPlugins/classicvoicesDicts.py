@@ -441,9 +441,19 @@ class DictsDialog(wx.Dialog):
                 self.fetchBtn.Enable()
                 key = self.selected().entry.key if self.selected() else None
                 self.fill(key)
-                # Translators: after downloading the dictionaries (or failing to).
-                ui.message(_("The dictionaries are up to date.") if ok else
-                           _("The dictionaries couldn't be downloaded. Check the connection and try again."))
+                # what changed, as the phones' notification says it (Dictionaries Updated, with OK)
+                text = cv_dicts.last_changes.text() if ok else None
+                if not ok:
+                    # Translators: the dictionaries couldn't be downloaded.
+                    gui.messageBox(_("The dictionaries couldn't be downloaded. Check the connection and try again."),
+                                   _("Classic Voices"), wx.OK | wx.ICON_WARNING, self)
+                elif text:
+                    # Translators: title of the message saying what a download changed.
+                    gui.messageBox(text, _("Dictionaries Updated"), wx.OK | wx.ICON_INFORMATION, self)
+                else:
+                    # Translators: a download changed nothing.
+                    gui.messageBox(_("Nothing has changed since the last download."), _("Dictionaries Up to Date"),
+                                   wx.OK | wx.ICON_INFORMATION, self)
             wx.CallAfter(show)
         cv_dicts.refresh_all(self.data, force=True, done=done)
 

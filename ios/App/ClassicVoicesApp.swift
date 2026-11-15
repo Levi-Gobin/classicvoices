@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
         #if os(iOS)
         DictionaryRefresh.register()  // the community dictionaries' background refresh
+        DictionaryNotifications.install()  // and, when asked for, a notification when they change
         #endif
         return true
     }

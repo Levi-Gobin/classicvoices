@@ -567,27 +567,70 @@ final class CommunityDictionary: @unchecked Sendable {
     /// (or another fetch was running).
     /// A fetch already under way (the app's own refresh when it comes to the front): a second caller (Download
     /// the Latest Community Dictionaries) waits for it and gets its result instead of failing at once.
-    nonisolated(unsafe) private static var running: Task<Bool, Never>?
+    nonisolated(unsafe) private static var running: Task<(Bool, Changes), Never>?
 
-    static func fetchAll(force: Bool = false) async -> Bool {
-        fetchLock.lock()
-        if let t = running {
-            fetchLock.unlock()
-            return await t.value
+    /// What a fetch changed in the dictionaries (entries by pattern and type; phoneme lists don't count).
+    struct Changes: Sendable {
+        var added = 0, changed = 0, removed = 0
+        var languages = Set<String>()  // the language codes (en for en-us.dic) and macintalk
+        var isEmpty: Bool { added + changed + removed == 0 }
+
+        /// "3 entries added, 1 changed and 2 removed across 2 languages" (what didn't happen left out), or nil.
+        var text: String? {
+            var parts: [String] = []
+            for (n, verb) in [(added, "added"), (changed, "changed"), (removed, "removed")] where n > 0 {
+                parts.append(parts.isEmpty ? "\(n) \(n == 1 ? "entry" : "entries") \(verb)" : "\(n) \(verb)")
+            }
+            guard let last = parts.last else { return nil }
+            let joined = parts.count == 1 ? last : parts.dropLast().joined(separator: ", ") + " and " + last
+            let n = max(languages.count, 1)
+            return "\(joined) across \(n) \(n == 1 ? "language" : "languages")"
         }
-        let t = Task.detached(priority: .utility) { await fetchNow(force: force) }
-        running = t
-        fetchLock.unlock()
-        let ok = await t.value
-        fetchLock.lock(); running = nil; fetchLock.unlock()
-        return ok
+
+        mutating func compare(old: String?, new: String?, file: String) {
+            func entries(_ t: String?) -> [String: String] {
+                var out: [String: String] = [:]
+                for l in (t ?? "").split(whereSeparator: \.isNewline) {
+                    if let e = DictionaryStore.Entry(line: String(l)) { out[e.key] = e.line }
+                }
+                return out
+            }
+            let o = entries(old), n = entries(new)
+            let a = n.keys.filter { o[$0] == nil }.count, r = o.keys.filter { n[$0] == nil }.count
+            let c = n.keys.filter { o[$0] != nil && o[$0] != n[$0] }.count
+            guard a + r + c > 0 else { return }
+            added += a; removed += r; changed += c
+            let base = file.replacingOccurrences(of: ".dic", with: "")
+            languages.insert(String(base.split(separator: "-").first ?? Substring(base)))
+        }
     }
 
-    private static func fetchNow(force: Bool) async -> Bool {
-        guard let dir = folder else { return false }
+    static func fetchAll(force: Bool = false) async -> Bool { await fetchAllWithChanges(force: force).ok }
+
+    /// The same, with what it changed (a fetch already under way: its result).
+    static func fetchAllWithChanges(force: Bool = false, notify: Bool = true) async -> (ok: Bool, changes: Changes) {
+        let (t, mine): (Task<(Bool, Changes), Never>, Bool) = fetchLock.withLock {
+            if let r = running { return (r, false) }
+            let n = Task.detached(priority: .utility) { await fetchNow(force: force) }
+            running = n
+            return (n, true)
+        }
+        let r = await t.value
+        guard mine else { return (r.0, r.1) }  // the one that started it says what changed
+        fetchLock.withLock { running = nil }
+        if notify, !r.1.isEmpty { changed?(r.1) }
+        return (r.0, r.1)
+    }
+
+    /// Called after a fetch that changed something (the app: a notification, when asked for).
+    nonisolated(unsafe) static var changed: (@Sendable (Changes) -> Void)?
+
+    private static func fetchNow(force: Bool) async -> (Bool, Changes) {
+        var changes = Changes()
+        guard let dir = folder else { return (false, changes) }
         let stateURL = dir.appendingPathComponent("state.json")
         let saved = (try? JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))) as? [String: Any] ?? [:]
-        if !force, let checked = saved["checked"] as? Double, Date().timeIntervalSince1970 - checked < every { return true }
+        if !force, let checked = saved["checked"] as? Double, Date().timeIntervalSince1970 - checked < every { return (true, changes) }
         let (repo, branch) = source
         // the repository's files (GitHub's contents API: 60 unauthenticated requests an hour is plenty): the
         // dictionaries, and phonemes/<language>.txt, the editor's example words
@@ -602,7 +645,7 @@ final class CommunityDictionary: @unchecked Sendable {
             return items.filter { ($0["type"] as? String ?? "file") == "file" }.compactMap { $0["name"] as? String }
                 .filter { $0.hasSuffix(ext) && !$0.contains("/") && !$0.hasPrefix(".") }
         }
-        guard let dics = await listing("", ".dic"), let phon = await listing("phonemes", ".txt") else { return false }
+        guard let dics = await listing("", ".dic"), let phon = await listing("phonemes", ".txt") else { return (false, changes) }
         let names = dics + phon.map { "phonemes/" + $0 }
         try? FileManager.default.createDirectory(at: dir.appendingPathComponent("phonemes"), withIntermediateDirectories: true)
         var etags = saved["etags"] as? [String: String] ?? [:]
@@ -613,12 +656,15 @@ final class CommunityDictionary: @unchecked Sendable {
             if let etag = etags[name], FileManager.default.fileExists(atPath: file.path) {
                 req.setValue(etag, forHTTPHeaderField: "If-None-Match")
             }
-            guard let (body, r) = try? await URLSession.shared.data(for: req), let http = r as? HTTPURLResponse else { return false }
+            guard let (body, r) = try? await URLSession.shared.data(for: req), let http = r as? HTTPURLResponse else { return (false, changes) }
             if http.statusCode == 200 {
+                if name.hasSuffix(".dic") {
+                    changes.compare(old: try? String(contentsOf: file, encoding: .utf8), new: String(decoding: body, as: UTF8.self), file: name)
+                }
                 try? body.write(to: file, options: .atomic)
                 etags[name] = http.value(forHTTPHeaderField: "ETag")
             } else if http.statusCode != 304 {
-                return false  // try again later
+                return (false, changes)  // try again later
             }
         }
         // files the repository no longer has
@@ -627,6 +673,7 @@ final class CommunityDictionary: @unchecked Sendable {
             for f in (try? FileManager.default.contentsOfDirectory(atPath: here.path)) ?? [] {
                 let name = sub.isEmpty ? f : sub + "/" + f
                 guard f.hasSuffix(ext), !names.contains(name) else { continue }
+                if ext == ".dic" { changes.compare(old: try? String(contentsOf: here.appendingPathComponent(f), encoding: .utf8), new: nil, file: f) }
                 try? FileManager.default.removeItem(at: here.appendingPathComponent(f))
                 etags[name] = nil
             }
@@ -634,7 +681,7 @@ final class CommunityDictionary: @unchecked Sendable {
         let state: [String: Any] = ["etags": etags, "checked": Date().timeIntervalSince1970]
         if let d = try? JSONSerialization.data(withJSONObject: state) { try? d.write(to: stateURL, options: .atomic) }
         DictionaryStore.tidy()
-        return true
+        return (true, changes)
     }
 
 }
