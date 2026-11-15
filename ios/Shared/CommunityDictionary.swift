@@ -556,7 +556,6 @@ final class CommunityDictionary: @unchecked Sendable {
     // MARK: - fetching (the app)
 
     private static let fetchLock = NSLock()
-    nonisolated(unsafe) private static var fetching = false
 
     /// Fetch every .dic file of the repository, at most every 6 hours (`force`: now), in the background; files it no
     /// longer has are removed. Mine/ is never touched. The app calls this when it comes to the front.
@@ -566,13 +565,29 @@ final class CommunityDictionary: @unchecked Sendable {
 
     /// The same, finished when it returns (a background refresh task waits for it). false: nothing could be fetched
     /// (or another fetch was running).
+    /// A fetch already under way (the app's own refresh when it comes to the front): a second caller (Download
+    /// the Latest Community Dictionaries) waits for it and gets its result instead of failing at once.
+    nonisolated(unsafe) private static var running: Task<Bool, Never>?
+
     static func fetchAll(force: Bool = false) async -> Bool {
+        fetchLock.lock()
+        if let t = running {
+            fetchLock.unlock()
+            return await t.value
+        }
+        let t = Task.detached(priority: .utility) { await fetchNow(force: force) }
+        running = t
+        fetchLock.unlock()
+        let ok = await t.value
+        fetchLock.lock(); running = nil; fetchLock.unlock()
+        return ok
+    }
+
+    private static func fetchNow(force: Bool) async -> Bool {
         guard let dir = folder else { return false }
         let stateURL = dir.appendingPathComponent("state.json")
         let saved = (try? JSONSerialization.jsonObject(with: Data(contentsOf: stateURL))) as? [String: Any] ?? [:]
         if !force, let checked = saved["checked"] as? Double, Date().timeIntervalSince1970 - checked < every { return true }
-        guard startFetching() else { return false }
-        defer { doneFetching() }
         let (repo, branch) = source
         // the repository's files (GitHub's contents API: 60 unauthenticated requests an hour is plenty): the
         // dictionaries, and phonemes/<language>.txt, the editor's example words
@@ -622,14 +637,4 @@ final class CommunityDictionary: @unchecked Sendable {
         return true
     }
 
-    private static func doneFetching() {
-        fetchLock.lock(); fetching = false; fetchLock.unlock()
-    }
-
-    private static func startFetching() -> Bool {
-        fetchLock.lock(); defer { fetchLock.unlock() }
-        if fetching { return false }
-        fetching = true
-        return true
-    }
 }

@@ -2536,3 +2536,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   same byte length (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic) so positions stay. Settings: Apple
   spellLowercase, NVDA spellLowercase (engine ABI 9), Android spell_lowercase, SAPI HKCU SpellLowercase,
   desktop app / Linux settings.conf SpellLowercase, cvsay -c.
+- Download the Latest Community Dictionaries failed when the app's own refresh (on coming to the front) was
+  still running: a second fetch returned false at once. Now it waits for the running one (a shared Task) and
+  reports its result. "Apple's rules off" seen once on Levi's iPhone after an install: not reproduced (Mac
+  and iPad read the extension's settings with rules on); the likely path is VoiceStore falling back to the
+  App Group's possibly old settings when the extension doesn't answer at first. It now asks the extension
+  three times (2 s apart) before falling back, and from the fallback asks again after 10 s. Test options:
+  -storeinfo (store mode and settings), -fetchdicts (a fetch, as the button does).

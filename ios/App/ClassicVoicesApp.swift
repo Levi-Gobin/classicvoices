@@ -20,6 +20,34 @@ struct ClassicVoicesApp: App {
             fflush(stdout)
             exit(0)
         }
+        // `-fetchdicts`: fetches the community dictionaries now, as the app's button does, and prints how it went.
+        if CommandLine.arguments.contains("-fetchdicts") {
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                let ok = await CommunityDictionary.fetchAll(force: true)
+                let files = DictionaryStore.fileNames()
+                print("fetch \(ok ? "ok" : "FAILED"); files: \(files.joined(separator: " "))")
+                fflush(stdout)
+                done.signal()
+            }
+            done.wait()
+            exit(0)
+        }
+        // `-storeinfo`: where the speech settings are read from (the extension's store, or the App Group when the
+        // extension can't be reached) and what they say.
+        if CommandLine.arguments.contains("-storeinfo") {
+            let done = DispatchSemaphore(value: 0)
+            Thread.detachNewThread {
+                do { try VoiceStore.shared.refresh() } catch { print("store error: \(error.localizedDescription)") }
+                let s = VoiceStore.shared.snapshot.settings
+                print("mode: \(VoiceStore.shared.mode)")
+                print("settings: rules=\(s.rules) newerRules=\(s.newerRules) community=\(s.communityDictionaries) spellingPauses=\(s.spellingPauses) spellLowercase=\(s.spellLowercase)")
+                fflush(stdout)
+                done.signal()
+            }
+            done.wait()
+            exit(0)
+        }
         // `-dictput <file> <pattern> <replacement> <case 0/1> <type> [<old pattern> <old type>]`: adds or changes one
         // of the person's entries as the editor does, then quits.
         if let i = CommandLine.arguments.firstIndex(of: "-dictput"), i + 5 < CommandLine.arguments.count {

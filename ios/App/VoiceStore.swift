@@ -52,14 +52,54 @@ final class VoiceStore: @unchecked Sendable {
 
     // MARK: - connecting
 
+    /// When the App Group stood in for the extension: the extension is asked again after this (right after an
+    /// install it may not answer at first; the App Group's settings can be old, so it's only a stopgap).
+    private var retryChannelAt = Date.distantFuture
+
     private func connect() throws -> Backend {
         lock.lock(); defer { lock.unlock() }
-        if let backend { return backend }
+        if let backend {
+            guard case .group = backend, Date() >= retryChannelAt, let ch = try? openChannel() else { return backend }
+            self.backend = ch
+            mode = "extension"
+            retryChannelAt = .distantFuture
+            return ch
+        }
         assert(!Thread.isMainThread, "VoiceStore blocks; use it off the main thread")
         var failure: String?
-        var desc = AudioComponentDescription(componentType: kAudioUnitType_SpeechSynthesizer, componentSubType: 0x63766F78,
+        // the extension, asked up to three times (it may still be starting, or an older copy be on its way out)
+        for attempt in 0..<3 {
+            do {
+                let ch = try openChannel()
+                backend = ch
+                mode = "extension"
+                return ch
+            } catch {
+                failure = (error as? StoreError)?.message ?? error.localizedDescription
+                if attempt < 2 { Thread.sleep(forTimeInterval: 2) }
+            }
+        }
+        lastFailure = failure
+        // Fallback: an App Group we can reach.
+        if let group = VoiceCatalog.legacyGroupRoot {
+            try? FileManager.default.createDirectory(at: group, withIntermediateDirectories: true)
+            if FileManager.default.isWritableFile(atPath: group.path) {
+                log.error("VoiceStore: no channel (\(failure ?? "?", privacy: .public)); using the App Group")
+                backend = .group(StoreOps(root: group))
+                retryChannelAt = Date().addingTimeInterval(10)
+                mode = "App Group (\(failure ?? "no extension channel"))"
+                return backend!
+            }
+        }
+        mode = "unavailable (\(failure ?? "?"))"
+        throw StoreError("Classic Voices can\u{2019}t reach its speech extension to store voices: \(failure ?? "unknown error"). Try opening the app again.")
+    }
+
+    /// The speech extension's file channel, or why there's none.
+    private func openChannel() throws -> Backend {
+        var failure: String?
+        let desc = AudioComponentDescription(componentType: kAudioUnitType_SpeechSynthesizer, componentSubType: 0x63766F78,
                                              componentManufacturer: 0x436C566F, componentFlags: 0, componentFlagsMask: 0)
-        _ = desc
         let sem = DispatchSemaphore(value: 0)
         var unit: AVAudioUnit?
         AVAudioUnit.instantiate(with: desc, options: []) { u, e in
@@ -72,25 +112,11 @@ final class VoiceStore: @unchecked Sendable {
             let ch = unit.auAudioUnit.messageChannel(for: Self.channelName)
             if let reply = ch.callAudioUnit?(["op": "hello"]), reply["store"] != nil {
                 log.notice("VoiceStore: extension store at \(reply["store"] as? String ?? "?", privacy: .public)")
-                backend = .channel(unit, ch)
-                mode = "extension"
-                return backend!
+                return .channel(unit, ch)
             }
             failure = "the speech extension has no file channel (an older copy still running?)"
         }
-        lastFailure = failure
-        // Fallback: an App Group we can reach.
-        if let group = VoiceCatalog.legacyGroupRoot {
-            try? FileManager.default.createDirectory(at: group, withIntermediateDirectories: true)
-            if FileManager.default.isWritableFile(atPath: group.path) {
-                log.error("VoiceStore: no channel (\(failure ?? "?", privacy: .public)); using the App Group")
-                backend = .group(StoreOps(root: group))
-                mode = "App Group (\(failure ?? "no extension channel"))"
-                return backend!
-            }
-        }
-        mode = "unavailable (\(failure ?? "?"))"
-        throw StoreError("Classic Voices can\u{2019}t reach its speech extension to store voices: \(failure ?? "unknown error"). Try opening the app again.")
+        throw StoreError(failure ?? "the speech extension didn't load")
     }
 
     /// Forget the connection, so the next call reconnects (after an error).
