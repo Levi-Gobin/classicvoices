@@ -43,15 +43,7 @@ final class EntryDraft {
     }
 
     /// Why the entry can't be saved as it is, or nil.
-    func problem(emptyOK: Bool) -> String? {
-        let e = entry
-        if e.pattern.isEmpty { return "Type the pattern to replace." }
-        if e.replacement.isEmpty && !emptyOK { return "empty" }
-        let spans = e.replacement.components(separatedBy: "~~").count - 1
-        if spans % 2 == 1 && !e.replacement.hasSuffix("~~~") { return "A sound span isn’t closed: end it with ~~." }
-        if e.type == 1, (try? NSRegularExpression(pattern: e.pattern)) == nil { return "That regular expression doesn’t work." }
-        return nil
-    }
+    func problem(emptyOK: Bool) -> String? { Self.problem(entry, emptyOK: emptyOK) }
 
     /// Writes the entry as it is now, if it can be saved and changed (edits save themselves: a moment after the
     /// last change, when the page closes and when the app quits). An empty replacement waits for Save, which asks.
@@ -67,15 +59,23 @@ final class EntryDraft {
     }
 
     /// A sound into the replacement: into the phoneme span it ends with, else as a new span.
-    func insert(_ xsampa: String) {
+    func insert(_ xsampa: String) { replacement = Self.inserting(xsampa, into: replacement) }
+
+    static func inserting(_ xsampa: String, into replacement: String) -> String {
         let spans = replacement.components(separatedBy: "~~").count - 1
-        if replacement.hasSuffix("~~"), spans % 2 == 0, spans > 0 {
-            replacement = String(replacement.dropLast(2)) + xsampa + "~~"
-        } else if spans % 2 == 1 {
-            replacement += xsampa
-        } else {
-            replacement += "~~" + xsampa + "~~"
-        }
+        if replacement.hasSuffix("~~"), spans % 2 == 0, spans > 0 { return String(replacement.dropLast(2)) + xsampa + "~~" }
+        if spans % 2 == 1 { return replacement + xsampa }
+        return replacement + "~~" + xsampa + "~~"
+    }
+
+    /// Why an entry can't be saved, nil, or "empty" (an empty replacement: asked about first).
+    static func problem(_ e: DictionaryStore.Entry, emptyOK: Bool) -> String? {
+        if e.pattern.isEmpty { return "Type the pattern to replace." }
+        if e.replacement.isEmpty && !emptyOK { return "empty" }
+        let spans = e.replacement.components(separatedBy: "~~").count - 1
+        if spans % 2 == 1 && !e.replacement.hasSuffix("~~~") { return "A phoneme span isn’t closed: end it with ~~." }
+        if e.type == 1, (try? NSRegularExpression(pattern: e.pattern)) == nil { return "That regular expression doesn’t work." }
+        return nil
     }
 }
 
@@ -122,9 +122,11 @@ struct DictionariesTab: View {
         #endif
     }
 
+    private func editing() async { await Self.holdEditingFlag() }
+
     /// While the tab is open and the app is in front: the flag the speech extension checks, renewed every 15
     /// seconds; removed when the tab closes, the app goes to the back or its window closes, and when it quits.
-    private func editing() async {
+    static func holdEditingFlag() async {
         guard let flag = Self.editingFlag else { return }
         defer { try? FileManager.default.removeItem(at: flag) }
         while !Task.isCancelled {
@@ -170,7 +172,11 @@ struct DictionariesTab: View {
 
     /// Voices this app can play itself for a file's language (its own built-in ones; downloaded voices live in
     /// the speech extension's store).
-    private func voices(for file: String) -> [VoiceItem] {
+    private func voices(for file: String) -> [VoiceItem] { Self.voices(for: file, in: library) }
+
+    /// Voices the app can play itself for a file's language (its own built-in ones; downloaded voices live in the
+    /// speech extension's store).
+    static func voices(for file: String, in library: VoiceLibrary) -> [VoiceItem] {
         let lang = Self.fileLanguage(file).lowercased()
         return library.items.filter { item in
             guard let key = item.entry?.key, DirectPlayer.shared.canTryOut(key) else { return false }
@@ -378,7 +384,7 @@ private struct EntryPage: View {
 
 /// The voice's sounds, each with an example word from phonemes/<language>.txt: pressing one inserts it; Hear
 /// (also a VoiceOver action on the row) says the sound and its word.
-private struct PhonemePage: View {
+struct PhonemePage: View {
     @Bindable var draft: EntryDraft
     let done: () -> Void
     @Environment(VoiceLibrary.self) private var library
@@ -410,7 +416,12 @@ private struct PhonemePage: View {
     }
 
     private func sounds() -> [(xsampa: String, example: String, heard: String)] {
-        let key = draft.voiceKey, lang = draft.language
+        Self.sounds(key: draft.voiceKey, language: draft.language)
+    }
+
+    /// The voice's sounds: the language's phonemes/<lang>.txt in order (or a general list), each the voice has
+    /// once, with its example word and the engine text that says it.
+    static func sounds(key: String, language lang: String) -> [(xsampa: String, example: String, heard: String)] {
         guard !key.isEmpty else { return [] }
         let listed = DictionaryStore.phonemeExamples(language: lang)
         var out: [(xsampa: String, example: String, heard: String)] = [], seen = Set<String>()
@@ -426,15 +437,20 @@ private struct PhonemePage: View {
     }
 
     private func hear(_ item: (xsampa: String, example: String, heard: String)) {
-        guard let v = library.items.first(where: { $0.entry?.key == draft.voiceKey }) else { return }
+        Self.hear(item, voiceKey: draft.voiceKey, library: library)
+    }
+
+    /// Says a sound and its example word.
+    static func hear(_ item: (xsampa: String, example: String, heard: String), voiceKey: String, library: VoiceLibrary) {
+        guard let v = library.items.first(where: { $0.entry?.key == voiceKey }) else { return }
         let word = item.example.replacingOccurrences(of: "\u{1b}", with: " ")
-        DirectPlayer.shared.tryOut("", engineText: item.heard + (word.isEmpty ? "" : "  " + word), voiceKey: draft.voiceKey,
+        DirectPlayer.shared.tryOut("", engineText: item.heard + (word.isEmpty ? "" : "  " + word), voiceKey: voiceKey,
                                    language: v.language, rules: nil, rulesPack: nil, settings: library.settings)
     }
 }
 
 /// The GitHub repository the community dictionaries come from (a fork, say).
-private struct SourcePage: View {
+struct SourcePage: View {
     let done: () -> Void
     @State private var repo = CommunityDictionary.source.repo
     @State private var branch = CommunityDictionary.source.branch

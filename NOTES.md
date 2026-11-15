@@ -2555,3 +2555,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   runs; the person's choice holds after that until another dev build is put in. Dev checks hourly. The Mac
   app isn't in the dev builds yet: needs Levi's Developer ID and notarization in
   the repo secrets (the private key can't be exported without a keychain dialog).
+- iPhone/iPad dictionary editor (Nico's approved design, 2026-11-14; ios/App/MobileDictionaryEditor.swift):
+  a Dictionaries tab with a file picker, a searchable entry list (double-tap edits; Preview, Remove,
+  Restore the Community's as VoiceOver actions and swipe actions), an entry sheet in the NVDA order
+  (pattern, replacement + Insert Phoneme, case, type, test text + Preview; Cancel/Save; empty replacement
+  asks first), the phoneme sheet (double-tap inserts, Preview action), More: Download the Latest
+  Dictionaries and Source. No publishing on the phone (no git). Shared helpers in DictionaryEditor.swift
+  (voices(for:in:), PhonemePage.sounds/hear, EntryDraft.inserting/problem, holdEditingFlag).

@@ -329,8 +329,10 @@ struct RootView: View {
             PlatformTab(platform: .macOS)
                 .tabItem { Label("macOS", systemImage: "desktopcomputer") }
             #if os(macOS)
-            // the phone's will be its own design (Nico)
             DictionariesTab()
+                .tabItem { Label("Dictionaries", systemImage: "character.book.closed") }
+            #elseif os(iOS)
+            MobileDictionariesTab()  // the same editor in iOS form (Nico's design)
                 .tabItem { Label("Dictionaries", systemImage: "character.book.closed") }
             #endif
             SettingsTab()
