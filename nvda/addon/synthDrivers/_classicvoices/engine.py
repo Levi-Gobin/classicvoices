@@ -74,6 +74,10 @@ class Speaker:
         """Spelling pauses before, between and after the letters (from the next utterance)."""
         self._lib.vxs_set_spelling_pauses(self._s, 1 if on else 0)
 
+    def set_spell_lowercase(self, on):
+        """Spelled capitals without "capital" before them (from the next utterance)."""
+        self._lib.vxs_set_spell_lowercase(self._s, 1 if on else 0)
+
     def set_safe_voice(self, voice_key):
         """The voice that speaks when one won't open and neither will its
         compact version or the last voice that worked (None: none)."""

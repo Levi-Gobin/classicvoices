@@ -2,6 +2,7 @@ EXPORTS
     cv_abi_version
     cv_read_s16
     cv_rules_text
+    cv_speech_text
     cv_free
     cv_set_native_dir
     cv_native_status
@@ -14,11 +15,14 @@ EXPORTS
     vxs_read_marks
     vxs_wait
     vx_phoneme_text
+    vx_xsampa_to_ipa
+    vx_ipa_has_vowel
     vxs_preload
     vxs_set_rules_pack
     vxs_set_apple_tone
     vxs_set_steady_pauses
     vxs_set_spelling_pauses
+    vxs_set_spell_lowercase
     vxs_engine_pitch
     vxs_last_first_audio_ms
     vxs_last_synth_ms

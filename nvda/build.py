@@ -34,7 +34,7 @@ OUT = os.path.join(ROOT, "build", "nvda")
 CORE = [os.path.join(ROOT, "core", f) for f in ("thumb.c", "vxengine.c", "vxstream.c", "vxphonemes.c", "vxrules.c", "vxlang.c")]
 SHIM = [os.path.join(SRC, f) for f in ("vx_win.c", "mt_stub.c", "cvnvda.c", "vx_native_load.c")]
 # Apple's pronunciation rules, with PCRE2 built in (tools/pcre2_build.py fetches it)
-HOST = [os.path.join(ROOT, "ports", "host", f) for f in ("cv_catalog.c", "cv_rules.c")]
+HOST = [os.path.join(ROOT, "ports", "host", f) for f in ("cv_catalog.c", "cv_rules.c", "cv_dict.c")]
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import pcre2_build  # noqa: E402
 
@@ -122,37 +122,48 @@ def package():
     os.makedirs(OUT, exist_ok=True)
     bundle = os.path.join(ROOT, "build", "classicvoices-%s.nvda-addon" % version)
     addon_dir = os.path.join(NVDA, "addon")
-    with zipfile.ZipFile(bundle, "w", zipfile.ZIP_DEFLATED) as z:
-        for base, _dirs, files in os.walk(addon_dir):
-            for f in files:
-                # DLLs are added from the build output below, even if a test
-                # left copies in the addon tree
-                if f.endswith((".pyc", ".pyo", ".dll")) or f.startswith("."):  # .DS_Store
-                    continue
-                p = os.path.join(base, f)
-                rel = os.path.relpath(p, addon_dir)
-                if APPLE_FILE_RE.search(rel.replace("\\", "/")):
-                    sys.exit("refusing to package Apple-derived file: %s" % rel)
-                z.write(p, rel)
-        # the recompiler, so the add-on can build fast engine code from the user's own firmware
-        # (_classicvoices/fastcode.py): recomp.py, its profiles (addresses only), the instruction
-        # semantics its C includes, and the glue
-        rc = "synthDrivers/_classicvoices/recompiler/"
-        z.write(os.path.join(ROOT, "tools", "recomp.py"), rc + "recomp.py")
-        for b in ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10"):
-            z.write(os.path.join(ROOT, "tools", "profiles", b + ".txt"), rc + "profiles/%s.txt" % b)
-        for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
-            z.write(os.path.join(ROOT, "core", h), rc + h)
-        z.write(os.path.join(NVDA, "src", "native_glue.c"), rc + "native_glue.c")
-        for name in ("cvengine32.dll", "cvengine64.dll", "cvengine_arm64ec.dll"):
-            dll = os.path.join(OUT, name)
-            if not os.path.exists(dll):
-                if name == "cvengine_arm64ec.dll" and not os.environ.get("CI"):
-                    # a local build without llvm-mingw: Windows on Arm runs the x64 one
-                    print("WARNING: no %s; the add-on uses the x64 engine on Windows on Arm" % name)
-                    continue
-                sys.exit("missing %s (run the dll step first)" % dll)
-            z.write(dll, "synthDrivers/_classicvoices/" + name)
+    # the engines first: a missing one stops the build before anything is written
+    dlls = []
+    for name in ("cvengine32.dll", "cvengine64.dll", "cvengine_arm64ec.dll"):
+        dll = os.path.join(OUT, name)
+        if not os.path.exists(dll):
+            if name == "cvengine_arm64ec.dll" and not os.environ.get("CI"):
+                # a local build without llvm-mingw: Windows on Arm runs the x64 one
+                print("WARNING: no %s; the add-on uses the x64 engine on Windows on Arm" % name)
+                continue
+            sys.exit("missing %s (run the dll step first)" % dll)
+        dlls.append((dll, name))
+    # written beside it and renamed when complete, so a build that stops leaves no add-on that looks whole
+    partial = bundle + ".partial"
+    try:
+        with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED) as z:
+            for base, _dirs, files in os.walk(addon_dir):
+                for f in files:
+                    # DLLs are added from the build output below, even if a test
+                    # left copies in the addon tree
+                    if f.endswith((".pyc", ".pyo", ".dll")) or f.startswith("."):  # .DS_Store
+                        continue
+                    p = os.path.join(base, f)
+                    rel = os.path.relpath(p, addon_dir)
+                    if APPLE_FILE_RE.search(rel.replace("\\", "/")):
+                        sys.exit("refusing to package Apple-derived file: %s" % rel)
+                    z.write(p, rel)
+            # the recompiler, so the add-on can build fast engine code from the user's own firmware
+            # (_classicvoices/fastcode.py): recomp.py, its profiles (addresses only), the instruction
+            # semantics its C includes, and the glue
+            rc = "synthDrivers/_classicvoices/recompiler/"
+            z.write(os.path.join(ROOT, "tools", "recomp.py"), rc + "recomp.py")
+            for b in ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10"):
+                z.write(os.path.join(ROOT, "tools", "profiles", b + ".txt"), rc + "profiles/%s.txt" % b)
+            for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
+                z.write(os.path.join(ROOT, "core", h), rc + h)
+            z.write(os.path.join(NVDA, "src", "native_glue.c"), rc + "native_glue.c")
+            for dll, name in dlls:
+                z.write(dll, "synthDrivers/_classicvoices/" + name)
+        os.replace(partial, bundle)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
     print("packaged", bundle)
     return bundle
 

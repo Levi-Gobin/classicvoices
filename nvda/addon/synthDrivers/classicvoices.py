@@ -14,6 +14,7 @@ from speech.commands import (BreakCommand, CharacterModeCommand, IndexCommand, L
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from synthDriverHandler import SynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
+from ._classicvoices import dicts as cv_dicts
 from ._classicvoices import engine as cv_engine
 from ._classicvoices import languages as cv_languages
 from ._classicvoices import lib as cv_lib
@@ -86,6 +87,10 @@ class SynthDriver(SynthDriver):
         BooleanDriverSetting("steadyPauses", _("Pauses &keep their length at any rate"), defaultVal=True),
         # Translators: a setting: the voice pauses before, between and after spelled letters, as it originally did.
         BooleanDriverSetting("spellingPauses", _("Pauses &when spelling"), defaultVal=False),
+        # Translators: a setting: capital letters are spelled like small ones, without "capital" before them.
+        BooleanDriverSetting("spellLowercase", _("Don't say \"capital\" when spe&lling"), defaultVal=False),
+        # Translators: a setting: pronunciation fixes written by Classic Voices users, fetched from the internet.
+        BooleanDriverSetting("communityDictionaries", _("&Community pronunciation dictionaries"), defaultVal=False),
     )
     # LangChangeCommand: NVDA sends it when "Automatic language switching" is on
     supportedCommands = {IndexCommand, BreakCommand, PitchCommand, RateCommand, VolumeCommand,
@@ -117,6 +122,8 @@ class SynthDriver(SynthDriver):
         self._tone = True
         self._steady = True
         self._spellPauses = False
+        self._spellLower = False
+        self._dicts = False  # community dictionaries: opt in
         self._voice = next(iter(self._voices))
         self._lang_cache = {}
         # looked up once: each lookup reads the registry and lists folders,
@@ -131,6 +138,7 @@ class SynthDriver(SynthDriver):
         self._speaker.set_apple_tone(self._tone)
         self._speaker.set_steady_pauses(self._steady)
         self._speaker.set_spelling_pauses(self._spellPauses)
+        self._speaker.set_spell_lowercase(self._spellLower)
         self._speaker.set_safe_voice(self._safe_voice(self._voice))
         self._speaker.preload(self._voice, self._pack(self._voice))
 
@@ -299,9 +307,15 @@ class SynthDriver(SynthDriver):
                 prev = item
                 continue
             if isinstance(item, str):
-                if (self._rules or pack) and voice and "tn" not in state:
-                    item = cv_lib.rules_text(self._voices_root, self._downloads_root, voice.key, voice.language,
-                                             item, own=self._rules, pack=pack)
+                if voice and "tn" not in state:
+                    # the dictionaries (the person's own entries always, the community's when turned on; none while
+                    # the dictionary dialog is open), then Apple's rules (spelled text is read as it is)
+                    if self._dicts:
+                        cv_dicts.refresh(self._data_root, voice.key, voice.language)
+                    item = cv_lib.speech_text(self._voices_root, self._downloads_root, voice.key, voice.language,
+                                              item, own=self._rules, pack=pack,
+                                              dicts=None if cv_dicts.EDITING else cv_dicts.folder(self._data_root),
+                                              community=self._dicts)
                 text.append(item)
             elif isinstance(item, IndexCommand):
                 text.append("\x1b\\mrk=%d\\" % item.index)
@@ -356,6 +370,27 @@ class SynthDriver(SynthDriver):
                 pitch=_exp_map(self._pitch, PITCH_MIN, PITCH_MAX),
                 volume=self._volume, pack=pk, last=i == len(parts) - 1))
 
+    def try_out(self, text, entries="", engine_text=None):
+        """For the dictionary dialog: says text in the current voice with only entries (.dic lines) applied, or
+        engine_text as it is (a phoneme on its own)."""
+        voice = self._voices.get(self._voice)
+        if not voice:
+            return
+        self.cancel()
+        pack = self._pack(self._voice)
+        t = engine_text if engine_text is not None else cv_lib.speech_text(
+            self._voices_root, self._downloads_root, voice.key, voice.language, text, own=self._rules, pack=pack,
+            entries=entries or "")
+        self._speaker.speak(cv_engine.Utterance(
+            self._voice, t, [], rate=_exp_map(self._rate, RATE_MIN, RATE_MAX),
+            pitch=_exp_map(self._pitch, PITCH_MIN, PITCH_MAX), volume=self._volume, pack=pack, last=True))
+
+    def voice_info(self):
+        """(voice key, language, voices root, downloads root, data root) of the voice in use, for the dialog."""
+        voice = self._voices.get(self._voice)
+        return (voice.key if voice else None, voice.language if voice else None, self._voices_root,
+                self._downloads_root, self._data_root)
+
     def cancel(self):
         self._speaker.cancel()
         self._player.stop()
@@ -406,12 +441,26 @@ class SynthDriver(SynthDriver):
         self._steady = bool(value)
         self._speaker.set_steady_pauses(self._steady)
 
+    def _get_communityDictionaries(self):
+        return self._dicts
+
+    def _set_communityDictionaries(self, value):
+        self._dicts = bool(value)
+
     def _get_spellingPauses(self):
         return self._spellPauses
 
     def _set_spellingPauses(self, value):
         self._spellPauses = bool(value)
         self._speaker.set_spelling_pauses(self._spellPauses)
+
+    def _get_spellLowercase(self):
+        return self._spellLower
+
+    def _set_spellLowercase(self, value):
+        # capitals spelled without "capital" (NVDA's own capital pitch or beep still marks them, as set)
+        self._spellLower = bool(value)
+        self._speaker.set_spell_lowercase(self._spellLower)
 
     def _get_newerPronunciation(self):
         return self._newer
@@ -426,29 +475,27 @@ class SynthDriver(SynthDriver):
 
     def _set_voice(self, value):
         if value not in self._voices:
-            raise ValueError("no such voice: %s" % value)
+            # Some add-ons (voice slots, profiles) hand back a voice's name, or the key in another case. A value
+            # NVDA can't set makes it fall back to the first voice and save that over the person's choice.
+            wanted = str(value or "").strip().casefold()
+            match = next((k for k, v in self._voices.items()
+                          if k.casefold() == wanted or v.name.casefold() == wanted), None)
+            if match is None:
+                log.warning("Classic Voices: no voice %r among %d (the voice falls back to the default)"
+                            % (value, len(self._voices)))
+                raise ValueError("no such voice: %s" % value)
+            value = match
         self._voice = value
         self._speaker.set_safe_voice(self._safe_voice(value))
         self._speaker.preload(value, self._pack(value))
 
     def _getAvailableVoices(self):
-        """By language, then voice, then release, then compact, enhanced, premium."""
-        def language_name(lang):
-            try:
-                import languageHandler
-                return languageHandler.getLanguageDescription(lang) or lang
-            except Exception:
-                return lang
-
-        names = {}
-
+        """By language code (ar_SA, cs_CZ ... zh_TW), then voice, then release, then compact, enhanced, premium."""
         def order(item):
             key, v = item
             lang = (v.language or "").replace("-", "_")
-            if lang not in names:
-                names[lang] = language_name(lang) if lang else "￿"  # no language: last
             release, kind = _release_and_kind(key)
-            return (names[lang].casefold(), lang.casefold(), v.name.split(" (")[0].casefold(),
+            return (lang.casefold() if lang else "\uffff", v.name.split(" (")[0].casefold(),  # no language: last
                     _RELEASE_ORDER.index(release) if release in _RELEASE_ORDER else len(_RELEASE_ORDER),
                     _KIND_ORDER.index(kind), key)
 

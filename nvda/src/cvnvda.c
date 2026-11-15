@@ -3,6 +3,8 @@
 #include "vxstream.h"
 #include "cv_catalog.h"
 #include "cv_rules.h"
+#include "cv_dict.h"
+#include "vxphonemes.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -10,10 +12,31 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CV_ABI 6  // 4: vxs_set_apple_tone; 5: vxs_set_steady_pauses, vxs_set_spelling_pauses;
-                  // 6: vxs_take_notice, vxs_set_safe_voice
+#define CV_ABI 9  // 4: vxs_set_apple_tone; 5: vxs_set_steady_pauses, vxs_set_spelling_pauses;
+                  // 6: vxs_take_notice, vxs_set_safe_voice; 7: cv_speech_text; 8: its own entries, community and
+                  // dic_text arguments, vx_xsampa_to_ipa, vx_ipa_has_vowel; 9: vxs_set_spell_lowercase
 
 int cv_abi_version(void) { return CV_ABI; }
+
+typedef struct { const char *voices_root, *downloads_root, *voice_key, *language; } PhonemeCtx;
+static char *voice_phonemes(void *ctx, const char *ipa, int joined) {
+    PhonemeCtx *c = ctx;
+    return vx_phoneme_text(c->voices_root, c->downloads_root, c->voice_key, c->language, ipa, joined);
+}
+
+// cv_rules_text with the dictionaries (cv_dict.h) in dict_dir applied first (NULL: none): the person's own
+// entries, and the fetched ones when community is set; or, with dic_text, just the entries in it (trying one out).
+// Their phonetic spans are said in this voice.
+char *cv_speech_text(const char *voices_root, const char *downloads_root, const char *voice_key, const char *language,
+                     int own, const char *pack_dir, const char *dict_dir, int community, const char *dic_text,
+                     const char *text) {
+    const CvRules *r = own || pack_dir ? cv_rules_for_voice_pack(voices_root, downloads_root, voice_key, language, own,
+                                                                 pack_dir)
+                                       : NULL;
+    const CvDict *d = dic_text ? cv_dict_from_text(dic_text) : cv_dict_for_voice_ex(dict_dir, voice_key, language, community);
+    PhonemeCtx c = {voices_root, downloads_root, voice_key, language};
+    return cv_dict_speech_text(d, r, text ? text : "", voice_phonemes, &c);
+}
 
 // Apple's pronunciation rules for a voice (its own release's user_rules.txt,
 // or a Mac OS X voice's user_rules.dat, when own is set) and a newer pack's

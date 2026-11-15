@@ -36,9 +36,10 @@ LLVM_MINGW = ("20261006",
 STRIPPED = ("ios3", "ios4", "ios5")  # function boundaries from the BL targets (recomp.py --scan-bl)
 # Windows: no console window for each compiler run (it would take the focus)
 NO_WINDOW = 0x08000000 if IS_WIN else 0
-# Below normal priority (Windows) / nice 10: a screen reader speaking on the
-# same computer goes first, so speech doesn't lag while fast code builds.
-BELOW_NORMAL = 0x00004000 if IS_WIN else 0
+# Idle priority (Windows) / nice 19: anything else on the computer, a screen
+# reader speaking first of all, goes first, so nothing lags while fast code
+# builds. (Below normal still read as "100% CPU" to people, 2026-11.)
+BELOW_NORMAL = 0x00000040 if IS_WIN else 0  # IDLE_PRIORITY_CLASS
 
 
 def _run(cmd, **kw):
@@ -46,7 +47,7 @@ def _run(cmd, **kw):
     p = subprocess.Popen(cmd, creationflags=NO_WINDOW | BELOW_NORMAL, **kw)
     if not IS_WIN:
         try:
-            os.setpriority(os.PRIO_PROCESS, p.pid, 10)
+            os.setpriority(os.PRIO_PROCESS, p.pid, 19)
         except (OSError, AttributeError):
             pass
     return p
@@ -398,7 +399,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
         _translate(tools, args, python, lambda f: progress(None, f))
         sources = sorted(os.path.join(gen, f) for f in os.listdir(gen) if f.endswith(".c")) + [glue]
         os.makedirs(native_dir, exist_ok=True)
-        jobs = max(1, min((os.cpu_count() or 2) - 1, 8))  # a core left for speech
+        jobs = max(1, min((os.cpu_count() or 2) // 2, 4))  # half the cores at most: the computer stays usable
         # each step its own progress: every file of each kind compiled
         for n, (pattern, cmd, what) in enumerate(native_targets(cc)):
             objdir = os.path.join(work, "obj%d" % n)

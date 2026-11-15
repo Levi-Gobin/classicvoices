@@ -51,6 +51,8 @@ def load():
     lib.vxs_set_steady_pauses.argtypes = [c.c_void_p, c.c_int]
     lib.vxs_set_spelling_pauses.restype = None
     lib.vxs_set_spelling_pauses.argtypes = [c.c_void_p, c.c_int]
+    lib.vxs_set_spell_lowercase.restype = None
+    lib.vxs_set_spell_lowercase.argtypes = [c.c_void_p, c.c_int]
     lib.vxs_engine_pitch.restype = c.c_int
     lib.vxs_engine_pitch.argtypes = [c.c_int]
     lib.vxs_last_error.restype = c.c_char_p
@@ -78,6 +80,13 @@ def load():
     lib.cv_native_status.argtypes = [c.c_char_p]
     lib.cv_rules_text.restype = c.c_void_p
     lib.cv_rules_text.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.c_char_p, c.c_int, c.c_char_p, c.c_char_p]
+    lib.cv_speech_text.restype = c.c_void_p
+    lib.cv_speech_text.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.c_char_p, c.c_int, c.c_char_p, c.c_char_p,
+                                   c.c_int, c.c_char_p, c.c_char_p]
+    lib.vx_xsampa_to_ipa.restype = c.c_void_p
+    lib.vx_xsampa_to_ipa.argtypes = [c.c_char_p, c.c_size_t, c.POINTER(c.c_size_t)]
+    lib.vx_ipa_has_vowel.restype = c.c_int
+    lib.vx_ipa_has_vowel.argtypes = [c.c_char_p]
     lib.cv_free.restype = None
     lib.cv_free.argtypes = [c.c_void_p]
     lib.vx_lang_pick.restype = c.c_int
@@ -85,7 +94,7 @@ def load():
     lib.vx_lang_choose.restype = c.c_int
     lib.vx_lang_choose.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.POINTER(c.c_char_p),
                                    c.POINTER(c.c_char_p), c.c_size_t]
-    if lib.cv_abi_version() != 6:
+    if lib.cv_abi_version() != 9:
         raise OSError("cvengine ABI mismatch")
     _lib = lib
     return lib
@@ -103,6 +112,24 @@ def phoneme_text(voices_root, downloads_root, voice_key, language, ipa, joined):
         return ctypes.string_at(p).decode("utf-8", "replace")
     finally:
         lib.cv_free(p)
+
+
+def xsampa_to_ipa(xsampa):
+    """IPA for X-SAMPA (core/vxphonemes.c), or None when it isn't X-SAMPA."""
+    lib = load()
+    b = xsampa.encode("utf-8")
+    bad = ctypes.c_size_t(0)
+    p = lib.vx_xsampa_to_ipa(b, len(b), ctypes.byref(bad))
+    if not p:
+        return None
+    try:
+        return ctypes.string_at(p).decode("utf-8", "replace")
+    finally:
+        lib.cv_free(p)
+
+
+def ipa_has_vowel(ipa):
+    return bool(load().vx_ipa_has_vowel(ipa.encode("utf-8")))
 
 
 def lang_pick(current_key, language, voices, choices=None):
@@ -129,6 +156,28 @@ def rules_text(voices_root, downloads_root, voice_key, language, text, own=True,
     p = lib.cv_rules_text(voices_root.encode("utf-8"), downloads_root.encode("utf-8"), voice_key.encode("utf-8"),
                           (language or "").encode("utf-8"), 1 if own else 0,
                           pack.encode("utf-8") if pack else None, text.encode("utf-8"))
+    if not p:
+        return text
+    try:
+        return ctypes.string_at(p).decode("utf-8", "replace")
+    finally:
+        lib.cv_free(p)
+
+
+def speech_text(voices_root, downloads_root, voice_key, language, text, own=True, pack=None, dicts=None,
+                community=False, entries=None):
+    """rules_text with the dictionaries in the folder dicts (or None) applied
+    first: the person's own entries, and the fetched ones when community is
+    set; or, with entries (text in the .dic format), just those (trying one
+    out). Their phonetic spans in this voice's phonemes."""
+    lib = load()
+    if not text:
+        return text
+    p = lib.cv_speech_text(voices_root.encode("utf-8"), downloads_root.encode("utf-8"), voice_key.encode("utf-8"),
+                           (language or "").encode("utf-8"), 1 if own else 0,
+                           pack.encode("utf-8") if pack else None, dicts.encode("utf-8") if dicts else None,
+                           1 if community else 0, entries.encode("utf-8") if entries is not None else None,
+                           text.encode("utf-8"))
     if not p:
         return text
     try:
