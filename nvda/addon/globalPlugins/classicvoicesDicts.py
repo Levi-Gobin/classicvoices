@@ -162,21 +162,16 @@ class EntryDialog(wx.Dialog):
         self.kind = wx.RadioBox(self, label=_("Type"), choices=[names[t] for t, _n in self.TYPES])
         self.kind.SetSelection([t for t, _n in self.TYPES].index(entry.type if entry else 2))
         main.Add(self.kind, flag=wx.ALL, border=5)
-        # Translators: label of the text Hear it says.
+        # Translators: label of the text Preview says.
         main.Add(wx.StaticText(self, label=_("&Test text:")), flag=wx.LEFT | wx.TOP, border=5)
         self.test = wx.TextCtrl(self, value=entry.pattern if entry and entry.type != 1 else "", size=(420, -1))
         main.Add(self.test, flag=wx.EXPAND | wx.ALL, border=5)
-        hearRow = wx.BoxSizer(wx.HORIZONTAL)
+        # (Without the entry, the text is simply read: the voices use no dictionary while the dialog is open.)
         # Translators: button saying the test text with this entry.
-        hear = wx.Button(self, label=_("Hear &it"))
-        hear.Bind(wx.EVT_BUTTON, lambda evt: self.hear(True))
-        # Translators: button saying the test text as the voice reads it without the entry.
-        before = wx.Button(self, label=_("Hear with&out it"))
-        before.Bind(wx.EVT_BUTTON, lambda evt: self.hear(False))
-        for b in (hear, before):
-            b.Enable(_synth() is not None)
-            hearRow.Add(b)
-        main.Add(hearRow, flag=wx.ALL, border=5)
+        preview = wx.Button(self, label=_("Pre&view"))
+        preview.Bind(wx.EVT_BUTTON, lambda evt: self.hear(True))
+        preview.Enable(_synth() is not None)
+        main.Add(preview, flag=wx.ALL, border=5)
         main.Add(self.CreateButtonSizer(wx.OK | wx.CANCEL), flag=wx.ALL, border=5)
         self.Bind(wx.EVT_BUTTON, self.onOk, id=wx.ID_OK)
         self.SetSizerAndFit(main)

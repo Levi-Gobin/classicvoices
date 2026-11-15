@@ -3,7 +3,7 @@ import SwiftUI
 /// The Dictionaries tab: the pronunciation dictionaries' entries, the community's and the person's own
 /// (DictionaryStore), as the NVDA add-on's dictionary dialog shows them, as a drill-down of buttons like the voice
 /// browser: files, a file's entries, one entry, the voice's sounds to insert. While the tab is open the voices use
-/// no dictionary (CommunityDictionary.editing), so a word is heard as the voice reads it by itself; Hear It says the
+/// no dictionary (CommunityDictionary.editing), so a word is heard as the voice reads it by itself; Preview says the
 /// test text with just the entry being edited, in a voice played here in the app.
 enum DictRoute: Hashable {
     case file(String)
@@ -141,7 +141,7 @@ struct DictionariesTab: View {
         switch r {
         case .file(let f): Self.fileTitle(f)
         case .entry(_, let key): key == nil ? "New entry" : (draft.pattern.isEmpty ? "Entry" : draft.pattern)
-        case .phonemes: "Insert a sound"
+        case .phonemes: "Insert Phoneme"
         case .source: "Source"
         }
     }
@@ -251,7 +251,7 @@ struct DictionariesTab: View {
     }
 }
 
-/// One entry: pattern, replacement (with sounds), test text and Hear It, case, kind; Save, Remove, Restore.
+/// One entry: pattern, replacement (Insert Phoneme), case, kind, test text and Preview; Save, Remove, Restore.
 private struct EntryPage: View {
     let file: String
     let key: String?
@@ -275,7 +275,7 @@ private struct EntryPage: View {
             PageSection(nil) {
                 TextField("Pattern", text: $draft.pattern)
                 TextField("Replacement (sounds go between ~~ and ~~)", text: $draft.replacement)
-                OpenButton(title: "Insert a sound…", detail: voices.isEmpty ? "needs a voice of this language" : nil) {
+                OpenButton(title: "Insert Phoneme…", detail: voices.isEmpty ? "needs a voice of this language" : nil) {
                     draft.picking = true
                     open(.phonemes)
                 }
@@ -294,8 +294,8 @@ private struct EntryPage: View {
                         ForEach(voices) { v in Text("\(v.name), \(v.version.menuName)").tag(v.entry?.key ?? "") }
                     }
                 }
-                Button("Hear It") { hear(withEntry: true) }.disabled(voices.isEmpty)
-                Button("Hear Without It") { hear(withEntry: false) }.disabled(voices.isEmpty)
+                // (without the entry: VoiceOver reads it so, the voices using no dictionary while this tab is open)
+                Button("Preview") { hear(withEntry: true) }.disabled(voices.isEmpty)
                 if voices.isEmpty {
                     Text("No voice of this language is built into the app to try it with.").foregroundStyle(.secondary)
                 }
