@@ -396,6 +396,7 @@ static const struct { const char *lang; uint32_t ipa; const char *lhp; } kLang[]
     {"de", 0x250, "$ R|$"},    // ɐ is German's vocalic r (besser, Oper): the voice's $R
     {"nl", 0x28F, "^|Y|y|I"},  // ʏ (bus) is the Dutch voice's ^; its y is the y of "fuut"
     {"es", 0x3B8, "T|s"},      // θ: Latin American Spanish says s (seseo)
+    {"en", 'r', "R+|r6"},      // r is the English r (X-SAMPA r\): English has no trill, and the tap is 4 (ɾ)
 };
 
 static int lang_is(const char *lang, const char *code) {
@@ -860,6 +861,34 @@ static char *convert(const Token *t, int n, const Inventory *inv, const char *la
             if (danish && t[i].nbase == 1 && (c == 'p' || c == 't' || c == 'k') && !has_mod(&t[i], 0x2B0) && starts &&
                 (!nx || nx->kind == K_WORD || tok_vowel(nx) || is_liquid_glide(next) || next == 'v' || next == 0x28B))
                 mods[nm++] = 0x2B0;
+            // English voices aspirate a p t k themselves, where a stressed syllable starts, and ignore aspiration
+            // written in phonemes: a written one (t_h, as in FaceTime's "time") puts secondary stress on its
+            // syllable, unless it has stress already, which is what makes the voice aspirate it
+            // (the syllable starts at it: a t after s in its syllable, as in "stime", isn't aspirated)
+            if (english && has_mod(&t[i], 0x2B0)) {
+                size_t b = o.n;
+                while (b > 0 && o.s[b - 1] != '.' && o.s[b - 1] != '_') b--;
+                size_t m = b;  // past the syllable's stress mark ('  or '2)
+                if (m < o.n && o.s[m] == '\'') m += (m + 1 < o.n && o.s[m + 1] == '2') ? 2 : 1;
+                char mark[3] = "'2";
+                if (m > b) snprintf(mark, sizeof mark, "%.*s", (int)(m - b), o.s + b);
+                if (m < o.n) {  // sounds before it in its syllable: they go to the syllable before, its mark with it
+                    memmove(o.s + b, o.s + m, o.n - m);
+                    o.n -= m - b;
+                    if (b > 0 && o.s[b - 1] == '.') {  // no syllable boundary left between them and the one before
+                        memmove(o.s + b - 1, o.s + b, o.n - b);
+                        o.n--;
+                    }
+                    o.s[o.n] = 0;
+                    if (o.n && o.s[o.n - 1] != '_') str_puts(&o, ".");
+                    str_puts(&o, mark);
+                } else if (m == b) {  // first in an unstressed syllable
+                    str_add(&o, "  ", 2);
+                    memmove(o.s + b + 2, o.s + b, o.n - 2 - b);
+                    o.s[b] = '\'';
+                    o.s[b + 1] = '2';
+                }
+            }
             Spellings l;
             spellings(t[i].base, t[i].nbase, mods, nm, lang, 0, &l);
             const Spelling *s = pick(&l, inv);
@@ -1194,6 +1223,10 @@ char *vx_lhp_to_xsampa(const char *symbols, const char *language) {
     str_add(&ipa, "", 0);
     char *x = ipa_to_xsampa(ipa.s ? ipa.s : "");
     free(ipa.s);
+    if (x && english)  // English writes its r as plain r (kLang), the trill's symbol
+        for (char *r = x; (r = strstr(r, "r\\")) != NULL;)
+            if (r[2] == '`') r += 3;
+            else memmove(r + 1, r + 2, strlen(r + 2) + 1);
     return x;
 }
 

@@ -2575,3 +2575,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   vx_lhp_to_xsampa maps them back: each symbol to the sound whose first spelling it is (a few preferred for
   ambiguous ones; English E0 is ɝ), & pairs split, suffixes as modifiers (English aspiration left out), then
   IPA to X-SAMPA. No stress marks (the engine doesn't report stress). NVDA engine interface 10.
+- English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
+  still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
+  Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound
+  the same as t) and aspirates p/t/k itself at the start of a stressed syllable, primary or secondary, unless
+  s comes before it in that syllable ("stime"). So an English _h (t_h) makes its syllable start at that
+  consonant (anything before it in the syllable goes to the one before) and gives it secondary stress '2
+  when it has none: "feIst_haIm -> 'fe&Is.'2ta&Im, said with t{ (FaceTime); t_h{t -> '2t@t.
