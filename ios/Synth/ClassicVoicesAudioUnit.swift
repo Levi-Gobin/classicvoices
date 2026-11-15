@@ -81,11 +81,11 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let language = entry?.language ?? request.voice.primaryLanguages.first ?? ""
         let rules = PronunciationRules.rules(forVoiceKey: key, identifier: entry?.identifier ?? "", language: language,
                                              settings: settings)
-        let job = SpeechJob.from(ssml: request.ssmlRepresentation, rules: rules, exactPitch: key.hasPrefix("mt")) { ipa, joined in
-            guard let root = VoiceCatalog.root?.path,
-                  let p = vx_phoneme_text(root, VoiceCatalog.enhancedRoot?.path, key, language, ipa, joined ? 1 : 0) else { return nil }
-            defer { free(p) }
-            return String(cString: p)
+        // the person's own dictionary entries always, the community's when turned on (none while the editor is open)
+        let dictionary = CommunityDictionary.forVoice(key: key, language: language, community: settings.communityDictionaries)
+        let job = SpeechJob.from(ssml: request.ssmlRepresentation, rules: rules, dictionary: dictionary,
+                                 exactPitch: key.hasPrefix("mt")) { ipa, joined in
+            VoiceEngine.phonemeText(key: key, language: language, ipa: ipa, joined: joined)
         }
         marks.withLock { $0 = (job.markNames.isEmpty ? nil : request, job.markNames) }
         let fallback = entry.flatMap { settings.pitchFallbackEnabled($0.identifier) ? VoiceCatalog.compactCounterpart(of: $0)?.key : nil }
@@ -94,7 +94,8 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         VoiceEngine.shared.speak(job, voiceKey: key, fallbackKey: fallback, rulesPack: pack,
                                  resetCommands: settings.resetCommandsEnabled(entry?.identifier ?? ""),
                                  twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate,
-                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses)
+                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses,
+                                 spellLowercase: settings.spellLowercase)
         dumpRenderLog(start: previous.0, count: previous.1, renders: previous.2)
         log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) newer=\(pack != nil) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
         if UserDefaults.standard.string(forKey: "lastVoiceKey") != key {

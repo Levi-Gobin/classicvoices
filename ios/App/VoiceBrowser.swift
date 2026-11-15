@@ -62,10 +62,16 @@ struct VoiceItem: Identifiable, Hashable {
         }
     }
 
-    /// Default text on the voice's test screen.
+    /// Default text on the voice's test screen, in the voice's own language (Greetings.json, as
+    /// tools/make_samples.py records it for voices not downloaded yet).
     var greeting: String {
-        let from = kind == .enhanced || kind == .premium ? "I am an enhanced voice from" : "I am from"
-        return "Hello, my name is \(name). \(from) \(version.spokenName)."
+        let enhanced = kind == .enhanced || kind == .premium
+        let english = language.hasPrefix("en") || kind == .macinTalk
+        // "Siri in iOS 7" is English; other languages name the version as the list does ("iOS 7 Siri")
+        let from = english || version.id != "siri7" ? version.spokenName : version.name
+        let forms = Greetings.forms(for: english ? "en" : language)
+        return forms[enhanced ? 1 : 0].replacingOccurrences(of: "{name}", with: name)
+            .replacingOccurrences(of: "{version}", with: from)
     }
 
     static func languageName(_ code: String) -> String {
@@ -192,8 +198,10 @@ final class VoiceLibrary {
         var s = settings
         change(&s)
         guard s != settings else { return }
+        let dictionariesTurnedOn = s.communityDictionaries && !settings.communityDictionaries
         settings = s
         Task.detached { VoiceStore.shared.saveSettings(s) }
+        if dictionariesTurnedOn { CommunityDictionary.refreshAll(force: true) }
         // The newer rules need their packs: fetched the first time any voice uses them.
         if s.newerRulesWanted { pronunciation.ensure() }
     }
@@ -320,6 +328,11 @@ struct RootView: View {
                 .tabItem { Label("iOS", systemImage: "iphone") }
             PlatformTab(platform: .macOS)
                 .tabItem { Label("macOS", systemImage: "desktopcomputer") }
+            #if os(macOS)
+            // the phone's will be its own design (Nico)
+            DictionariesTab()
+                .tabItem { Label("Dictionaries", systemImage: "character.book.closed") }
+            #endif
             SettingsTab()
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
@@ -336,6 +349,20 @@ struct RootView: View {
         }
         #if CV_PUBLIC
         .task { MacSetup.shared.start() }
+        #endif
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            // the dictionary editor's "voices use no dictionary" flag goes with the app
+            if let f = DictionariesTab.editingFlag { try? FileManager.default.removeItem(at: f) }
+        }
+        .task {
+            // the person's dictionary changes, published once a day where git can push them and that's turned on
+            try? await Task.sleep(for: .seconds(180))
+            while !Task.isCancelled {
+                _ = await GitPublisher.shared.publish(force: false)
+                try? await Task.sleep(for: .seconds(3600))
+            }
+        }
         #endif
         .alert(updates.available.map { "Classic Voices \($0.version) is available" } ?? "",
                isPresented: Binding(get: { updates.available != nil }, set: { if !$0 { updates.available = nil } }),
@@ -673,6 +700,25 @@ private struct VoiceRow: View {
                 }
             }
         }
+    }
+}
+
+/// The greetings voices say on their test screens, by language (Shared/Greetings.json): [compact, enhanced],
+/// with {name} and {version} to fill in.
+enum Greetings {
+    private static let table: [String: [String]] = {
+        guard let url = Bundle.main.url(forResource: "Greetings", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let any = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+        return any.compactMapValues { ($0 as? [String]).flatMap { $0.count == 2 ? $0 : nil } }
+    }()
+
+    /// The locale's own (pt-BR, zh-TW), else its language's, else English.
+    static func forms(for locale: String) -> [String] {
+        let tag = locale.replacingOccurrences(of: "_", with: "-")
+        let lang = String(tag.prefix { $0 != "-" })
+        return table[tag] ?? table[lang] ?? table["en"]
+            ?? ["Hello, my name is {name}. I am from {version}.", "Hello, my name is {name}. I am an enhanced voice from {version}."]
     }
 }
 
@@ -1015,6 +1061,14 @@ struct SpeechSettingsView: View {
                 Text(PronunciationDownloadsView.explanation + " Off, each voice speaks as its own release did. Not for MacinTalk voices. Each voice can override this on its own page.")
             }
             Section {
+                Toggle("Community pronunciation dictionaries", isOn: Binding(
+                    get: { library.settings.communityDictionaries },
+                    set: { v in library.updateSettings { $0.communityDictionaries = v } }))
+                if library.settings.communityDictionaries { FetchDictionariesButton() }
+            } footer: {
+                Text("Pronunciation fixes written by Classic Voices users, for every voice of a language (github.com/nicopn/classicvoices-dicts). Turned on, Classic Voices fetches them and checks for new ones every few hours.")
+            }
+            Section {
                 Toggle("Compact voice for pitch changes", isOn: Binding(
                     get: { library.settings.pitchFallback },
                     set: { v in library.updateSettings { $0.pitchFallback = v } }))
@@ -1034,6 +1088,13 @@ struct SpeechSettingsView: View {
                     set: { v in library.updateSettings { $0.spellingPauses = v } }))
             } footer: {
                 Text("The voices pause before, between and after spelled letters. Off, spelling is as quick as the rest of the speech. iOS 3 and 4 voices always pause. Not for MacinTalk voices.")
+            }
+            Section {
+                Toggle("Don\u{2019}t say \u{201c}capital\u{201d} when spelling", isOn: Binding(
+                    get: { library.settings.spellLowercase },
+                    set: { v in library.updateSettings { $0.spellLowercase = v } }))
+            } footer: {
+                Text("Capital letters are spelled like small ones, without \u{201c}capital\u{201d} before them. VoiceOver can still tell them apart its own way (a higher pitch, if that\u{2019}s set). Not for MacinTalk voices.")
             }
             Section {
                 Picker("Speaking rate", selection: Binding(
@@ -1073,5 +1134,27 @@ struct SpeechSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Settings")
+    }
+}
+
+/// Fetches the community dictionaries now, rather than at the next check (every few hours). Only downloads: the
+/// person's own entries are never sent from here (Publish My Changes Now, on the Mac's Dictionaries tab, does that).
+struct FetchDictionariesButton: View {
+    @State private var busy = false
+    @State private var result: String?
+
+    var body: some View {
+        Button(busy ? "Downloading the Latest Community Dictionaries…" : "Download the Latest Community Dictionaries") {
+            busy = true
+            Task {
+                let ok = await CommunityDictionary.fetchAll(force: true)
+                busy = false
+                result = ok ? "The community dictionaries are up to date. (This only downloads; nothing of yours is sent.)"
+                    : "The dictionaries couldn’t be downloaded. Check the connection and try again."
+                AccessibilityNotification.Announcement(result ?? "").post()
+            }
+        }
+        .disabled(busy)
+        if let result { Text(result).font(.footnote).foregroundStyle(.secondary) }
     }
 }

@@ -570,10 +570,11 @@ struct SpeechJob {
     /// for MacinTalk, which goes far beyond Vocalizer's 0.56-1.58 range.
     /// `phonemes`: engine text for a <phoneme>'s IPA (and whether it comes
     /// right after a word), or nil to say the element's own text.
-    static func from(ssml: String, rules: PronunciationRules? = nil, exactPitch: Bool = false,
-                     phonemes: ((String, Bool) -> String?)? = nil) -> SpeechJob {
+    static func from(ssml: String, rules: PronunciationRules? = nil, dictionary: CommunityDictionary? = nil,
+                     exactPitch: Bool = false, phonemes: ((String, Bool) -> String?)? = nil) -> SpeechJob {
         let parser = SSMLParser()
         parser.rules = rules
+        parser.dictionary = phonemes == nil ? nil : dictionary
         parser.exactPitch = exactPitch
         parser.phonemes = phonemes
         let xml = XMLParser(data: Data(ssml.utf8))
@@ -586,7 +587,8 @@ struct SpeechJob {
         // Not well-formed: strip anything tag-like.
         var job = SpeechJob()
         let plain = ssml.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-        job.text = rules?.apply(plain) ?? plain
+        job.text = (phonemes == nil ? nil : dictionary).map { $0.speechText(plain, rules: rules, phonemes: phonemes) }
+            ?? rules?.apply(plain) ?? plain
         return job
     }
 }
@@ -594,6 +596,7 @@ struct SpeechJob {
 private final class SSMLParser: NSObject, XMLParserDelegate {
     var job = SpeechJob()
     var rules: PronunciationRules?
+    var dictionary: CommunityDictionary?  // the community dictionary, applied before the rules
     var exactPitch = false
     var phonemes: ((String, Bool) -> String?)?
     // prosody currently in effect while walking the tree
@@ -639,7 +642,8 @@ private final class SSMLParser: NSObject, XMLParserDelegate {
             switch tok {
             case .text(let t):
                 let clean = t.replacingOccurrences(of: "\u{1b}", with: " ")
-                out += spell ? clean : rules?.apply(clean) ?? clean  // spelled text is read as it is
+                // spelled text is read as it is
+                out += spell ? clean : dictionary?.speechText(clean, rules: rules, phonemes: phonemes) ?? rules?.apply(clean) ?? clean
             case .phoneme(let ipa, let text):
                 let joined = out.last.map { !$0.isWhitespace && $0 != "\\" } ?? false
                 if let ph = phonemes?(ipa, joined) { out += ph } else { out += spell ? text : rules?.apply(text) ?? text }
@@ -821,11 +825,12 @@ final class VoiceEngine {
     /// nil for the voice as it shipped. Its rules come with `job`'s text.
     func speak(_ job: SpeechJob, voiceKey: String, fallbackKey: String? = nil, rulesPack: String? = nil,
                resetCommands: Bool = true, twentyFourHour: Bool = true, modernRate: Bool = true,
-               steadyPauses: Bool = true, spellingPauses: Bool = false) {
+               steadyPauses: Bool = true, spellingPauses: Bool = false, spellLowercase: Bool = false) {
         guard let stream else { return }
         vxs_set_rules_pack(stream, rulesPack)
         vxs_set_steady_pauses(stream, steadyPauses ? 1 : 0)
         vxs_set_spelling_pauses(stream, spellingPauses ? 1 : 0)
+        vxs_set_spell_lowercase(stream, spellLowercase ? 1 : 0)
         vxs_set_mt_reset(stream, resetCommands ? 1 : 0)
         vxs_set_mt_24_hour(stream, twentyFourHour ? 1 : 0)
         vxs_set_mt_modern_rate(stream, modernRate ? 1 : 0)
@@ -836,6 +841,23 @@ final class VoiceEngine {
     func cancel() {
         if let stream { vxs_cancel(stream) }
     }
+
+    /// Engine text that says the IPA in a voice (core/vxphonemes.c), or nil when it can't.
+    static func phonemeText(key: String, language: String, ipa: String, joined: Bool = false) -> String? {
+        guard let root = VoiceCatalog.root?.path,
+              let p = vx_phoneme_text(root, VoiceCatalog.enhancedRoot?.path, key, language, ipa, joined ? 1 : 0) else { return nil }
+        defer { free(p) }
+        return String(cString: p)
+    }
+
+    /// IPA for X-SAMPA, or nil when it isn't X-SAMPA.
+    static func ipa(xsampa: String) -> String? {
+        guard let p = vx_xsampa_to_ipa(xsampa, strlen(xsampa), nil) else { return nil }
+        defer { free(p) }
+        return String(cString: p)
+    }
+
+    static func hasVowel(ipa: String) -> Bool { vx_ipa_has_vowel(ipa) != 0 }
 
     func preload(_ voiceKey: String, rulesPack: String? = nil) {
         guard let stream else { return }

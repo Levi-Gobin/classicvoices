@@ -30,6 +30,10 @@ struct SpeechSettings: Codable, Equatable {
     /// Spelling pauses before, between and after the letters, as the voices
     /// themselves do (vxs_set_spelling_pauses). iOS 3 and 4 voices always do.
     var spellingPauses = false
+    /// Spelled capitals said as lowercase letters, without "capital" before them (vxs_set_spell_lowercase).
+    var spellLowercase = false
+    /// The community pronunciation dictionaries (CommunityDictionary): opt in. Off, nothing is fetched.
+    var communityDictionaries = false
     var rulesOverride: [String: Bool] = [:]
     var newerRulesOverride: [String: Bool] = [:]
     var pitchFallbackOverride: [String: Bool] = [:]
@@ -56,6 +60,8 @@ struct SpeechSettings: Codable, Equatable {
         modernRate = try c.decodeIfPresent(Bool.self, forKey: .modernRate) ?? modernRate
         steadyPauses = try c.decodeIfPresent(Bool.self, forKey: .steadyPauses) ?? steadyPauses
         spellingPauses = try c.decodeIfPresent(Bool.self, forKey: .spellingPauses) ?? spellingPauses
+        spellLowercase = try c.decodeIfPresent(Bool.self, forKey: .spellLowercase) ?? spellLowercase
+        communityDictionaries = try c.decodeIfPresent(Bool.self, forKey: .communityDictionaries) ?? communityDictionaries
         rulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .rulesOverride) ?? [:]
         newerRulesOverride = try c.decodeIfPresent([String: Bool].self, forKey: .newerRulesOverride) ?? [:]
         pitchFallbackOverride = try c.decodeIfPresent([String: Bool].self, forKey: .pitchFallbackOverride) ?? [:]

@@ -77,7 +77,10 @@ enum SpeakTimeTest {
                 guard let v = all.first(where: { $0.identifier.hasSuffix(suffix) && $0.identifier.contains("ClassicVoices") }) else {
                     print("SPEAKTIME \(suffix): voice not found"); continue
                 }
-                let u = AVSpeechUtterance(string: "Hello there. This is a sentence long enough to measure.")
+                // `-speaktext "..."`: say that instead (checks of the community dictionaries)
+                let custom = CommandLine.arguments.firstIndex(of: "-speaktext").flatMap {
+                    $0 + 1 < CommandLine.arguments.count ? CommandLine.arguments[$0 + 1] : nil }
+                let u = AVSpeechUtterance(string: custom ?? "Hello there. This is a sentence long enough to measure.")
                 u.voice = v
                 u.pitchMultiplier = pitch
                 if CommandLine.arguments.contains("-mute") { u.volume = 0 }  // checks on a device wired to speakers

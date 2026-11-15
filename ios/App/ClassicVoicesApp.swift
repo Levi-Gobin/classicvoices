@@ -8,6 +8,29 @@ struct ClassicVoicesApp: App {
     #endif
 
     init() {
+        // `-printdicts`: the person's own dictionary entries (Dictionaries/Mine), printed, then quits (the App Group
+        // folder is the app's to read, not the shell's).
+        if CommandLine.arguments.contains("-printdicts") {
+            if let mine = DictionaryStore.mine {
+                for f in ((try? FileManager.default.contentsOfDirectory(atPath: mine.path)) ?? []).sorted() {
+                    print("== \(f)")
+                    print((try? String(contentsOf: mine.appendingPathComponent(f), encoding: .utf8)) ?? "")
+                }
+            }
+            fflush(stdout)
+            exit(0)
+        }
+        // `-dictput <file> <pattern> <replacement> <case 0/1> <type> [<old pattern> <old type>]`: adds or changes one
+        // of the person's entries as the editor does, then quits.
+        if let i = CommandLine.arguments.firstIndex(of: "-dictput"), i + 5 < CommandLine.arguments.count {
+            let a = Array(CommandLine.arguments[(i + 1)...])
+            let e = DictionaryStore.Entry(pattern: a[1], replacement: a[2], caseSensitive: a[3] == "1", type: Int(a[4]) ?? 0)
+            let old = a.count > 6 ? "\(Int(a[6]) ?? 0)\t\(a[5])" : nil
+            DictionaryStore.put(a[0], e, oldKey: old)
+            print("put \(e.line)")
+            fflush(stdout)
+            exit(0)
+        }
         // `-import <folder>` adds Mac OS X speech files as Add from Files does, then quits.
         if let i = CommandLine.arguments.firstIndex(of: "-import"), i + 1 < CommandLine.arguments.count {
             // An absolute path, or one inside the app's Documents folder.
@@ -114,12 +137,27 @@ struct ClassicVoicesApp: App {
                     Task.detached { try? VoiceStore.shared.flush() }
                 }
                 if phase == .active { VoiceLibrary.shared.disc.resume() }
+                // the community pronunciation dictionaries, for the speech extension (at most every 6 hours)
+                if phase == .active, VoiceLibrary.shared.settings.communityDictionaries { CommunityDictionary.refreshAll() }
+                #if os(iOS)
+                if phase == .background { DictionaryRefresh.schedule() }
+                #elseif os(macOS)
+                if phase == .active { DictionaryRefresh.start() }
+                #endif
             }
     }
 }
 
 #if canImport(UIKit)
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        #if os(iOS)
+        DictionaryRefresh.register()  // the community dictionaries' background refresh
+        #endif
+        return true
+    }
+
     /// Downloads finished while the app wasn't running.
     func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
@@ -473,7 +511,8 @@ final class DirectPlayer: ObservableObject {
         job.rate = rate
         VoiceEngine.shared.speak(job, voiceKey: voiceKey, rulesPack: rulesPack, resetCommands: settings.resetCommands,
                                  twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate,
-                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses)
+                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses,
+                                 spellLowercase: settings.spellLowercase)
         stats = "Speaking…"
         DispatchQueue.global().async { [weak self] in
             guard let stream = VoiceEngine.shared.stream else { return }
@@ -495,6 +534,33 @@ final class DirectPlayer: ObservableObject {
     }
 
     let systemSynth = AVSpeechSynthesizer()
+
+    /// For the dictionary editor: says text in a voice with only `entries` (.dic lines) applied, then Apple's
+    /// rules, or `engineText` as it is (a sound on its own). The voice must be readable here (`canTryOut`).
+    func tryOut(_ text: String, entries: String = "", engineText: String? = nil, voiceKey: String, language: String,
+                rules: PronunciationRules?, rulesPack: String?, settings: SpeechSettings) {
+        #if !os(macOS)
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
+        if !engine.isRunning { try? engine.start() }
+        VoiceEngine.shared.cancel()
+        var job = SpeechJob()
+        if let engineText {
+            job.text = engineText
+        } else {
+            let plain = text.replacingOccurrences(of: "\u{1b}", with: " ")
+            let phonemes: (String, Bool) -> String? = { VoiceEngine.phonemeText(key: voiceKey, language: language, ipa: $0, joined: $1) }
+            job.text = entries.isEmpty ? (rules?.apply(plain) ?? plain)
+                : CommunityDictionary.fromText(entries).speechText(plain, rules: rules, phonemes: phonemes)
+        }
+        VoiceEngine.shared.speak(job, voiceKey: voiceKey, rulesPack: rulesPack, resetCommands: settings.resetCommands,
+                                 twentyFourHour: settings.twentyFourHour, modernRate: settings.modernRate,
+                                 steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses,
+                                 spellLowercase: settings.spellLowercase)
+    }
+
+    func canTryOut(_ key: String) -> Bool { readableHere(key) }
 
     func stop() {
         VoiceEngine.shared.cancel()

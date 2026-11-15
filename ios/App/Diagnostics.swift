@@ -87,6 +87,8 @@ struct DiagnosticsView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding()
+                // a new element when the report arrives: VoiceOver kept reading "Checking…" from the old one
+                .id(text)
         }
         .toolbar {
             Button(copied ? "Copied" : "Copy Report") {
@@ -103,6 +105,8 @@ struct DiagnosticsView: View {
         .task {
             let errors = library.enhanced.errors.merging(library.mac.errors) { a, _ in a }.merging(library.siri.errors) { a, _ in a }
             text = await Task.detached { Diagnostics.report(downloadErrors: errors) }.value
+            // the checks take several seconds (each engine speaks a sentence): say when the report is there
+            AccessibilityNotification.Announcement("Report ready").post()
         }
     }
 }

@@ -181,6 +181,8 @@ targetTemplates:
       base:
         PRODUCT_NAME: ClassicVoices
         PRODUCT_BUNDLE_IDENTIFIER: com.levigobin.ClassicVoices
+        # merged into the generated one: background refresh for the community dictionaries
+        INFOPLIST_FILE: Info-Device.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES

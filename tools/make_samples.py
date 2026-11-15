@@ -13,6 +13,7 @@ rules are skipped and "iOS" isn't spelled out as the app does. <Voices folder> t
 installed app's Synth.appex/Contents/Resources/Voices). Samples go to
 ios/Samples/<identifier without com.levigobin.ClassicVoices.>.m4a. The
 greeting is VoiceItem.greeting of a row that isn't downloaded yet."""
+import json
 import os
 import shutil
 import subprocess
@@ -30,9 +31,19 @@ VERSION = {"ios5": "iOS 5", "ios6": "iOS 6", "ios70": "iOS 7", "siri7": "Siri in
 WORKERS = int(os.environ.get("WORKERS", "3"))
 
 
-def greeting(name, enhanced, build):
-    return "Hello, my name is %s. %s %s." % (name, "I am an enhanced voice from" if enhanced else "I am from",
-                                             VERSION[build])
+GREETINGS = os.path.join(ROOT, "ios", "Shared", "Greetings.json")
+
+
+def greeting(name, enhanced, build, locale):
+    """As the app's VoiceItem.greeting: Greetings.json in the voice's language (its locale's own form, else its
+    language's, else English); "Siri in iOS 7" is English, other languages name the version "iOS 7 Siri"."""
+    with open(GREETINGS, encoding="utf-8") as f:
+        table = json.load(f)
+    tag = (locale or "en").replace("_", "-")
+    english = tag.split("-")[0] == "en"
+    forms = table.get(tag) or table.get(tag.split("-")[0]) or table["en"]
+    version = VERSION[build] if english or build != "siri7" else "iOS 7 Siri"
+    return forms[1 if enhanced else 0].replace("{name}", name).replace("{version}", version)
 
 
 def jobs(kinds):
@@ -111,9 +122,11 @@ def main():
             build = key.split("/")[0]
             # a package's folder can differ in case from the catalog's name (Sin-ji)
             d = os.path.join(downloads, build)
-            if os.path.isdir(d) and not os.path.isdir(os.path.join(downloads, key)):
+            # (listed, not isdir: the Mac's disk ignores case)
+            if os.path.isdir(d) and key.split("/")[1] not in os.listdir(d):
                 key = next((build + "/" + f for f in os.listdir(d) if f.lower() == key.split("/")[1].lower()), key)
-            text = greeting(name, enhanced, build[:-1] if kind == "enhanced" else build)
+            text = greeting(name, enhanced, build[:-1] if kind == "enhanced" else build,
+                            entry.get("locale") or entry.get("language"))
             wav = os.path.join(data, "sample.wav")
             env = dict(os.environ, CLASSICVOICES_DATA=data)
             r = subprocess.run([cvsay, "-q", "-v", key, "-o", wav, text], env=env, capture_output=True, text=True)
