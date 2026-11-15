@@ -12,9 +12,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CV_ABI 9  // 4: vxs_set_apple_tone; 5: vxs_set_steady_pauses, vxs_set_spelling_pauses;
+#define CV_ABI 10  // 4: vxs_set_apple_tone; 5: vxs_set_steady_pauses, vxs_set_spelling_pauses;
                   // 6: vxs_take_notice, vxs_set_safe_voice; 7: cv_speech_text; 8: its own entries, community and
-                  // dic_text arguments, vx_xsampa_to_ipa, vx_ipa_has_vowel; 9: vxs_set_spell_lowercase
+                  // dic_text arguments, vx_xsampa_to_ipa, vx_ipa_has_vowel; 9: vxs_set_spell_lowercase; 10: vxs_text_xsampa
 
 int cv_abi_version(void) { return CV_ABI; }
 

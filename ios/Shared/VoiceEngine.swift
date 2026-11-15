@@ -859,6 +859,21 @@ final class VoiceEngine {
 
     static func hasVowel(ipa: String) -> Bool { vx_ipa_has_vowel(ipa) != 0 }
 
+    /// A stream of its own for Convert to Phonemes (the shared one may be speaking).
+    nonisolated(unsafe) private static var converter: OpaquePointer? = {
+        guard let root = VoiceCatalog.root else { return nil }
+        let s = vxs_create(root.path)
+        if let enhanced = VoiceCatalog.enhancedRoot { vxs_set_asset_root(s, enhanced.path) }
+        return s
+    }()
+
+    /// How the voice says a word, as X-SAMPA (no stress marks), or nil.
+    static func xsampa(word: String, voiceKey: String, language: String) -> String? {
+        guard let s = converter, let p = vxs_text_xsampa(s, voiceKey, language, word) else { return nil }
+        defer { free(p) }
+        return String(cString: p)
+    }
+
     func preload(_ voiceKey: String, rulesPack: String? = nil) {
         guard let stream else { return }
         vxs_set_rules_pack(stream, rulesPack)

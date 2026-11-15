@@ -2568,3 +2568,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   Android: opt-in notification "Dictionaries Updated" when they change by themselves (local notifications,
   no push service). Manual downloads (Apple apps, NVDA): the same text in an alert with OK; "Dictionaries
   Up to Date" when nothing changed.
+- Convert to Phonemes (Nico, 2026-11-15): a button in the three entry editors turning the replacement's words
+  into ~~X-SAMPA~~ as the voice says them, keeping existing spans and (regular expressions) \1 / \g<name>
+  groups; a word that can't be converted stays as text. vxs_text_xsampa (a stream that isn't speaking: the
+  editors keep one of their own) gets the voice's symbols for a word (plain_phonemes) and
+  vx_lhp_to_xsampa maps them back: each symbol to the sound whose first spelling it is (a few preferred for
+  ambiguous ones; English E0 is ɝ), & pairs split, suffixes as modifiers (English aspiration left out), then
+  IPA to X-SAMPA. No stress marks (the engine doesn't report stress). NVDA engine interface 10.

@@ -53,6 +53,8 @@ def load():
     lib.vxs_set_spelling_pauses.argtypes = [c.c_void_p, c.c_int]
     lib.vxs_set_spell_lowercase.restype = None
     lib.vxs_set_spell_lowercase.argtypes = [c.c_void_p, c.c_int]
+    lib.vxs_text_xsampa.restype = c.c_void_p
+    lib.vxs_text_xsampa.argtypes = [c.c_void_p, c.c_char_p, c.c_char_p, c.c_char_p]
     lib.vxs_engine_pitch.restype = c.c_int
     lib.vxs_engine_pitch.argtypes = [c.c_int]
     lib.vxs_last_error.restype = c.c_char_p
@@ -94,7 +96,7 @@ def load():
     lib.vx_lang_choose.restype = c.c_int
     lib.vx_lang_choose.argtypes = [c.c_char_p, c.c_char_p, c.c_char_p, c.POINTER(c.c_char_p),
                                    c.POINTER(c.c_char_p), c.c_size_t]
-    if lib.cv_abi_version() != 9:
+    if lib.cv_abi_version() != 10:
         raise OSError("cvengine ABI mismatch")
     _lib = lib
     return lib
@@ -106,6 +108,28 @@ def phoneme_text(voices_root, downloads_root, voice_key, language, ipa, joined):
     lib = load()
     p = lib.vx_phoneme_text(voices_root.encode("utf-8"), downloads_root.encode("utf-8"), voice_key.encode("utf-8"),
                             (language or "").encode("utf-8"), ipa.encode("utf-8"), 1 if joined else 0)
+    if not p:
+        return None
+    try:
+        return ctypes.string_at(p).decode("utf-8", "replace")
+    finally:
+        lib.cv_free(p)
+
+
+_converter = None  # a stream of its own for Convert to Phonemes (the speaking one is busy)
+
+
+def text_xsampa(voices_root, downloads_root, voice_key, language, word):
+    """How the voice says a word, as X-SAMPA (no stress marks), or None."""
+    global _converter
+    lib = load()
+    if _converter is None:
+        _converter = lib.vxs_create(voices_root.encode("utf-8"))
+        if _converter:
+            lib.vxs_set_asset_root(_converter, downloads_root.encode("utf-8"))
+    if not _converter:
+        return None
+    p = lib.vxs_text_xsampa(_converter, voice_key.encode("utf-8"), (language or "").encode("utf-8"), word.encode("utf-8"))
     if not p:
         return None
     try:

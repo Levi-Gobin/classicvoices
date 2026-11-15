@@ -558,3 +558,42 @@ def phoneme_examples(data_root, language):
                 order.append(ph)
             by[ph] = ex
     return [(p, by[p]) for p in order]
+
+
+# ---------------------------------------------------------------- Convert to Phonemes (the dictionary editors)
+
+def to_phonemes(replacement, regex, convert):
+    """A replacement with its words as phonemes: each word becomes ~~X-SAMPA~~ as convert(word) gives it (None:
+    the word stays). Phonemes already there are kept, and so, in a regular expression's replacement, are its
+    groups (\\1, \\g<name>). Returns (new replacement, words converted, words left)."""
+    import re
+    out, i, done, left = [], 0, 0, 0
+    s = replacement
+    while i < len(s):
+        if s.startswith("~~", i) and not s.startswith("~~~", i):
+            m = re.compile(r"~~+").search(s, i + 2)  # the span's close: the first run of two or more tildes
+            end = m.end() if m else len(s)
+            out.append(s[i:end])
+            i = end
+            continue
+        if regex and s[i] == "\\":
+            m = re.match(r"\\(\d+|g<[^>]*>)", s[i:])
+            n = len(m.group(0)) if m else min(2, len(s) - i)
+            out.append(s[i:i + n])
+            i += n
+            continue
+        m = re.match(r"[^\W\d_]+(?:'[^\W\d_]+)*", s[i:])
+        if m:
+            word = m.group(0)
+            x = convert(word)
+            if x:
+                out.append("~~%s~~" % x)
+                done += 1
+            else:
+                out.append(word)
+                left += 1
+            i += len(word)
+            continue
+        out.append(s[i])
+        i += 1
+    return "".join(out), done, left

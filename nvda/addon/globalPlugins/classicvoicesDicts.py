@@ -151,6 +151,11 @@ class EntryDialog(wx.Dialog):
         phon.Bind(wx.EVT_BUTTON, self.onPhoneme)
         phon.Enable(_synth() is not None)
         row.Add(phon)
+        # Translators: button turning the replacement's words into phonemes, as the voice says them.
+        conv = wx.Button(self, label=_("Convert to phon&emes"))
+        conv.Bind(wx.EVT_BUTTON, self.onConvert)
+        conv.Enable(_synth() is not None and bool(info[0]) and not str(info[0]).startswith("mt"))
+        row.Add(conv)
         main.Add(row, flag=wx.ALL, border=5)
         # Translators: check box: the pattern matches only with the same capitals.
         self.case = wx.CheckBox(self, label=_("Ca&se sensitive"))
@@ -204,6 +209,24 @@ class EntryDialog(wx.Dialog):
             self.replacement.SetInsertionPoint(pos)
         d.Destroy()
         self.replacement.SetFocus()
+
+    def onConvert(self, evt):
+        """The replacement's words as phonemes, as the voice says them (no stress marks: add them where needed)."""
+        key, lang, vroot, droot, _data = self.info
+        text, done, left = cv_dicts.to_phonemes(
+            self.replacement.GetValue(), self.TYPES[self.kind.GetSelection()][0] == 1,
+            lambda w: cv_lib.text_xsampa(vroot, droot, key, lang, w))
+        self.replacement.SetValue(text)
+        self.replacement.SetFocus()
+        if done and not left:
+            # Translators: after converting the replacement; stress isn't known, so it's added by hand.
+            ui.message(_("Converted to phonemes. Add stress marks where needed."))
+        elif done:
+            # Translators: some words couldn't be converted.
+            ui.message(_("Converted {done} words; {left} stayed as they were.").format(done=done, left=left))
+        else:
+            # Translators: nothing could be converted.
+            ui.message(_("Nothing to convert."))
 
     def onOk(self, evt):
         e = self.entry()

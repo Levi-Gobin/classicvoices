@@ -1091,6 +1091,112 @@ static const XS kXsampa[] = {
     {" ", " "}, {"-", ""},
 };
 
+// --- the other way: the voice's own sounds as X-SAMPA (the dictionary editors' Convert to Phonemes)
+
+static void put_cp(Str *o, uint32_t c) {
+    char u[4];
+    str_add(o, u, encode(c, u));
+}
+
+// One of the voice's symbols as IPA into o; 0 if it can't be told. english: aspiration isn't written.
+static int symbol_ipa(const char *y, int english, Str *o) {
+    size_t n = strlen(y);
+    if (!n) return 0;
+    // the sounds a voice spells this way first, most common first where a symbol is the first choice of several
+    static const struct { const char *y; uint32_t ipa; } kPrefer[] = {
+        {"$", 0x259}, {"E0", 0x25C}, {"A", 0x251}, {"O", 0x254}, {"^", 0x28C}, {"@", 0xE6}, {"U", 0x28A}, {"I", 0x26A},
+        {"E", 0x25B}, {"R+", 0x279}, {"r6", 0x27E}, {"nK", 0x14B}, {"J", 0x272}, {"S", 0x283}, {"Z", 0x292},
+        {"T", 0x3B8}, {"D", 0xF0}, {"x", 'x'}, {"?", 0x294},
+    };
+    for (size_t i = 0; i < sizeof kPrefer / sizeof *kPrefer; i++)
+        if (!strcmp(y, kPrefer[i].y)) {
+            if (english && kPrefer[i].ipa == 0x25C) { put_cp(o, 0x25D); return 1; }  // English E0 is r-coloured
+            put_cp(o, kPrefer[i].ipa);
+            return 1;
+        }
+    // a sound whose first spelling it is
+    for (size_t i = 0; i < sizeof kBase / sizeof *kBase; i++) {
+        const char *l = kBase[i].lhp, *bar = strchr(l, '|');
+        size_t fl = bar ? (size_t)(bar - l) : strlen(l);
+        if (fl == n && !memcmp(l, y, n)) { put_cp(o, kBase[i].ipa); return 1; }
+    }
+    // two sounds as one symbol (a diphthong, an affricate): each part
+    const char *amp = strchr(y, '&');
+    if (amp && amp > y && amp[1]) {
+        char a[16], b[16];
+        snprintf(a, sizeof a, "%.*s", (int)(amp - y), y);
+        snprintf(b, sizeof b, "%s", amp + 1);
+        size_t mark = o->n;
+        if (symbol_ipa(a, english, o) && symbol_ipa(b, english, o)) return 1;
+        o->n = mark;
+        return 0;
+    }
+    // a symbol with a modifier's suffix (length, nasal, syllabic, aspirated ...)
+    for (size_t i = 0; i < sizeof kSuffix / sizeof *kSuffix; i++) {
+        const char *opts = kSuffix[i].suffix;
+        while (*opts) {
+            const char *bar = strchr(opts, '|');
+            size_t sl = bar ? (size_t)(bar - opts) : strlen(opts);
+            if (sl && sl < n && !memcmp(y + n - sl, opts, sl)) {
+                char base[16];
+                snprintf(base, sizeof base, "%.*s", (int)(n - sl), y);
+                size_t mark = o->n;
+                if (symbol_ipa(base, english, o)) {
+                    uint32_t m = kSuffix[i].ipa;
+                    if (!(english && m == 0x2B0)) put_cp(o, m);
+                    return 1;
+                }
+                o->n = mark;
+            }
+            if (!bar) break;
+            opts = bar + 1;
+        }
+    }
+    return 0;
+}
+
+// IPA as X-SAMPA (the table read backwards, longest IPA first); NULL if something has no X-SAMPA.
+static char *ipa_to_xsampa(const char *ipa) {
+    Str o = {0};
+    size_t n = strlen(ipa);
+    for (size_t i = 0; i < n;) {
+        const XS *best = NULL;
+        size_t bl = 0;
+        for (size_t j = 0; j < sizeof kXsampa / sizeof *kXsampa; j++) {
+            size_t l = strlen(kXsampa[j].ipa);
+            if (l > bl && l <= n - i && !memcmp(ipa + i, kXsampa[j].ipa, l) && strcmp(kXsampa[j].x, "_=") &&
+                strcmp(kXsampa[j].x, "_~") && strcmp(kXsampa[j].x, "'") && strcmp(kXsampa[j].x, "P")) {
+                best = &kXsampa[j];
+                bl = l;
+            }
+        }
+        if (!best) { free(o.s); return NULL; }
+        str_puts(&o, best->x);
+        i += bl;
+    }
+    str_add(&o, "", 0);
+    return o.s ? o.s : strdup("");
+}
+
+char *vx_lhp_to_xsampa(const char *symbols, const char *language) {
+    int english = language && (language[0] == 'e' || language[0] == 'E') && (language[1] == 'n' || language[1] == 'N');
+    Str ipa = {0};
+    char tok[16];
+    for (const char *p = symbols; *p;) {
+        while (*p == ' ') p++;
+        size_t l = strcspn(p, " ");
+        if (!l) break;
+        snprintf(tok, sizeof tok, "%.*s", (int)(l < sizeof tok ? l : sizeof tok - 1), p);
+        p += l;
+        if (!strcmp(tok, "#") || !strcmp(tok, "_") || !strcmp(tok, "'") || !strcmp(tok, ".")) continue;
+        if (!symbol_ipa(tok, english, &ipa)) { free(ipa.s); return NULL; }
+    }
+    str_add(&ipa, "", 0);
+    char *x = ipa_to_xsampa(ipa.s ? ipa.s : "");
+    free(ipa.s);
+    return x;
+}
+
 char *vx_xsampa_to_ipa(const char *x, size_t len, size_t *bad) {
     char *o = malloc(len * 4 + 1);
     size_t k = 0;

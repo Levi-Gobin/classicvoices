@@ -192,6 +192,7 @@ private struct MobileEntrySheet: View {
                     TextField("Replacement", text: $replacement)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Insert Phoneme…") { showPhonemes = true }.disabled(voices.isEmpty)
+                    Button("Convert to Phonemes", action: convert).disabled(voice == nil)
                 } footer: {
                     Text("Phonemes go between ~~ and ~~, in X-SAMPA.")
                 }
@@ -247,6 +248,18 @@ private struct MobileEntrySheet: View {
             }
             voiceKey = voices.first?.entry?.key ?? ""
         }
+    }
+
+    /// The replacement's words as phonemes, as the voice says them (no stress marks: added by hand where needed).
+    private func convert() {
+        guard let v = voice, let key = v.entry?.key else { return }
+        let r = EntryDraft.toPhonemes(replacement, regex: type == 1) {
+            VoiceEngine.xsampa(word: $0, voiceKey: key, language: v.language)
+        }
+        replacement = r.text
+        AccessibilityNotification.Announcement(r.done == 0 ? "Nothing to convert"
+            : r.left == 0 ? "Converted to phonemes. Add stress marks where needed."
+            : "Converted \(r.done) words; \(r.left) stayed as they were").post()
     }
 
     private func preview() {

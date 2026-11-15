@@ -127,6 +127,11 @@ void vxs_set_spelling_pauses(VxStream *s, int on);
 // Spelled letters said without "capital" before them: they're lowercased first (off by default).
 void vxs_set_spell_lowercase(VxStream *s, int on);
 
+// How the voice says a word, as X-SAMPA (malloc'd), or NULL (MacinTalk, or a sound it can't tell): the dictionary
+// editors' Convert to Phonemes. No stress marks (the engine doesn't report stress). Uses the stream's engine: call
+// it on a stream that isn't speaking.
+char *vxs_text_xsampa(VxStream *s, const char *voice_key, const char *language, const char *text);
+
 // Timing of the most recent utterance (milliseconds), for diagnostics.
 double vxs_last_first_audio_ms(VxStream *s);
 double vxs_last_synth_ms(VxStream *s);

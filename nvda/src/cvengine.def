@@ -23,6 +23,7 @@ EXPORTS
     vxs_set_steady_pauses
     vxs_set_spelling_pauses
     vxs_set_spell_lowercase
+    vxs_text_xsampa
     vxs_engine_pitch
     vxs_last_first_audio_ms
     vxs_last_synth_ms

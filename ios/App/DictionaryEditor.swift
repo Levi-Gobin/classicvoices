@@ -68,6 +68,42 @@ final class EntryDraft {
         return replacement + "~~" + xsampa + "~~"
     }
 
+    /// A replacement with its words as phonemes (~~X-SAMPA~~, as `convert` gives them; nil: the word stays). Phonemes
+    /// already there are kept, and so, in a regular expression's replacement, are its groups (\1, \g<name>).
+    static func toPhonemes(_ s: String, regex: Bool, convert: (String) -> String?) -> (text: String, done: Int, left: Int) {
+        let c = Array(s)
+        var out = "", i = 0, done = 0, left = 0
+        func isLetter(_ ch: Character) -> Bool { ch.isLetter }
+        while i < c.count {
+            if c[i] == "~", i + 1 < c.count, c[i + 1] == "~", !(i + 2 < c.count && c[i + 2] == "~") {
+                var j = i + 2  // the span's close: the first run of two or more tildes
+                while j + 1 < c.count, !(c[j] == "~" && c[j + 1] == "~") { j += 1 }
+                var end = j + 1 < c.count ? j + 2 : c.count
+                while end < c.count, c[end] == "~" { end += 1 }
+                out += String(c[i..<end]); i = end
+                continue
+            }
+            if regex, c[i] == "\\" {
+                var j = i + 1
+                if j < c.count, c[j].isNumber { while j < c.count, c[j].isNumber { j += 1 } }
+                else if j < c.count, c[j] == "g", j + 1 < c.count, c[j + 1] == "<", let gt = c[j...].firstIndex(of: ">") { j = gt + 1 }
+                else { j = min(i + 2, c.count) }
+                out += String(c[i..<j]); i = j
+                continue
+            }
+            if isLetter(c[i]) {
+                var j = i
+                while j < c.count, isLetter(c[j]) || (c[j] == "'" && j + 1 < c.count && isLetter(c[j + 1])) { j += 1 }
+                let word = String(c[i..<j])
+                if let x = convert(word) { out += "~~\(x)~~"; done += 1 } else { out += word; left += 1 }
+                i = j
+                continue
+            }
+            out.append(c[i]); i += 1
+        }
+        return (out, done, left)
+    }
+
     /// Why an entry can't be saved, nil, or "empty" (an empty replacement: asked about first).
     static func problem(_ e: DictionaryStore.Entry, emptyOK: Bool) -> String? {
         if e.pattern.isEmpty { return "Type the pattern to replace." }
@@ -286,6 +322,8 @@ private struct EntryPage: View {
                     open(.phonemes)
                 }
                 .disabled(voices.isEmpty)
+                Button("Convert to Phonemes") { convert() }
+                    .disabled(voices.isEmpty || draft.voiceKey.hasPrefix("mt"))
                 Toggle("Case sensitive", isOn: $draft.caseSensitive)
                 Picker("Type", selection: $draft.type) {
                     Text("Whole word").tag(2)
@@ -357,6 +395,18 @@ private struct EntryPage: View {
         .onChange(of: draft.voiceKey) { _, k in
             if let v = voices.first(where: { $0.entry?.key == k }) { draft.language = v.language }
         }
+    }
+
+    /// The replacement's words as phonemes, as the voice says them (no stress marks: added by hand where needed).
+    private func convert() {
+        let key = draft.voiceKey, lang = draft.language
+        let r = EntryDraft.toPhonemes(draft.replacement, regex: draft.type == 1) {
+            VoiceEngine.xsampa(word: $0, voiceKey: key, language: lang)
+        }
+        draft.replacement = r.text
+        AccessibilityNotification.Announcement(r.done == 0 ? "Nothing to convert"
+            : r.left == 0 ? "Converted to phonemes. Add stress marks where needed."
+            : "Converted \(r.done) words; \(r.left) stayed as they were").post()
     }
 
     private func hear(withEntry: Bool) {

@@ -32,6 +32,10 @@ char *vx_phoneme_text(const char *voices_root, const char *asset_root, const cha
 // Whether the IPA has a vowel or a syllabic consonant.
 int vx_ipa_has_vowel(const char *ipa);
 
+// The voice's own sounds (its symbols, space-separated, as vxs_text_xsampa gets them) as X-SAMPA, malloc'd; NULL
+// when one can't be told. Stress isn't known (the engine doesn't report it); English aspiration isn't written.
+char *vx_lhp_to_xsampa(const char *symbols, const char *language);
+
 // X-SAMPA -> IPA (UTF-8, malloc'd); NULL, with the offending byte's offset in
 // *bad (may be NULL), when something in it isn't X-SAMPA.
 char *vx_xsampa_to_ipa(const char *xsampa, size_t len, size_t *bad);

@@ -1,5 +1,6 @@
 #include "vxstream.h"
 #include "vxengine.h"
+#include "vxphonemes.h"
 #include "mt/mtengine.h"
 
 #include <ctype.h>
@@ -1797,6 +1798,22 @@ void vxs_set_steady_pauses(VxStream *s, int on) { atomic_store(&s->pauses_shorte
 void vxs_set_spelling_pauses(VxStream *s, int on) { atomic_store(&s->spelling_pauses, on ? 1 : 0); }
 
 void vxs_set_spell_lowercase(VxStream *s, int on) { atomic_store(&s->spell_lowercase, on ? 1 : 0); }
+
+char *vxs_text_xsampa(VxStream *s, const char *voice_key, const char *language, const char *text) {
+    if (!s || !voice_key || !text || !*text || is_mt_key(voice_key) || strlen(text) > 100) return NULL;
+    pthread_mutex_lock(&s->mu);
+    Vx *vx = engine_for(s, voice_key, "");
+    EngineSlot *e = NULL;
+    for (int i = 0; vx && i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) e = &s->engines[i];
+    char sym[512];
+    int n = 0, ok = 0;
+    if (e) {
+        if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
+        ok = plain_phonemes(e, vx, text, sym, sizeof sym, &n);
+    }
+    pthread_mutex_unlock(&s->mu);
+    return ok && n ? vx_lhp_to_xsampa(sym, language) : NULL;
+}
 
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);
