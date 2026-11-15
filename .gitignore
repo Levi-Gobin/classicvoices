@@ -25,3 +25,5 @@ ios/*.xcodeproj/
 __pycache__/
 
 nvda/addon/synthDrivers/_classicvoices/*.dll
+
+nvda/addon/synthDrivers/_classicvoices/buildinfo.json

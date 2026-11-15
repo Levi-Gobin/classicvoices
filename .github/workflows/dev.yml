@@ -1,0 +1,91 @@
+# The dev update channel: every push to the dev branch is built and published as the pre-release tagged
+# dev-latest (its files replaced each time, with a dev.json naming the commit and its time). Apps set to
+# development builds update from it (nvda/addon/synthDrivers/_classicvoices/update.py, ios/App/UpdateCheck.swift,
+# android/.../Update.java); stable releases never see it. Nothing of Apple's is in any of these files.
+# The Mac app isn't built here yet: it needs the Developer ID certificate and notarization in this repository's
+# secrets. The APK is signed with the ANDROID_KEYSTORE_B64 secret, the same key as the releases.
+name: Development build
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+concurrency:
+  group: dev-build
+  cancel-in-progress: true  # a newer push replaces the one being built
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    uses: ./.github/workflows/windows.yml
+
+  linux:
+    uses: ./.github/workflows/linux.yml
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the build records the commit and its time
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK pieces
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" > /dev/null
+      - name: Build the APK
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS_B64" ]; then echo "::error::The ANDROID_KEYSTORE_B64 secret is missing."; exit 1; fi
+          printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          ANDROID_NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" KEYSTORE="$RUNNER_TEMP/release.keystore" \
+            sh android/build.sh
+          rm -f "$RUNNER_TEMP/release.keystore"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: classicvoices-apk
+          path: build/android/ClassicVoices.apk
+          compression-level: 0
+
+  publish:
+    needs: [windows, linux, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - name: Files under the names the apps look for
+        run: |
+          mkdir out
+          cp dl/classicvoices-nvda-addon/*.nvda-addon out/classicvoices.nvda-addon
+          cp dl/ClassicVoicesSetup/ClassicVoicesSetup.exe out/
+          cp dl/classicvoices-linux-x86_64/*.tar.gz out/classicvoices-linux-x86_64.tar.gz
+          cp dl/classicvoices-linux-aarch64/*.tar.gz out/classicvoices-linux-aarch64.tar.gz
+          cp dl/classicvoices-apk/ClassicVoices.apk out/
+          V=$(sed -n 's/^VERSION = "\(.*\)"/\1/p' nvda/addon/synthDrivers/_classicvoices/update.py)
+          printf '{"commit": "%s", "time": %s, "version": "%s"}\n' "$GITHUB_SHA" "$(git log -1 --format=%ct "$GITHUB_SHA")" "$V" \
+            > out/dev.json
+          ls -la out
+      - name: Replace the dev-latest pre-release's files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git tag -f dev-latest "$GITHUB_SHA"
+          git push -f origin refs/tags/dev-latest
+          NOTES="Development build of the dev branch at $GITHUB_SHA: every change, before it's tested for a release. Apps set to development builds update from here; this isn't a release."
+          if gh release view dev-latest > /dev/null 2>&1; then
+            gh release edit dev-latest --prerelease --latest=false --title "Development build (not a release)" --notes "$NOTES"
+          else
+            gh release create dev-latest --prerelease --latest=false --title "Development build (not a release)" \
+              --notes "$NOTES" --verify-tag
+          fi
+          gh release upload dev-latest out/* --clobber

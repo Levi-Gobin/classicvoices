@@ -118,6 +118,7 @@ def addon_version():
 
 
 def package():
+    subprocess.check_call([sys.executable, os.path.join(ROOT, "tools", "buildinfo.py")])  # the dev update channel
     version = addon_version()
     os.makedirs(OUT, exist_ok=True)
     bundle = os.path.join(ROOT, "build", "classicvoices-%s.nvda-addon" % version)

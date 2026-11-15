@@ -1083,6 +1083,14 @@ public class MainActivity extends Activity implements ImportService.Listener {
         check("spell_lowercase", getString(R.string.setting_spell_lowercase), Data.spellLowercase(this),
                 pref("spell_lowercase"));
         text(getString(R.string.setting_spell_lowercase_explained));
+        check("dev_builds", getString(R.string.setting_dev_builds), Update.dev(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Update.setDev(MainActivity.this, on);
+                    }
+                });
+        text(getString(R.string.setting_dev_builds_explained));
 
         section(getString(R.string.tts_heading));
         String engine = Settings.Secure.getString(getContentResolver(), "tts_default_synth");

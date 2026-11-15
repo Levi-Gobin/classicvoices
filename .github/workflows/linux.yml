@@ -6,7 +6,9 @@ name: Build the Linux package
 # Speech Dispatcher module.
 on:
   workflow_dispatch:
+  workflow_call:  # dev.yml: the dev channel's build of every push to dev
   push:
+    branches-ignore: [dev]
     paths: ["linux/**", "desktop/**", "core/**", "ports/**", "nvda/addon/**", "nvda/src/**",
             "tools/recomp.py", "tools/profiles/**", ".github/workflows/linux.yml"]
 

@@ -29,6 +29,7 @@ $CC $CFLAGS -o "$OUT/stage/bin/classicvoices-say" linux/cvsay.c $COMMON $LIBS
 cp linux/classicvoices-data "$OUT/stage/bin/"
 # the importer and the fast-engine recompiler (pure Python)
 L=$OUT/stage/lib/classicvoices
+python3 tools/buildinfo.py  # the commit this is built from (the dev update channel)
 cp -R nvda/addon/synthDrivers/_classicvoices "$L/"
 rm -rf "$L/_classicvoices/__pycache__" "$L/_classicvoices"/*.dll
 mkdir -p "$L/tools/profiles" "$L/core"

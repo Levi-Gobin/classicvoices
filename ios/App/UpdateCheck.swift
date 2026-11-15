@@ -47,6 +47,57 @@ final class UpdateCheck {
         number(b).lexicographicallyPrecedes(number(a))
     }
 
+    /// The update channel: "stable" (the releases) or "dev" (every change on the dev branch, from the pre-release
+    /// tagged dev-latest that CI replaces on every push; its dev.json names the commit and time).
+    nonisolated static var devChannel: Bool {
+        get { UserDefaults.standard.string(forKey: "update.channel") == "dev" }
+        set { UserDefaults.standard.set(newValue ? "dev" : "stable", forKey: "update.channel") }
+    }
+
+    /// This build's commit and its time (buildinfo.json, written into the app when it was built), or nil.
+    nonisolated static var buildCommit: (commit: String, time: Double)? {
+        guard let url = Bundle.main.url(forResource: "buildinfo", withExtension: "json"),
+              let d = try? Data(contentsOf: url), let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let c = j["commit"] as? String, !c.isEmpty else { return nil }
+        return (c, (j["time"] as? Double) ?? Double(j["time"] as? Int ?? 0))
+    }
+
+    nonisolated static let devFeed = URL(string: "https://api.github.com/repos/Levi-Gobin/classicvoices/releases/tags/dev-latest")!
+
+    nonisolated static func assets(_ release: [String: Any]) -> [String: Asset] {
+        var assets: [String: Asset] = [:]
+        for a in release["assets"] as? [[String: Any]] ?? [] {
+            guard let name = a["name"] as? String, let url = (a["browser_download_url"] as? String).flatMap(URL.init(string:))
+            else { continue }
+            let digest = a["digest"] as? String ?? ""
+            assets[name] = Asset(url: url, size: a["size"] as? Int ?? 0,
+                                 sha256: digest.hasPrefix("sha256:") ? String(digest.dropFirst(7)).lowercased() : nil)
+        }
+        return assets
+    }
+
+    /// The dev-latest build when its commit is newer than this one's and not `announced`: .some(nil) when there's
+    /// nothing new, nil when GitHub couldn't be asked.
+    nonisolated static func devRelease(announced: String) async -> Release?? {
+        var request = URLRequest(url: devFeed, timeoutInterval: 10)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let release = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let assets = assets(release)
+        guard let info = assets["dev.json"], let (d, r) = try? await URLSession.shared.data(from: info.url),
+              (r as? HTTPURLResponse)?.statusCode == 200,
+              let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              let commit = j["commit"] as? String, !commit.isEmpty else { return nil }
+        let time = (j["time"] as? Double) ?? Double(j["time"] as? Int ?? 0)
+        guard let mine = buildCommit, commit != mine.commit, time > mine.time, announced != String(commit.prefix(7)) else {
+            return .some(nil)
+        }
+        let version = "\(current)-dev.\(commit.prefix(7))"
+        return .some(Release(version: version, page: (release["html_url"] as? String).flatMap(URL.init(string:)) ?? page,
+                             assets: assets))
+    }
+
     func check() async {
         let defaults = UserDefaults.standard
         // For testing an update: `-updateFeed http://127.0.0.1:8765/releases.json`
@@ -56,36 +107,43 @@ final class UpdateCheck {
         guard feed != nil || !CommandLine.arguments.dropFirst().contains(where: { $0.hasPrefix("-") && !$0.hasPrefix("-NS") && !$0.hasPrefix("-Apple") })
         else { return }
         let now = Date().timeIntervalSince1970
-        guard feed != nil || now - defaults.double(forKey: "update.checked") >= 6 * 3600 else { return }
-        var request = URLRequest(url: feed ?? Self.releases, timeoutInterval: 10)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("ClassicVoices/\(Self.current)", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
-              let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
-        defaults.set(now, forKey: "update.checked")
+        // the dev channel (the build of every change on the dev branch): every hour
+        let dev = feed == nil && Self.devChannel
+        guard feed != nil || now - defaults.double(forKey: "update.checked") >= (dev ? 3600 : 6 * 3600) else { return }
         #if CV_PUBLIC
         // updating itself: each check tries again until the new version is in place
         let quiet = MacUpdater.automatic && MacUpdater.canUpdateQuietly
         #else
         let quiet = false
         #endif
-        let announced = feed != nil || quiet ? "0" : defaults.string(forKey: "update.announced") ?? "0"
         var found: Release?
-        for release in list where release["draft"] as? Bool != true {
-            let v = ((release["tag_name"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "v"))
-            guard Self.isNewer(v, than: Self.current), Self.isNewer(v, than: announced),
-                  found.map({ Self.isNewer(v, than: $0.version) }) ?? true else { continue }
-            var assets: [String: Asset] = [:]
-            for a in release["assets"] as? [[String: Any]] ?? [] {
-                guard let name = a["name"] as? String, let url = (a["browser_download_url"] as? String).flatMap(URL.init(string:))
-                else { continue }
-                let digest = a["digest"] as? String ?? ""
-                assets[name] = Asset(url: url, size: a["size"] as? Int ?? 0,
-                                     sha256: digest.hasPrefix("sha256:") ? String(digest.dropFirst(7)).lowercased() : nil)
+        if dev {
+            guard let r = await Self.devRelease(announced: quiet ? "" : defaults.string(forKey: "update.announcedDev") ?? "")
+            else { return }
+            defaults.set(now, forKey: "update.checked")
+            guard let release = r else { return }
+            #if CV_PUBLIC
+            guard MacUpdater.canInstall(release) else { return }  // no Mac build in it (yet)
+            #endif
+            // offered once per commit (its short hash ends the version)
+            defaults.set(String(release.version.split(separator: ".").last ?? ""), forKey: "update.announcedDev")
+            found = release
+        } else {
+            var request = URLRequest(url: feed ?? Self.releases, timeoutInterval: 10)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            request.setValue("ClassicVoices/\(Self.current)", forHTTPHeaderField: "User-Agent")
+            guard let (data, response) = try? await URLSession.shared.data(for: request),
+                  (response as? HTTPURLResponse)?.statusCode == 200,
+                  let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
+            defaults.set(now, forKey: "update.checked")
+            let announced = feed != nil || quiet ? "0" : defaults.string(forKey: "update.announced") ?? "0"
+            for release in list where release["draft"] as? Bool != true {
+                let v = ((release["tag_name"] as? String) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "v"))
+                guard Self.isNewer(v, than: Self.current), Self.isNewer(v, than: announced),
+                      found.map({ Self.isNewer(v, than: $0.version) }) ?? true else { continue }
+                found = Release(version: v, page: (release["html_url"] as? String).flatMap(URL.init(string:)) ?? Self.page,
+                                assets: Self.assets(release))
             }
-            found = Release(version: v, page: (release["html_url"] as? String).flatMap(URL.init(string:)) ?? Self.page,
-                            assets: assets)
         }
         guard let found else { return }
         #if CV_PUBLIC

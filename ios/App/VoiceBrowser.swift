@@ -1118,10 +1118,17 @@ struct SpeechSettingsView: View {
             #if CV_PUBLIC
             Section {
                 Toggle("Update automatically", isOn: $updateAutomatically)
+                Toggle("Development builds", isOn: Binding(
+                    get: { UpdateCheck.devChannel },
+                    set: { v in
+                        UpdateCheck.devChannel = v
+                        UserDefaults.standard.removeObject(forKey: "update.checked")  // look now
+                        Task { await UpdateCheck.shared.check() }
+                    }))
             } header: {
                 Text("Updates")
             } footer: {
-                Text("A new version of Classic Voices is downloaded and checked in the background, and installed when you quit Classic Voices (or straight away with Restart Now). Off, Classic Voices asks first. Your voices stay either way.")
+                Text("A new version of Classic Voices is downloaded and checked in the background, and installed when you quit Classic Voices (or straight away with Restart Now). Off, Classic Voices asks first. Your voices stay either way. Development builds: instead of each release, follow the development branch and update to every change (checked every hour): newer, but less tested.")
             }
             #endif
             Section {

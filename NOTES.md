@@ -2543,3 +2543,13 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   App Group's possibly old settings when the extension doesn't answer at first. It now asks the extension
   three times (2 s apart) before falling back, and from the fallback asks again after 10 s. Test options:
   -storeinfo (store mode and settings), -fetchdicts (a fetch, as the button does).
+- Update channels (Nico, approved by Nico and Levi 2026-11-14): stable (the numbered releases, as before) or
+  dev (every push to the dev branch). .github/workflows/dev.yml builds each push (the Windows and Linux
+  workflows, now also workflow_call, plus an Android job signed with the ANDROID_KEYSTORE_B64 secret) and
+  replaces the files of the pre-release tagged dev-latest, with dev.json {commit, time, version}. Each build
+  records its own commit and time (tools/buildinfo.py: buildinfo.json in _classicvoices, Android BuildInfo,
+  the Mac app's Resources/buildinfo.json); the dev channel offers dev-latest when its commit is newer. Stable
+  checks never see dev-latest (its tag has no version number). Settings: NVDA Tools menu "Classic Voices
+  development builds", desktop app Updates section, Android "Development builds", Mac Settings > Updates.
+  Dev checks hourly. The Mac app isn't in the dev builds yet: needs Levi's Developer ID and notarization in
+  the repo secrets (the private key can't be exported without a keychain dialog).

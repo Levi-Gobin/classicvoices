@@ -152,6 +152,8 @@
     <string name="setting_spelling_pauses_explained">The voices pause before, between and after spelled letters. Off, spelling is as quick as the rest of the speech. iOS 3 and 4 voices always pause.</string>
     <string name="setting_spell_lowercase">Don\'t say "capital" when spelling</string>
     <string name="setting_spell_lowercase_explained">Capital letters are spelled like small ones, without "capital" before them. TalkBack can still tell them apart its own way, if it\'s set to.</string>
+    <string name="setting_dev_builds">Development builds</string>
+    <string name="setting_dev_builds_explained">Off, Classic Voices updates to each release. On, it follows the development branch and offers every change, checking every hour when the app opens: newer, but less tested.</string>
     <string name="tts_heading">Text-to-speech</string>
     <string name="open_tts_settings">Open text-to-speech settings</string>
     <string name="summary_none">No voices yet. Nothing of Apple\'s comes with Classic Voices: get the firmware in the iOS tab, and its voices are taken out of it.</string>

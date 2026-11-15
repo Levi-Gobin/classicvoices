@@ -125,14 +125,35 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         self.item = tools.Append(wx.ID_ANY, _("Check for Classic Voices &updates"),
                                  _("Ask GitHub now whether a newer Classic Voices is out"))
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onCheck, self.item)
+        # The update channel: stable releases, or the build of every change on the dev branch.
+        # Translators: a checkable Tools menu item: updates come from the development builds.
+        self.devItem = tools.AppendCheckItem(wx.ID_ANY, _("Classic Voices &development builds"),
+                                             _("Update to the build of every change, not just the releases"))
+        self.devItem.Check(cv_update.channel(cv_paths.data_root()) == "dev")
+        gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onChannel, self.devItem)
+
+    def onChannel(self, evt):
+        dev = self.devItem.IsChecked()
+        try:
+            cv_update.set_channel(cv_paths.data_root(), "dev" if dev else "stable")
+        except OSError:
+            log.debugWarning("Classic Voices: saving the update channel failed", exc_info=True)
+            return
+        # Translators: announced when the update channel changes.
+        ui.message(_("Development builds on: checking now.") if dev else
+                   _("Development builds off: only releases from now on."))
+        if dev:
+            threading.Thread(target=_check_now, name="ClassicVoicesUpdate", daemon=True).start()
 
     def onCheck(self, evt):
         threading.Thread(target=_check_now, name="ClassicVoicesUpdate", daemon=True).start()
 
     def terminate(self):
         _stop.set()
-        try:
-            gui.mainFrame.sysTrayIcon.toolsMenu.Remove(self.item)
-        except Exception:
-            pass
+        for item in (self.item, getattr(self, "devItem", None)):
+            try:
+                if item is not None:
+                    gui.mainFrame.sysTrayIcon.toolsMenu.Remove(item)
+            except Exception:
+                pass
         super().terminate()

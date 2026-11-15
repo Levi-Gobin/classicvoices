@@ -1,7 +1,9 @@
 name: Build Windows app, SAPI voices and NVDA add-on
 on:
   workflow_dispatch:
+  workflow_call:  # dev.yml: the dev channel's build of every push to dev
   push:
+    branches-ignore: [dev]
     paths: ["windows/**", "desktop/**", "nvda/**", "core/**", "ports/host/**", "tools/pcre2_build.py",
             "tools/recomp.py", ".github/workflows/windows.yml"]
 

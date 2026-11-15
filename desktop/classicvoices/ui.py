@@ -606,6 +606,21 @@ class SettingsPanel(wx.ScrolledWindow):
         if on:
             self.frame.lib.get_pronunciation()
 
+    def set_dev_builds(self, on):
+        from _classicvoices import update
+        update.set_channel(system.data_root(), "dev" if on else "stable")
+        if on:  # look now
+            frame = self.frame
+
+            def look():
+                try:
+                    found = update.newer(system.data_root(), asked=True)
+                except Exception:
+                    return
+                if found:
+                    wx.CallAfter(offer_update, frame, *found)
+            threading.Thread(target=look, name="update", daemon=True).start()
+
     def set_dictionaries(self, on):
         system.set_setting("CommunityDictionaries", on)
         if on:
@@ -663,6 +678,12 @@ class SettingsPanel(wx.ScrolledWindow):
             p.text("The Speech Dispatcher module is %s." % (
                 "installed: Orca and other programs can use the voices" if system.speechd_module_installed()
                 else "not installed (run install.sh again)"))
+        p.section("Updates")
+        from _classicvoices import update as cv_update
+        p.check("Development builds (the build of every change, not just the releases)",
+                cv_update.channel(system.data_root()) == "dev", self.set_dev_builds)
+        p.text("Off, Classic Voices updates to each release. On, it follows the development branch and updates "
+               "to every change, checking every hour while it runs: newer, but less tested.")
         p.section("Data")
         p.text("The voices are in %s" % system.data_root())
         p.button("Open the data folder", lambda: system.open_folder(system.data_root()))
@@ -906,8 +927,8 @@ def main():
 
 
 def check_for_update(frame):
-    """When the app opens, every 6 hours at most: a newer Classic Voices is offered once, to install
-    (or, when this copy can't update itself, with its release page)."""
+    """When the app opens, every 6 hours at most (on the development builds, every hour while it runs): a newer
+    Classic Voices is offered once, to install (or, when this copy can't update itself, with its release page)."""
     from _classicvoices import update
     found = update.newer(system.data_root())
     if found:
@@ -916,6 +937,16 @@ def check_for_update(frame):
         if not system.update_asset() or not update.remove_downloads(system.update_asset()):
             break
         time.sleep(10)
+    while True:  # update.newer asks GitHub at most every hour (dev) or 6 hours (stable)
+        time.sleep(3600)
+        try:
+            if not frame:
+                return
+            found = update.newer(system.data_root())
+            if found:
+                wx.CallAfter(offer_update, frame, *found)
+        except Exception:
+            pass
 
 
 def offer_update(frame, version, url, assets):

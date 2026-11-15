@@ -37,6 +37,8 @@ import java.util.regex.Pattern;
  */
 final class Update {
     private static final String RELEASES = "https://api.github.com/repos/Levi-Gobin/classicvoices/releases?per_page=10";
+    /** The dev channel: the build of the newest commit on the dev branch, which CI replaces on every push. */
+    private static final String DEV_RELEASE = "https://api.github.com/repos/Levi-Gobin/classicvoices/releases/tags/dev-latest";
     private static final String PAGE = "https://github.com/Levi-Gobin/classicvoices/releases";
     private static final String ASSET = "ClassicVoices.apk";
     private static final long DAY = 24L * 3600 * 1000;
@@ -45,13 +47,22 @@ final class Update {
 
     /** A newer release: its version and page, and its APK (url null if it has none). */
     static final class Release {
-        String version, page, url, sha256;
+        String version, page, url, sha256, commit;
         long size;
+    }
+
+    /** "stable" (the releases) or "dev" (every change on the dev branch). */
+    static boolean dev(Context c) { return "dev".equals(c.getSharedPreferences("update", 0).getString("channel", "stable")); }
+
+    static void setDev(Activity a, boolean on) {
+        a.getSharedPreferences("update", 0).edit().putString("channel", on ? "dev" : "stable").remove("checked").apply();
+        if (on) check(a);
     }
 
     static void check(final Activity a) {
         final SharedPreferences p = a.getSharedPreferences("update", 0);
-        if (System.currentTimeMillis() - p.getLong("checked", 0) < DAY) return;
+        final boolean dev = dev(a);
+        if (System.currentTimeMillis() - p.getLong("checked", 0) < (dev ? DAY / 24 : DAY)) return;
         final String mine;
         try {
             mine = a.getPackageManager().getPackageInfo(a.getPackageName(), 0).versionName;
@@ -61,9 +72,9 @@ final class Update {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                Release found = newest(mine, p.getString("announced", "0"));
+                Release found = dev ? newestDev(p.getString("announced_dev", "")) : newest(mine, p.getString("announced", "0"));
                 SharedPreferences.Editor e = p.edit().putLong("checked", System.currentTimeMillis());
-                if (found != null) e.putString("announced", found.version);
+                if (found != null) e.putString(dev ? "announced_dev" : "announced", dev ? found.commit : found.version);
                 e.apply();
                 if (found != null) offer(a, found);
             }
@@ -120,6 +131,48 @@ final class Update {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** The dev-latest build, when its commit is newer than this one's (BuildInfo) and not yet announced; or null. */
+    private static Release newestDev(String announced) {
+        try {
+            JSONObject r = new JSONObject(fetchText(DEV_RELEASE));
+            JSONArray assets = r.optJSONArray("assets");
+            String info = null;
+            Release best = new Release();
+            for (int k = 0; assets != null && k < assets.length(); k++) {
+                JSONObject x = assets.getJSONObject(k);
+                if ("dev.json".equals(x.optString("name"))) info = x.optString("browser_download_url", null);
+                if (!ASSET.equals(x.optString("name"))) continue;
+                best.url = x.optString("browser_download_url", null);
+                best.size = x.optLong("size");
+                String d = x.optString("digest", "");
+                best.sha256 = d.startsWith("sha256:") ? d.substring(7).toLowerCase(java.util.Locale.ROOT) : null;
+            }
+            if (info == null || BuildInfo.COMMIT.isEmpty()) return null;
+            JSONObject j = new JSONObject(fetchText(info));
+            String commit = j.optString("commit");
+            if (commit.isEmpty() || commit.equals(BuildInfo.COMMIT) || commit.equals(announced)
+                    || j.optLong("time") <= BuildInfo.TIME) return null;
+            best.commit = commit;
+            best.version = j.optString("version", "dev") + "-dev." + commit.substring(0, Math.min(7, commit.length()));
+            best.page = r.optString("html_url", PAGE);
+            return best;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String fetchText(String url) throws Exception {
+        HttpURLConnection c = Source.open(url, -1, -1);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (InputStream in = c.getInputStream()) {
+            byte[] b = new byte[16384];
+            for (int n; (n = in.read(b)) > 0; ) out.write(b, 0, n);
+        } finally {
+            c.disconnect();
+        }
+        return out.toString("UTF-8");
     }
 
     private static int compare(String a, String b) {

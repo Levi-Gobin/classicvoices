@@ -293,6 +293,11 @@ targets:
           cp "$SRCROOT/../nvda/src/native_glue.c" "$SRCROOT/../ports/apple/mt_native_glue.c" "$D/"
           cp "$SRCROOT/../tools/profiles/"*.txt "$D/profiles/"
         basedOnDependencyAnalysis: false
+      - name: Build commit
+        # the commit this is built from, for the dev update channel (App/UpdateCheck.swift)
+        script: |
+          python3 "$SRCROOT/../tools/buildinfo.py" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/buildinfo.json"
+        basedOnDependencyAnalysis: false
     entitlements:
       path: App/ClassicVoicesMacPublic.entitlements
       properties:

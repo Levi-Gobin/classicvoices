@@ -43,6 +43,7 @@ def main():
     shutil.rmtree(work, ignore_errors=True)
     stage = os.path.join(work, "stage")
     # the library, as files the app imports at run time
+    subprocess.check_call([sys.executable, os.path.join(ROOT, "tools", "buildinfo.py")])  # the dev update channel
     shutil.copytree(LIB, os.path.join(stage, "lib", "_classicvoices"),
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.dll"))
     for name in ("cvengine64.dll", "cvengine32.dll", "cvengine_arm64ec.dll"):  # lib.load picks one
