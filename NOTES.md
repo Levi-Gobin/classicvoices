@@ -2451,7 +2451,8 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   cv_dict_from_text builds a dictionary from text (trying one entry out).
 - NVDA (ABI 8): cv_speech_text(..., dict_dir, community, dic_text, text); vx_xsampa_to_ipa and
   vx_ipa_has_vowel exported. Checked from Python on Levi's Windows VM.
-- NVDA dialog (globalPlugins/classicvoicesDicts.py; Tools menu): file choice (the voice's language file,
+- NVDA dialog (globalPlugins/classicvoicesDicts.py; Preferences > Speech dictionaries > Classic Voices
+  pronunciation dictionaries, access key C, since 2026-11-15; the Tools menu if that submenu isn't found): file choice (the voice's language file,
   its region's, any other), entries list with whose they are (Community / Yours / Yours (changed) /
   Removed by you), Add / Edit / Remove / Restore the community's / Source / Publish now. While it's open
   dicts.EDITING makes the voices use no dictionary. Entry dialog: pattern, replacement, Insert phoneme
@@ -2551,7 +2552,7 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   records its own commit and time (tools/buildinfo.py: buildinfo.json in _classicvoices, Android BuildInfo,
   the Mac app's Resources/buildinfo.json); the dev channel offers dev-latest when its commit is newer. Stable
   checks never see dev-latest (its tag has no version number). Settings: NVDA Tools menu "Classic Voices
-  development builds", desktop app Updates section, Android "Development builds", Mac Settings > Updates.
+  development builds" (no access key: one item per key), desktop app Updates section, Android "Development builds", Mac Settings > Updates.
   A build from the dev branch (buildinfo "channel": "dev") switches its install to dev the first time it
   runs; the person's choice holds after that until another dev build is put in. Dev checks hourly. The Mac
   app isn't in the dev builds yet: needs Levi's Developer ID and notarization in

@@ -126,8 +126,9 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
                                  _("Ask GitHub now whether a newer Classic Voices is out"))
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onCheck, self.item)
         # The update channel: stable releases, or the build of every change on the dev branch.
-        # Translators: a checkable Tools menu item: updates come from the development builds.
-        self.devItem = tools.AppendCheckItem(wx.ID_ANY, _("Classic Voices &development builds"),
+        # Translators: a checkable Tools menu item: updates come from the development builds. (No access key: D is
+        # the dictionaries', and the Tools menu has one item per key.)
+        self.devItem = tools.AppendCheckItem(wx.ID_ANY, _("Classic Voices development builds"),
                                              _("Update to the build of every change, not just the releases"))
         self.devItem.Check(cv_update.channel(cv_paths.data_root()) == "dev")
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onChannel, self.devItem)

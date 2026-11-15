@@ -8,6 +8,7 @@ import gui
 import synthDriverHandler
 import ui
 import wx
+from logHandler import log
 
 from synthDrivers._classicvoices import dicts as cv_dicts
 from synthDrivers._classicvoices import gitsync as cv_git
@@ -511,13 +512,37 @@ class DictsDialog(wx.Dialog):
         self.Destroy()
 
 
+def _speech_dicts_menu():
+    """NVDA's Preferences > Speech dictionaries submenu (its only submenu there, 2023.1 on), or None."""
+    try:
+        prefs = getattr(gui.mainFrame.sysTrayIcon, "preferencesMenu", None)
+        if prefs is None:
+            return None
+        for item in prefs.GetMenuItems():
+            sub = item.GetSubMenu()
+            if sub is not None:
+                return sub
+    except Exception:
+        log.debugWarning("Classic Voices: no Speech dictionaries menu", exc_info=True)
+    return None
+
+
 class GlobalPlugin(globalPluginHandler.GlobalPlugin):
     def __init__(self):
         super().__init__()
-        tools = gui.mainFrame.sysTrayIcon.toolsMenu
-        # Translators: the Tools menu item that opens the pronunciation dictionaries.
-        self.item = tools.Append(wx.ID_ANY, _("Classic Voices pronunciation &dictionaries..."),
-                                 _("Edit the pronunciation dictionaries of the Classic Voices"))
+        # In Preferences > Speech dictionaries, next to NVDA's own (its access keys there are D, V and T); the
+        # Tools menu if that can't be found
+        self.menu = _speech_dicts_menu()
+        if self.menu is not None:
+            # Translators: the item in NVDA's Preferences > Speech dictionaries menu that opens the Classic Voices
+            # pronunciation dictionaries (NVDA's own items there use D, V and T as access keys).
+            self.item = self.menu.Append(wx.ID_ANY, _("&Classic Voices pronunciation dictionaries..."),
+                                         _("Edit the pronunciation dictionaries of the Classic Voices"))
+        else:
+            self.menu = gui.mainFrame.sysTrayIcon.toolsMenu
+            # Translators: the Tools menu item that opens the pronunciation dictionaries.
+            self.item = self.menu.Append(wx.ID_ANY, _("Classic Voices pronunciation &dictionaries..."),
+                                         _("Edit the pronunciation dictionaries of the Classic Voices"))
         gui.mainFrame.sysTrayIcon.Bind(wx.EVT_MENU, self.onOpen, self.item)
         # The person's changes are published once a day where git can push them (gitsync.py); checked hourly,
         # the first time a few minutes after NVDA starts.
@@ -547,6 +572,6 @@ class GlobalPlugin(globalPluginHandler.GlobalPlugin):
         except Exception:
             pass
         try:
-            gui.mainFrame.sysTrayIcon.toolsMenu.Remove(self.item)
+            self.menu.Remove(self.item)
         except Exception:
             pass
