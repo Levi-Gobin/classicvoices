@@ -436,15 +436,20 @@ def _save_mine(data_root, name, entries):
 def put(data_root, name, entry, old_key=None):
     """Adds an entry or changes one (old_key: the one it replaces, when the pattern or type changed). A changed
     fetched entry becomes the person's (the fetched one with an old pattern counts as removed)."""
-    mine = [e for e in read_entries(os.path.join(mine_folder(data_root), name))
-            if e.key != entry.key and e.key != old_key]
+    every = read_entries(os.path.join(mine_folder(data_root), name))
+    # a changed entry keeps its place: entries apply in order, and a regular expression can depend on the one before
+    at = next((i for i, e in enumerate(every) if e.key in (entry.key, old_key)), None)
+    mine = [e for e in every if e.key != entry.key and e.key != old_key]
     community = {e.key: e for e in read_entries(os.path.join(folder(data_root), name))}
     removed = read_removed(data_root, name)
     if old_key and old_key != entry.key and old_key in community:
         removed.add(old_key)
     removed.discard(entry.key)
     if not entry.same(community.get(entry.key)):
-        mine.append(entry)
+        if at is None:
+            mine.append(entry)
+        else:
+            mine.insert(at, entry)
     _save_mine(data_root, name, mine)
     _write_removed(data_root, name, removed)
 

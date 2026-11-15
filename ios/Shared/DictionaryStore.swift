@@ -96,12 +96,17 @@ enum DictionaryStore {
 
     /// Adds or changes an entry (`oldKey`: the one it replaces, when its pattern or type changed).
     static func put(_ name: String, _ entry: Entry, oldKey: String? = nil) {
-        var m = entries(mineURL(name)).filter { $0.key != entry.key && $0.key != oldKey }
+        let all = entries(mineURL(name))
+        // a changed entry keeps its place: entries apply in order, and a regular expression can depend on the one before
+        let at = all.firstIndex { $0.key == entry.key || $0.key == oldKey }
+        var m = all.filter { $0.key != entry.key && $0.key != oldKey }
         let community = Dictionary(entries(communityURL(name)).map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
         var gone = removed(name)
         if let oldKey, oldKey != entry.key, community[oldKey] != nil { gone.insert(oldKey) }
         gone.remove(entry.key)
-        if community[entry.key] != entry { m.append(entry) }
+        if community[entry.key] != entry {
+            if let at { m.insert(entry, at: min(at, m.count)) } else { m.append(entry) }
+        }
         write(mineURL(name), m.map(\.line))
         writeRemoved(name, gone)
     }
