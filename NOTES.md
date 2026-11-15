@@ -2174,3 +2174,365 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
     mac109/AvaCompact instead". CV_GUEST_MEM_MB doesn't reach NVDA started
     from a task (cvtest covers it). Notices are read after each utterance, so
     a voice that fails at preload is logged with the first thing said.
+- **NVDA's delayed character description, and the voice list order
+  (2026-11-12, Nico).** NVDA speaks the letter (in CharacterModeCommands) and
+  then, as its own utterance, BreakCommand(1000) + "Alfa". The engines make
+  that leading pause, but the stream's leading-silence trim dropped it, so the
+  description followed the letter in ~4 ms. vxstream now keeps a pause a
+  request starts with (leading_pause_ms; bookmarks and rate/pitch/volume
+  commands may come first): as asked with "Pauses keep their length at any
+  rate" on (1000 ms at 100, 200 and 300 %), or as long as the voice makes it
+  with that setting off (501 ms at 200 %, 340 at 300 %). Measured with a
+  harness calling vxs_start as the add-on does. The SSML layer (cv_ssml) still
+  drops a leading <break> on purpose (latency). The NVDA voice list is now
+  ordered by language code (ar_SA ... zh_TW) instead of the languages' names.
+- **Letters in MathCAT's speech flow on (2026-11-12, Nico).** MathCAT's NVDA
+  add-on sends each letter of an expression as
+  <say-as interpret-as='characters'>x</say-as> -> CharacterModeCommand, so
+  "x^2+2x-5" reached the voice as ESC\tn=spell\ x ESC\tn=normal\ squared plus
+  2 ...; going into spelling and out is a phrase break each time (iOS 6
+  Samantha: 2740 ms with breaks around each x; plain text 2079 ms, none).
+  vxstream (speak_segmented) now says a single character spelled among other
+  words with the phonemes the voice itself spells it with, as L&H+ input
+  (ESC\toi=lhp\'E k s ESC\toi=orth\): the voice is asked once per character
+  (spelled_lhp: it spells it silently and its phoneme markers, new
+  vx_set_phoneme_callback, give the codes; the codes become symbols by the
+  voice's own STMC/STMF tables, load_symbols) and the answer stays with the
+  engine slot. Measured with the add-on's text: x^2+2x-5 and a^2+2ab+b^2 now
+  take exactly as long as the plain sentences with the same silences (only
+  the stops before "b"): Samantha, Siri Nicky (2643 -> 1855 ms); the iOS 7
+  engine (Mavericks Ava) never broke there. A letter spoken alone (NVDA's
+  character navigation, spelling) still uses spelling mode; iOS 3/4 (no
+  toi=lhp) and the pitch fallback keep it too. The SSML path (<say-as>) gets
+  the same.
+- **Greetings in the voice's language (2026-11-13, Nico).** The iPhone and Mac
+  app's test text (VoiceItem.greeting) was English for every voice, read with
+  the voice's own language's rules. It now comes from ios/Shared/Greetings.json
+  (bundled by the Engine template, as EnhancedCatalog.json): per language (or
+  locale: pt-BR, zh-TW, zh-HK) a compact and an enhanced/premium sentence with
+  {name} and {version}; where the version would need inflecting (fi, pl, cs,
+  sk, ru, tr, hu) it says "from the system {version}" instead, and French and
+  Catalan say "du système / del sistema" (no "de iOS"). English keeps
+  "Siri in iOS 7"; other languages say "iOS 7 Siri". tools/make_samples.py
+  reads the same file. The Windows/Linux app and Android already spoke a
+  sentence in each language (library.py SAMPLES, Samples.java). The 254
+  non-English recorded samples (ios/Samples) were made again the same day
+  (WORKERS=4, about 20 minutes): engines linked from extracted/ as the Synth
+  target lays them out, cvsay built with PCRE2 (-DPCRE2_STATIC
+  -DPCRE2_CODE_UNIT_WIDTH=8 for cv_rules.c). make_samples.py now finds a
+  package folder whose case differs from the catalog's (Sin-ji) by listing
+  the folder: on the Mac's disk isdir() ignores case.
+
+## Community pronunciation dictionaries (2026-11-13, Nico; NVDA first, uncommitted)
+
+- Nico's repository github.com/nicopn/classicvoices-dicts (CC0): one file
+  per language code (en.dic, en-us.dic ...) for the Vocalizer voices and
+  macintalk.dic for MacinTalk, in NVDA's speech dictionary format (pattern,
+  replacement, case, type 0 anywhere / 1 regex / 2 whole word). In a
+  replacement, ~~...~~ is X-SAMPA (English r is r\; plain r is the trill,
+  which the converter turns into the flap). The closing mark is the last two
+  tildes of a run, so a nasal vowel can end a span (~~bo~~~).
+- ports/host/cv_dict.c: reads the files (narrowest first; a wider file's
+  entry with the same pattern and type is left out; <dir>/Local/<file>
+  replaces <dir>/<file>), turns each entry into a PCRE2 rule (cv_rules_new /
+  cv_rules_add), Python's \1 and \g<1> into ${1}. Each span becomes a
+  private-use placeholder (U+F0000 + n) when the file is read, so later
+  entries and Apple's rules can't match inside it; after the dictionary
+  (cv_rules_apply_mapped, for positions) each placeholder becomes the voice's
+  phonemes (vx_phoneme_text), and Apple's rules then run only outside phoneme
+  input. X-SAMPA -> IPA table: cv_xsampa_to_ipa.
+- Splicing: Vocalizer reads letters right after phonemes as a word of their
+  own (toi=lhp 'bust + "ed" = /bu:st Ed/). A span followed by letters gets
+  ESC\cvsp=<original word>|<stem bytes>\ before it; core/vxstream.c
+  (spliced_suffix) has the voice say the whole word and the stem silently and
+  appends the whole word's phonemes past the stem's count (boosted -> b u s t
+  I d), cached per engine slot. The command never reaches the engine.
+- Syllables (Nico): phonetic input without syllable marks gets a falling,
+  sentence-final pitch and a pause after each word of several syllables
+  (measured: F0 down to ~100 Hz mid-sentence on iOS 6 Samantha; with marks it
+  matches the plain-text contour; secondary stress made no difference).
+  core/vxphonemes.c syllabify() adds them to any word whose IPA has none:
+  between two vowels (not inside eɪ, aʊ, a non-syllabic glide ...) and inside
+  a run of consonants before the longest legal onset (pl, str, sk ...); a
+  stress mark already starts its syllable. NVDA's own PhonemeCommands
+  (MathCAT) get the same. iOS 4's ESC/+ input takes the marks too.
+- Secondary stress (Nico): words with '2 got the same falling pitch, so
+  vxphonemes writes a secondary stress as a plain syllable mark.
+- Spliced words had the falling pitch too: the rest went in as "I d" after
+  a space and without syllable marks. spliced_word() now reads the start back
+  as the voice's symbols (longest match over the phoneme table), joins the
+  rest without spaces and marks syllables from the start's last vowel on
+  (di.$'nA.n$.ma&I.ze&I.S$n); the contour then matches plain text. Stress
+  shift (deanonymiZAtion, archiTECturally) isn't done: the phoneme markers
+  carry no stress (40-byte VE_MARKINFO: type, text pos/len, audio pos,
+  phoneme code; nothing else set), and neither vowel length (a word's last
+  vowel is always longest) nor pitch (Samantha's citation peak comes early)
+  shows it.
+- Stress marks inside a word follow a syllable mark (so&U.l$.'d@d, as
+  Nuance writes them): without one Samantha pauses inside the word.
+- English: Samantha reads a syllabified "bu." or "bus." with the u of
+  "book" ('bu.stId -> b U s t I d; 'mu., 'ru., unmarked 'bustId are fine).
+  vxphonemes writes u as "u:" for English voices whose table has no "u:"
+  (the mark changes nothing else: same timing and pitch), and spliced_word
+  does the same for the voice's own rest.
+- Vocalizer re-reads phoneme input that spells a known word: 'jus is said
+  /juz/ ("use"); a syllable dot ('ju.s) keeps /s/.
+- NVDA: cv_speech_text (ABI 7) replaces cv_rules_text in speak();
+  _classicvoices/dicts.py fetches a voice's files from the repository's main
+  branch into <data root>/Dictionaries in the background, at most every 6
+  hours each (ETag; a 404 removes the local copy). Android, Linux and SAPI
+  don't read the dictionaries yet; editing them in Classic Voices is Nico's
+  to design.
+- iPhone/Mac (2026-11-14, Levi asked for it on his devices):
+  ios/Shared/CommunityDictionary.swift does what cv_dict.c does with
+  NSRegularExpression (Python's \1 / \g<1> -> $1, (?P<n> -> (?<n>), the same
+  placeholders, splice commands and rules outside phoneme input; its output
+  was checked identical to cv_dict's on test sentences). The X-SAMPA table
+  moved to core/vxphonemes.c (vx_xsampa_to_ipa) for both. The app fetches
+  every .dic of the repository (GitHub contents API, then raw files with
+  ETags; at most every 6 hours, when it comes to the front) into the App
+  Group's Dictionaries folder (Local/ overrides); the extension only reads
+  there and never goes on the network. A first try had the extension fetch
+  for itself with com.apple.security.network.client on the Mac: that build
+  made Levi's MacBook Pro's axassetsd crash-loop ("_voices() tried to resume
+  its continuation more than once", every ~10 s, through a reboot) until the
+  published 0.5.0 went back. Confirmed on the Mac mini (macOS 27.0), each
+  installed as an update over 0.5.0: the published 0.5.3, the same code
+  without the entitlement, and the app-fetching build all keep 298 voices
+  with no crash; the build whose Synth.appex has
+  com.apple.security.network.client lists 0 voices, hangs `say -v '?'` and
+  crashes axassetsd 26 times in 80 s. Never give the speech extension the
+  network entitlement. SSML <say-as> spelling and the app's own test player
+  don't use the dictionaries.
+- Mac findings from the same night: (1) installing the published app over a
+  differently signed build (a developer or per-user GitHub build) makes
+  secinitd wait on a "data from other apps" consent prompt before the
+  extension can start; until someone answers it, no Classic Voices voice
+  appears and Diagnostics never finishes. (2) Diagnostics stayed "Checking…"
+  for VoiceOver although the report was done (Copy Report copied it): the
+  Text now gets .id(text) and "Report ready" is announced. (3) `-speaktime`
+  and command-line AVSpeechSynthesizer programs never reach the extension on
+  the Mac; test with `say -v '?'` / `say -v NAME` and the axassetsd log.
+- Testing the Mac extension from a command-line AVSpeechSynthesizer program
+  doesn't work: the system never starts the extension for the request
+  ("Utterance encountered error ... retryFallbackVoice") and speaks its
+  fallback voice; the 0.5.0 app behaves the same. Such a program also has to
+  spin the main run loop, or write() never calls back.
+- Mac test harnesses that include core/vxstream.c must link
+  build/hosttest/logstub.c, not vx_posix.o: its __DefaultRuneLocale replaces
+  macOS's ctype table and isalnum() says no to every letter.
+
+## Forum reports after 0.5.3 (2026-11-14, uncommitted)
+
+- NVDA forgot the chosen voice (Ava) after switching synths or using a
+  voice-slot add-on (aziz1media, #48). NVDA's SynthDriver.loadSettings
+  treats any exception from changeVoice as "Invalid voice", falls back to the
+  current (first) voice and saves that over the person's choice. Not
+  reproduced; the driver's _set_voice now also takes a voice's name or its key
+  in another case, and logs the value it can't place. His NVDA log ("Invalid
+  voice: ...") would say what he was handed.
+- zig.exe at 100% CPU (#48): fast-code builds now run at Windows' idle
+  priority (nice 19 elsewhere) on half the cores at most (was below normal,
+  all cores but one). A build cut short by an NVDA restart starts over.
+- Android downloads "stuck at 0%" (#47): one queue runs imports, downloads
+  and fast-code builds, and the app queues a fast-code build each time it
+  opens, so a download waited behind it at 0%. A job someone asks for now
+  goes ahead of a waiting build, and a running build stops (pausedForOther:
+  not a failure, so automatic fast code stays on) and is queued again after.
+- Windows app (#46): fast code is per engine, never per voice. After a
+  download, SAPI programs needed "Update the voices for Windows programs" (the
+  app did it after a removal, not after downloads). Now, once the downloads
+  and imports asked for are done, the app registers again (one administrator
+  prompt for the lot) when Windows lists fewer or more voices than there are
+  (system_voices_current: the ClassicVoices_ tokens against the same scan
+  registration uses). Not run on Windows yet (the prompt is a security
+  dialog). Idea for later: a SAPI token enumerator would list voices live,
+  with no re-registration and no prompt.
+- Mac: Diagnostics stayed "Checking…" for VoiceOver (see the dictionaries
+  section).
+
+## Dictionary latency (2026-11-14)
+
+- Measured with build/dictbench (generated 10,000 and 50,000-entry files:
+  60% whole words with spans, 20% anywhere, 10% regex + splice, 10% regex
+  alternations). Per string, worst on a 260-character paragraph: Nico's
+  218 entries 0.05 ms (C) / 0.09 ms (Swift), 50,000 entries 0.5 ms in both;
+  without a dictionary 0.01 ms.
+- core/vxrules.c: a pattern with no single literal is indexed under each
+  branch's literal of an alternation every match goes through (the whole
+  pattern's, else a non-optional top-level group), so "\b(colour|color)\b"
+  no longer runs on every text (50,000 entries: 2 ms -> 0.5 ms). Apple's
+  ios6 en-US rules over 2,713 lines: identical output with the old index.
+- Loading never delays speech: files up to 64 KB are read when first needed
+  (Nico's 7 KB: 1 ms in C, 5 ms in Swift); bigger ones, and any changed
+  file, load in the background while the voice speaks with the earlier copy
+  (or none). Speech waits 0.02 ms (C) / 0.03 ms (Swift) on the lookup;
+  50,000 entries are ready after 135 ms (C) / 260 ms (Swift). Swift compiles
+  each expression the first time a text could match (it compiled all of them
+  up front) and creates the Dictionaries folder once per process (it did on
+  every request: 1.6 ms each).
+
+## Resuming a paused MacinTalk voice mid-sentence: not possible on iPhone/Mac (2026-11-14)
+
+- Old Mac OS X MacinTalk paused and continued the same utterance
+  (SEPauseSpeechAt / SEContinueSpeech), so resumed speech kept its place in
+  the sentence. Levi asked whether our MacinTalk voices could do the same.
+- Measured with VoiceOver pausing and resuming (iPad two-finger tap, Mac
+  Control) and the extensions' logs: the system never tells a speech
+  extension about a pause, and it doesn't cancel and resend either: the
+  request just continues (iPad: a 7.5 s request, next request 11.7 s later,
+  nothing resent; Mac likewise). And it pulls audio ahead of playback (the
+  7.5 s sentence was synthesized after 1.2 s, the first renders at about twice
+  real time), so it plays the paused rest from its own buffer: the extension
+  can neither see the pause nor replay the word. Scrapped for Apple. NVDA
+  could (it calls SynthDriver.pause), Vocalizer voices never did it.
+
+## Dictionaries opt-in, refreshed in the background (2026-11-14, uncommitted)
+
+- Opt in (Levi): SpeechSettings.communityDictionaries (default off; a toggle
+  in the app's Settings, "Community pronunciation dictionaries") and NVDA's
+  "Community pronunciation dictionaries" checkbox (communityDictionaries,
+  default off). Off: nothing is fetched and the voices don't read them.
+  Turning it on in the app fetches at once.
+- Updates without opening the app, no server or push needed: iPhone/iPad a
+  BGAppRefreshTask (com.levigobin.ClassicVoices.dictionaries, scheduled ~6 h
+  ahead when the app goes to the background; ios/Info-Device.plist adds
+  UIBackgroundModes fetch and BGTaskSchedulerPermittedIdentifiers, merged into
+  the generated Info.plist), Mac an NSBackgroundActivityScheduler every ~6 h
+  while the app runs (the Mac app has no background helper; a login item
+  would need Levi's OK). A changed file swaps in by itself.
+- Linux: cv_ssml.c applies the dictionary to text pieces (cv_parse_ssml_dict;
+  never to spelled text or markup); the Speech Dispatcher module reads
+  CommunityDictionaries from settings.conf (files in <data>/Dictionaries),
+  cvsay has -D. The desktop app (Windows and Linux) has the setting
+  (CommunityDictionaries; HKCU on Windows, settings.conf on Linux) and fetches
+  every .dic (dicts.refresh_all) at start, when turned on and every 6 hours
+  while it runs.
+- SAPI: cv_dict_speech_text_mapped keeps SAPI's word positions (phonemes map
+  to the word they stand for; checked with build/dictbench/maptest), behind
+  the HKCU CommunityDictionaries setting; cv_dict.c is compiled with
+  vx_win.h (UTF-8 fopen/stat) like cv_rules.c. Checked on Levi's Windows VM
+  (32-bit System.Speech, a per-user CLSID override, cleaned up after): the
+  dictionary applies and word events keep the whole word ("boosted" at 2,
+  length 7; "Nico" at 18, length 4). The word's length needed two things:
+  phonemes from the dictionary map their last sound and the switch back to
+  text to the replaced text's end (cv_dict.c), and a splice maps its
+  ESC\toi=orth\ to the end of the word's letters (vxstream.c), since the
+  engine's word ends there. A comma after a phoneme word is its own word
+  event (the engine's).
+- Splice cost: the voice's phonemes for the whole word and its stem are found
+  by speaking both with the audio thrown away, now at ESC\rate=400\ (same
+  phonemes on 16 words, about a third of the time). With fast code (Linux VM)
+  about 6 ms per new spliced word, cached after (32 per engine); a sentence
+  of 12 new ones adds about 90 ms before the first audio, since a request is
+  segmented whole. Plain phoneme entries cost nothing measurable.
+- Android (Levi chose the rules in C, 2026-11-14): PCRE2 is built into
+  libclassicvoices.so (android/build.sh, tools/pcre2_build.py; the app can't
+  load a system copy) and Native.begin applies the community dictionary and
+  Apple's rules (own release's when "rules" is on, then the pack's) with
+  cv_parse_plain_dict / cv_parse_ssml_dict, as Linux does; Rules.java and the
+  rule pre-check bridge are gone. Dictionaries.java fetches every .dic (GitHub
+  contents API, ETags, removes files gone) into <data>/Dictionaries when the
+  switch ("community_dictionaries", off by default) is turned on, when the
+  app opens and when the voices speak, at most every 6 hours; no scheduler
+  needed, since TalkBack keeps the TTS service running. Checked on cv33: rules
+  off changes the audio, the app fetched en.dic by itself and used it; a new
+  spliced word costs about 80 ms there the first time (13 ms first audio
+  after), plain phoneme entries nothing. APK 3.5 MB with all four ABIs.
+
+## Dictionary editor, own entries, publishing with git (2026-11-14, Nico's design, uncommitted)
+
+- Layers (ports/host/cv_dict.c, CommunityDictionary.swift): Dictionaries/Mine/<file> holds the person's own
+  entries (NVDA .dic format), used first and even with the community switch off; Mine/<file>.removed lists
+  fetched entries they took out (pattern TAB type). The fetched files count only when the switch is on
+  (cv_dict_for_voice_ex(..., community)). Every caller now always passes the folder plus the switch (NVDA,
+  SAPI, Linux speechd/cvsay, Android, the Apple extension). Local/ (a whole-file replacement) is gone.
+  cv_dict_from_text builds a dictionary from text (trying one entry out).
+- NVDA (ABI 8): cv_speech_text(..., dict_dir, community, dic_text, text); vx_xsampa_to_ipa and
+  vx_ipa_has_vowel exported. Checked from Python on Levi's Windows VM.
+- NVDA dialog (globalPlugins/classicvoicesDicts.py; Tools menu): file choice (the voice's language file,
+  its region's, any other), entries list with whose they are (Community / Yours / Yours (changed) /
+  Removed by you), Add / Edit / Remove / Restore the community's / Source / Publish now. While it's open
+  dicts.EDITING makes the voices use no dictionary. Entry dialog: pattern, replacement, Insert phoneme
+  (the current voice's sounds with Nico's phonemes/<lang>.txt examples, Space hears sound + word),
+  test text with Hear it / Hear without it, case, type.
+- Source: any GitHub owner/repo + branch (Dictionaries/source.json); phonemes/*.txt fetched with the .dic
+  files. dicts.tidy() drops own entries the repository has caught up with.
+- gitsync.py: git only where installed (Mac: Homebrew git or Apple's with Command Line Tools, never
+  /usr/bin/git's install dialog); never prompts (GIT_TERMINAL_PROMPT=0, GCM_INTERACTIVE=never, ssh
+  BatchMode). Work copy Dictionaries/.git-work, reset to the remote's latest, the person's changes applied
+  afresh (no merge conflicts), one commit per file ("en.dic: add 3 entries - a, b, c; modify 1 entry - d;
+  remove 1 entry - e", over 5 names: "and N more" with the full list in the body), one push; checked hourly,
+  published once a day, and from Publish now. Tested against a local bare repository.
+- Phoneme example files: build/phoncheck (checker: each line's sound, as the voice says it, must be in the
+  voice's own reading of the example word; check.sh merges a base and an override file). Drafts for all
+  iOS 6 languages in build/phoncheck/files (X-SAMPA only). The checks found converter gaps (diphthongs as
+  one voice symbol, non-syllabic glides, Danish b d g, fr-CA nasals, es-MX T, Romanian ə, Czech ř and _r,
+  ɐ, ʏ, short ʉ, ɕ) to fix in core/vxphonemes.c.
+- Converter gaps fixed (core/vxphonemes.c, 2026-11-14): vowel pairs try the voice's one-symbol diphthong
+  (nearest first, the voice's own first vowel unless it glides to ɪ/ʊ or a non-syllabic vowel); ̯ kept
+  (non-syllabic mark, rising pairs never merged, w/j ending a diphthong); voiced stops fall back to
+  voiceless; nasal vowels try every nasal before an oral one; fallbacks for ɐ ʏ ʉ ɕ ə(ro) ɸ o(th) tɕ/tʃ(ko)
+  murmured stops and ɽ(hi) ˤ/ˠ(ar) ɚ and ʈʂ(zh); X-SAMPA _r and r̝ (Czech ř); a small per-language table
+  (kLang: German ɐ, Dutch ʏ, es-MX θ→s) and Danish p/t/k aspiration as the voice places it; zh-HK reads the
+  voice's real phoneme table (the file's first table is a Jyutping-like one). build/phoncheck: 106 flagged
+  lines -> 29 (merges in the voices, a few for Nico), conv_diff.txt lists every changed output (631 of
+  7,423; none from an English example line; English: IPA "o" alone now GOAT, British ɪə/eə/ʊə one
+  diphthong). All 209 spans of Nico's en.dic still convert. Drafts for Nico: ~/Downloads/"Classic Voices
+  phonemes drafts"/phonemes (en-au/ie/za.txt are copies of en-gb.txt).
+- Decided for Nico (he asked for "what works best"): no remove syntax in regional phoneme files (the
+  picker shows a sound once when the voice says two symbols alike); no Turkish ğ line; Russian ы and
+  Japanese ɸ kept; Hindi dental and retroflex both kept; Slovak ô stays `wo` (u_^o comes out as two
+  vowels); Romanian glide written i_^; Cantonese 杯 line dropped (uy would become another diphthong).
+  Korean tense consonants: X-SAMPA extension `*` (p* t* k* tS* s*) -> IPA U+0348 -> the voice's tense
+  symbols; ko.txt has them, all pass.
+- Mac editor (2026-11-14, installed on Levi's Mac, arm64 Release of ClassicVoicesMacPublic, Developer ID,
+  not notarized; previous copy kept in the job's tmp): a Dictionaries tab (macOS only; the phone's will be
+  Nico's own design) with the browser's drill-down: files (the installed voices' languages first) → a
+  file's entries (whose they are) → an entry (pattern, replacement, Insert a sound…, case, type, test
+  text with Hear It / Hear Without It, Save / Remove / Restore the Community's) → the voice's sounds (Nico's
+  phonemes/<lang>.txt examples; the Hear action plays sound + word). Source page (any GitHub repo/branch),
+  Publishing section (git only, Publish Now; daily from RootView while the app runs). ios/Shared/
+  DictionaryStore.swift (Mine layer, as dicts.py), ios/App/GitPublisher.swift (as gitsync.py; work copy in
+  ~/Library/Application Support/Classic Voices/dictionaries-git, outside the App Group so git never touches
+  it; tested against a local bare repository), ios/App/DictionaryEditor.swift, DirectPlayer.tryOut (the
+  in-app engine plays the test text with only that entry; built-in voices only, downloaded ones live in the
+  extension's store). While the tab is open the app touches Dictionaries/editing every 30 s and
+  CommunityDictionary.forVoice returns nil (stale after 90 s). Sounds insert at the end of the
+  replacement (into its last span). Levi's git can push to nicopn/classicvoices-dicts (dry run).
+- Dictionary fixes and choices (2026-11-14, Nico): a group that took no part ((ed)?) is empty in a
+  replacement, not an error (PCRE2_SUBSTITUTE_UNSET_EMPTY; C only, NSRegularExpression already did that).
+  Letters right before a span join it: ESC\cvpp=<word>|<letters>\ (letters inside the command, out of
+  Apple's rules' reach); vxstream spliced_prefix = the voice's phonemes for the whole word less as many at
+  the end as it says for the rest alone ("decompile" -> d), put at the start of the following phoneme
+  block. Choices in spans: (a|b|c) = the n-th choice of a replacement follows capture group n, taking the
+  option in the place of the alternative the group matched (each top-level alternative matched whole
+  against what it captured, cv_regex_full_match / NSRegularExpression); the option after them when it
+  matched none or took no part; none given: empty. The captured text rides between U+10FF00/U+10FF01 after
+  the span's placeholder. C and Swift give identical output; ASan clean; Nico's en.dic has no
+  parentheses in spans, so nothing of his changes.
+- 2026-11-14 afternoon: the Mac's daily publish ran by itself at 13:16 and pushed Levi's 18 general entries
+  to nicopn/classicvoices-dicts (4141367; also dropped the file's leading BOM). Automatic publishing is now
+  a switch, off by default ("Publish automatically once a day"); Publish Now stays. The editor's
+  "no dictionary" flag is only held while the app is in front with the tab shown (scenePhase), removed on
+  quit, renewed every 15 s, stale after 45 s (closing the window had left the voices without dictionaries).
+  "Check for New Dictionaries Now" next to the community switch (Settings, iPhone and Mac) and on the
+  Dictionaries tab. `-printdicts` prints Dictionaries/Mine (the app reads its own container).
+- Entry edits save themselves (2026-11-14): the entry page kept changes in memory until Save, so a toggle
+  followed by Back (or the app quitting for a reinstall) was lost while reopening the entry showed the
+  stale draft. Now EntryDraft.autosave writes 0.6 s after the last change, when the page closes and on
+  quit (willTerminate), under the entry's current key (savedKey); invalid states and empty replacements
+  wait (Save asks about an empty one). Buttons renamed: "Download the Latest Community Dictionaries" (only
+  fetches) and "Publish My Changes Now". `-dictput <file> <pattern> <replacement> <case> <type> [<old
+  pattern> <old type>]` edits an entry through the app.
+- Spelled characters said through phonemes (ESC\tn=spell\x ESC\tn=normal\ inline, vxstream spelled_lhp)
+  went in as "'d ^ b l%) j u": spaces and no syllable marks, so a letter of several syllables fell in pitch
+  piece by piece (Nico, 2026-11-14). Now joined and syllabified as dictionary splices are (spliced_word,
+  which also counts a syllabic consonant, %), as a syllable): w is "'d^.bl%).ju:", the same length and pitch
+  curve as the voice's own spelling (542 ms; the old one 866 ms with two pitch resets). Two-word names
+  (question mark, percent sign) stay one joined word: closer to the voice's own than split into two.
+- "Don't say "capital" when spelling" (Nico, 2026-11-14; off by default): vxs_set_spell_lowercase lowercases
+  what ESC\tn=spell\ ... spells, in the final engine text (after typed_commands, so a typed \tn=spell\ counts),
+  same byte length (ASCII, Latin-1, Latin Extended-A, Greek, Cyrillic) so positions stay. Settings: Apple
+  spellLowercase, NVDA spellLowercase (engine ABI 9), Android spell_lowercase, SAPI HKCU SpellLowercase,
+  desktop app / Linux settings.conf SpellLowercase, cvsay -c.
