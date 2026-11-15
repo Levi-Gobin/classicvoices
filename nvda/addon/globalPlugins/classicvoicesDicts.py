@@ -152,6 +152,16 @@ class EntryDialog(wx.Dialog):
         phon.Enable(_synth() is not None)
         row.Add(phon)
         main.Add(row, flag=wx.ALL, border=5)
+        # Translators: check box: the pattern matches only with the same capitals.
+        self.case = wx.CheckBox(self, label=_("Ca&se sensitive"))
+        self.case.SetValue(bool(entry and entry.case))
+        main.Add(self.case, flag=wx.ALL, border=5)
+        # Translators: the kinds of pattern, as in NVDA's own speech dictionaries.
+        names = {0: _("&Anywhere"), 2: _("&Whole word"), 1: _("Regular e&xpression")}
+        # Translators: label of the choice of pattern kind.
+        self.kind = wx.RadioBox(self, label=_("Type"), choices=[names[t] for t, _n in self.TYPES])
+        self.kind.SetSelection([t for t, _n in self.TYPES].index(entry.type if entry else 2))
+        main.Add(self.kind, flag=wx.ALL, border=5)
         # Translators: label of the text Hear it says.
         main.Add(wx.StaticText(self, label=_("&Test text:")), flag=wx.LEFT | wx.TOP, border=5)
         self.test = wx.TextCtrl(self, value=entry.pattern if entry and entry.type != 1 else "", size=(420, -1))
@@ -161,22 +171,12 @@ class EntryDialog(wx.Dialog):
         hear = wx.Button(self, label=_("Hear &it"))
         hear.Bind(wx.EVT_BUTTON, lambda evt: self.hear(True))
         # Translators: button saying the test text as the voice reads it without the entry.
-        before = wx.Button(self, label=_("Hear &without it"))
+        before = wx.Button(self, label=_("Hear with&out it"))
         before.Bind(wx.EVT_BUTTON, lambda evt: self.hear(False))
         for b in (hear, before):
             b.Enable(_synth() is not None)
             hearRow.Add(b)
         main.Add(hearRow, flag=wx.ALL, border=5)
-        # Translators: check box: the pattern matches only with the same capitals.
-        self.case = wx.CheckBox(self, label=_("&Case sensitive"))
-        self.case.SetValue(bool(entry and entry.case))
-        main.Add(self.case, flag=wx.ALL, border=5)
-        # Translators: the kinds of pattern, as in NVDA's own speech dictionaries.
-        names = {0: _("&Anywhere"), 2: _("&Whole word"), 1: _("Regular e&xpression")}
-        # Translators: label of the choice of pattern kind.
-        self.kind = wx.RadioBox(self, label=_("Type"), choices=[names[t] for t, _n in self.TYPES])
-        self.kind.SetSelection([t for t, _n in self.TYPES].index(entry.type if entry else 2))
-        main.Add(self.kind, flag=wx.ALL, border=5)
         main.Add(self.CreateButtonSizer(wx.OK | wx.CANCEL), flag=wx.ALL, border=5)
         self.Bind(wx.EVT_BUTTON, self.onOk, id=wx.ID_OK)
         self.SetSizerAndFit(main)
@@ -310,13 +310,15 @@ class DictsDialog(wx.Dialog):
         self.addBtn = wx.Button(self, label=_("&Add..."))
         self.editBtn = wx.Button(self, label=_("E&dit..."))
         self.removeBtn = wx.Button(self, label=_("&Remove"))
-        self.restoreBtn = wx.Button(self, label=_("Re&store the community's"))
+        self.restoreBtn = wx.Button(self, label=_("Res&tore the community's"))
         self.sourceBtn = wx.Button(self, label=_("&Source..."))
+        # Translators: button fetching the newest community dictionaries now.
+        self.fetchBtn = wx.Button(self, label=_("Download the &latest dictionaries"))
         # Translators: button committing and pushing the person's changes with git now.
         self.publishBtn = wx.Button(self, label=_("&Publish now"))
         self.publishBtn.Show(cv_git.find_git() is not None)
         for b, h in ((self.addBtn, self.onAdd), (self.editBtn, self.onEdit), (self.removeBtn, self.onRemove),
-                     (self.restoreBtn, self.onRestore), (self.sourceBtn, self.onSource),
+                     (self.restoreBtn, self.onRestore), (self.sourceBtn, self.onSource), (self.fetchBtn, self.onFetch),
                      (self.publishBtn, self.onPublish)):
             b.Bind(wx.EVT_BUTTON, h)
             btns.Add(b)
@@ -430,6 +432,25 @@ class DictsDialog(wx.Dialog):
                              _("The dictionaries couldn't be fetched from there."))
             cv_dicts.refresh_all(self.data, force=True, done=done)
         d.Destroy()
+
+    def onFetch(self, evt):
+        """The newest files from the source now (they're otherwise fetched every few hours)."""
+        self.fetchBtn.Disable()
+        # Translators: announced while the dictionaries are downloaded.
+        ui.message(_("Downloading the latest dictionaries..."))
+
+        def done(ok):
+            def show():
+                if not self:
+                    return
+                self.fetchBtn.Enable()
+                key = self.selected().entry.key if self.selected() else None
+                self.fill(key)
+                # Translators: after downloading the dictionaries (or failing to).
+                ui.message(_("The dictionaries are up to date.") if ok else
+                           _("The dictionaries couldn't be downloaded. Check the connection and try again."))
+            wx.CallAfter(show)
+        cv_dicts.refresh_all(self.data, force=True, done=done)
 
     def onPublish(self, evt):
         if not cv_git.pending(self.data):
