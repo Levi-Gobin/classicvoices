@@ -37,7 +37,23 @@ def build_info():
 
 
 def channel(state_dir):
-    """"stable" or "dev"."""
+    """"stable" or "dev". A build from the dev branch, the first time it runs, sets dev (someone who installs one
+    wants its updates); the person's choice holds after that, until another dev build is put in."""
+    info = build_info() or {}
+    if info.get("channel") == "dev":
+        mark = os.path.join(state_dir, "channel-build.txt")
+        try:
+            with open(mark, encoding="utf-8") as f:
+                seen = f.read().strip()
+        except OSError:
+            seen = ""
+        if seen != info["commit"]:
+            try:
+                set_channel(state_dir, "dev")
+                with open(mark, "w", encoding="utf-8") as f:
+                    f.write(info["commit"])
+            except OSError:
+                pass
     try:
         with open(os.path.join(state_dir, "channel.txt"), encoding="utf-8") as f:
             return "dev" if f.read().strip() == "dev" else "stable"

@@ -2551,5 +2551,7 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   the Mac app's Resources/buildinfo.json); the dev channel offers dev-latest when its commit is newer. Stable
   checks never see dev-latest (its tag has no version number). Settings: NVDA Tools menu "Classic Voices
   development builds", desktop app Updates section, Android "Development builds", Mac Settings > Updates.
-  Dev checks hourly. The Mac app isn't in the dev builds yet: needs Levi's Developer ID and notarization in
+  A build from the dev branch (buildinfo "channel": "dev") switches its install to dev the first time it
+  runs; the person's choice holds after that until another dev build is put in. Dev checks hourly. The Mac
+  app isn't in the dev builds yet: needs Levi's Developer ID and notarization in
   the repo secrets (the private key can't be exported without a keychain dialog).

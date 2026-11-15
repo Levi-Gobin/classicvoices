@@ -51,8 +51,19 @@ final class Update {
         long size;
     }
 
-    /** "stable" (the releases) or "dev" (every change on the dev branch). */
-    static boolean dev(Context c) { return "dev".equals(c.getSharedPreferences("update", 0).getString("channel", "stable")); }
+    /**
+     * "stable" (the releases) or "dev" (every change on the dev branch). A build from the dev branch, the first time
+     * it runs, sets dev (someone who installs one wants its updates); the person's choice holds after that, until
+     * another dev build is put in.
+     */
+    static boolean dev(Context c) {
+        SharedPreferences p = c.getSharedPreferences("update", 0);
+        if ("dev".equals(BuildInfo.CHANNEL) && !BuildInfo.COMMIT.equals(p.getString("channel_build", ""))) {
+            p.edit().putString("channel", "dev").putString("channel_build", BuildInfo.COMMIT).apply();
+            return true;
+        }
+        return "dev".equals(p.getString("channel", "stable"));
+    }
 
     static void setDev(Activity a, boolean on) {
         a.getSharedPreferences("update", 0).edit().putString("channel", on ? "dev" : "stable").remove("checked").apply();

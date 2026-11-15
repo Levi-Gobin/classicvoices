@@ -49,17 +49,27 @@ final class UpdateCheck {
 
     /// The update channel: "stable" (the releases) or "dev" (every change on the dev branch, from the pre-release
     /// tagged dev-latest that CI replaces on every push; its dev.json names the commit and time).
+    /// A build from the dev branch, the first time it runs, sets dev (someone who installs one wants its updates);
+    /// the person's choice holds after that, until another dev build is put in.
     nonisolated static var devChannel: Bool {
-        get { UserDefaults.standard.string(forKey: "update.channel") == "dev" }
+        get {
+            let d = UserDefaults.standard
+            if let b = buildCommit, b.channel == "dev", d.string(forKey: "update.channelBuild") != b.commit {
+                d.set("dev", forKey: "update.channel")
+                d.set(b.commit, forKey: "update.channelBuild")
+                return true
+            }
+            return d.string(forKey: "update.channel") == "dev"
+        }
         set { UserDefaults.standard.set(newValue ? "dev" : "stable", forKey: "update.channel") }
     }
 
     /// This build's commit and its time (buildinfo.json, written into the app when it was built), or nil.
-    nonisolated static var buildCommit: (commit: String, time: Double)? {
+    nonisolated static var buildCommit: (commit: String, time: Double, channel: String)? {
         guard let url = Bundle.main.url(forResource: "buildinfo", withExtension: "json"),
               let d = try? Data(contentsOf: url), let j = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
               let c = j["commit"] as? String, !c.isEmpty else { return nil }
-        return (c, (j["time"] as? Double) ?? Double(j["time"] as? Int ?? 0))
+        return (c, (j["time"] as? Double) ?? Double(j["time"] as? Int ?? 0), j["channel"] as? String ?? "stable")
     }
 
     nonisolated static let devFeed = URL(string: "https://api.github.com/repos/Levi-Gobin/classicvoices/releases/tags/dev-latest")!
