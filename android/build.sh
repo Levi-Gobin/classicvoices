@@ -25,10 +25,16 @@ mkdir -p "$OUT/apk" "$OUT/classes" "$OUT/gen" "$OUT/obj"
 # ---- native library, per ABI
 CFLAGS="-O2 -std=gnu11 -ffp-contract=off -fPIC -w -fvisibility=hidden -Icore -Iports/host -Iports/posix/compat -DVX_DYNAMIC_NATIVE"
 CORE="core/thumb.c core/vxengine.c core/vxstream.c core/vxphonemes.c core/vxrules.c core/vxlang.c"
-HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c android/jni/cv_jni.c"
+HOST="ports/host/cv_catalog.c ports/host/cv_ssml.c ports/host/cv_rules.c ports/host/cv_dict.c ports/posix/vx_posix.c ports/posix/vx_native_dl.c nvda/src/mt_stub.c android/jni/cv_jni.c"
 # the .xz decoder, for the Zig compiler the phone downloads to build fast code
 XZ="third_party/xz-embedded/xz_crc32.c third_party/xz-embedded/xz_crc64.c third_party/xz-embedded/xz_dec_lzma2.c third_party/xz-embedded/xz_dec_stream.c third_party/xz-embedded/xz_dec_bcj.c android/jni/cv_untar.c"
 XZFLAGS="-Ithird_party/xz-embedded -DXZ_USE_CRC64 -DXZ_DEC_ANY_CHECK -DXZ_DEC_X86 -DXZ_DEC_ARM -DXZ_DEC_ARMTHUMB -DXZ_DEC_ARM64"
+# PCRE2, built in: Apple's pronunciation rules and the community dictionaries run with it (Android has no
+# system copy apps may load); tools/pcre2_build.py fetches its source once, checked against its SHA-256
+PCRE_SRC=$(python3 -c "import sys; sys.path.insert(0, 'tools'); import pcre2_build; import os; print(os.path.relpath(pcre2_build.source()))")
+PCRE_DEFS=$(python3 -c "import sys; sys.path.insert(0, 'tools'); import pcre2_build; print(' '.join(pcre2_build.DEFINES))")
+PCRE_FILES=$(python3 -c "import sys; sys.path.insert(0, 'tools'); import pcre2_build; print(' '.join(pcre2_build.FILES))")
+PCRE_USE="-DCV_PCRE2_STATIC -DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC -I$PCRE_SRC"
 for abi in $ABIS; do
     case $abi in
         arm64-v8a) T=aarch64-linux-android; X="" ;;
@@ -45,8 +51,12 @@ for abi in $ABIS; do
         objs="$objs $O/$(basename "$f" .c).o"
     done
     for f in $HOST; do
-        $CC $CFLAGS $X -c "$f" -o "$O/$(basename "$f" .c).o" &
+        $CC $CFLAGS $X $PCRE_USE -c "$f" -o "$O/$(basename "$f" .c).o" &
         objs="$objs $O/$(basename "$f" .c).o"
+    done
+    for f in $PCRE_FILES; do
+        $CC -O2 -w -fPIC -fvisibility=hidden $X -I"$PCRE_SRC" $PCRE_DEFS -c "$PCRE_SRC/pcre2_$f.c" -o "$O/pcre2_$f.o" &
+        objs="$objs $O/pcre2_$f.o"
     done
     for f in $XZ; do
         $CC $CFLAGS $X $XZFLAGS -c "$f" -o "$O/$(basename "$f" .c).o" &

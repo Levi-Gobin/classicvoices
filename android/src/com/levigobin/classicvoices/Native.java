@@ -30,23 +30,15 @@ final class Native {
      * up, as the voices do), and pauses before, between and after spelled
      * letters, for the utterances begun from now on.
      */
-    static native void setPauses(boolean steady, boolean spelling);
+    static native void setPauses(boolean steady, boolean spelling, boolean spellLowercase);
 
     /**
-     * The pre-check for a pronunciation rule set (core/vxrules.h): which
-     * rules could match a text, so the others needn't run. Patterns and text
-     * are UTF-8 bytes; marks gets 1 for each rule worth running (never cleared).
+     * Starts an utterance; text is UTF-8. The dictionaries in dictDir (the person's own entries, and the fetched
+     * community ones when community is set) and Apple's rules (the voice's own release's when ownRules, then the pack's, setRulesPack) run on its text,
+     * never on markup or spelled text. Returns the segment count, or -1.
      */
-    static native long newRuleIndex();
-
-    static native void ruleIndexAdd(long index, int rule, byte[] pattern, boolean icase);
-
-    static native void ruleIndexMark(long index, byte[] utf8, byte[] marks);
-
-    static native void freeRuleIndex(long index);
-
-    /** Starts an utterance; text is UTF-8. Returns the segment count, or -1. */
-    static native int begin(String key, String fallback, byte[] text, boolean ssml, int rate, int pitch, int volume);
+    static native int begin(String key, String fallback, String language, byte[] text, boolean ssml, int rate, int pitch,
+                            int volume, boolean ownRules, String dictDir, boolean community);
 
     /** 16-bit PCM at 22050 Hz into buf: bytes written, 0 if none yet, -1 when done. */
     static native int read(byte[] buf);

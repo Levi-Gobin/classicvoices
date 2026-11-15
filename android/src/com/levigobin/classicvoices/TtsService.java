@@ -163,9 +163,9 @@ public class TtsService extends TextToSpeechService {
         speak(this, v, text, cs instanceof Spanned ? (Spanned) cs : null, request.getSpeechRate(), request.getPitch(), cb);
     }
 
-    // The text as SSML when it has verbatim spans (said letter by letter),
-    // with Apple's rules applied to the rest; null when it has none.
-    private static String spelledSsml(Spanned sp, Rules rules) {
+    // The text as SSML when it has verbatim spans (said letter by letter); null when it has none. Apple's rules
+    // and the community dictionary apply to the rest in the engine (Native.begin).
+    private static String spelledSsml(Spanned sp) {
         if (Build.VERSION.SDK_INT < 21) return null;
         TtsSpan[] spans = sp.getSpans(0, sp.length(), TtsSpan.class);
         List<int[]> spell = new ArrayList<>();
@@ -182,12 +182,12 @@ public class TtsService extends TextToSpeechService {
         for (int[] r : spell) {
             if (r[0] < at) continue;  // overlapping
             String plain = text.substring(at, r[0]);
-            out.append(xml(rules != null ? rules.apply(plain) : plain));
+            out.append(xml(plain));
             out.append("<say-as interpret-as=\"characters\">").append(xml(text.substring(r[0], r[1]))).append("</say-as>");
             at = r[1];
         }
         String plain = text.substring(at);
-        out.append(xml(rules != null ? rules.apply(plain) : plain)).append("</speak>");
+        out.append(xml(plain)).append("</speak>");
         return out.toString();
     }
 
@@ -196,13 +196,11 @@ public class TtsService extends TextToSpeechService {
     }
 
     private void speak(TtsService s, VoiceInfo v, String text, Spanned spans, int rate, int pitch, SynthesisCallback cb) {
-        // Two independent switches: the voice's own release's rules, and
-        // Apple's later pack (its dictionary goes into the engine, its rules run here).
+        // Independent switches: the voice's own release's rules, Apple's later pack (its dictionary and rules)
+        // and the community dictionaries; all run in the engine.
         String pack = Pronunciation.packFor(s, v);
-        Rules rules = Rules.forVoice(s, v, Data.rulesEnabled(s), pack);
-        String ssml = spans != null ? spelledSsml(spans, rules) : null;
+        String ssml = spans != null ? spelledSsml(spans) : null;
         if (ssml != null) text = ssml;
-        else if (rules != null) text = rules.apply(text);
         String fallback = Data.fallbackEnabled(s) ? v.fallback : "";
         byte[] utf8;
         try {
@@ -217,8 +215,11 @@ public class TtsService extends TextToSpeechService {
         if (cb.start(Native.SAMPLE_RATE, AudioFormat.ENCODING_PCM_16BIT, 1) != TextToSpeech.SUCCESS) return;
         Native.setRulesPack(pack);
         Native.setAppleTone(Data.appleTone(this));
-        Native.setPauses(Data.steadyPauses(this), Data.spellingPauses(this));
-        if (Native.begin(v.key, fallback, utf8, ssml != null, r, p, -1) < 0) {
+        Native.setPauses(Data.steadyPauses(this), Data.spellingPauses(this), Data.spellLowercase(this));
+        boolean community = Dictionaries.enabled(this);
+        if (community) Dictionaries.refreshIfDue(this);
+        if (Native.begin(v.key, fallback, v.language, utf8, ssml != null, r, p, -1, Data.rulesEnabled(s),
+                Dictionaries.dir(this).getAbsolutePath(), community) < 0) {
             Log.w(TAG, "engine not ready: " + Native.lastError());
             cb.error();
             return;

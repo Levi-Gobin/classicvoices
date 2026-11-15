@@ -12,10 +12,11 @@
 #include <unistd.h>
 
 #include "cv_catalog.h"
+#include "cv_dict.h"
+#include "cv_rules.h"
 #include "vxlang.h"
 #include "cv_ssml.h"
 #include "vxstream.h"
-#include "vxrules.h"
 
 void cv_set_native_dir(const char *dir);
 long long cv_native_status(const char *build);
@@ -36,6 +37,7 @@ static char g_pack[1024];     // Apple's later pronunciation pack for the next u
 static int g_tone = 1;        // the top of the band rolled off as iPhone and Mac playback does
 static int g_steady = 1;      // pauses as long as asked at any rate
 static int g_spell_pauses;    // spelling pauses around the letters, as the voices do
+static int g_spell_lower;     // spelled capitals without "capital" before them
 static atomic_int g_cancel;
 
 static char *dup_utf(JNIEnv *env, jstring s) {
@@ -154,69 +156,47 @@ JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setAppleTone(JNIE
 // Pauses as long as asked at any rate (vxs_set_steady_pauses), and pauses
 // around spelled letters (vxs_set_spelling_pauses), from the next utterance.
 JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setPauses(JNIEnv *env, jclass cls, jboolean steady,
-                                                                         jboolean spelling) {
+                                                                         jboolean spelling, jboolean lower) {
     (void)env; (void)cls;
     pthread_mutex_lock(&g_mu);
     g_steady = steady ? 1 : 0;
     g_spell_pauses = spelling ? 1 : 0;
+    g_spell_lower = lower ? 1 : 0;
     pthread_mutex_unlock(&g_mu);
 }
 
-// The pronunciation rules' pre-check (core/vxrules.h), for Rules.java.
-JNIEXPORT jlong JNICALL Java_com_levigobin_classicvoices_Native_newRuleIndex(JNIEnv *env, jclass cls) {
-    (void)env; (void)cls;
-    return (jlong)(intptr_t)vx_rule_index_new();
-}
-
-JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_ruleIndexAdd(JNIEnv *env, jclass cls, jlong index,
-                                                                            jint rule, jbyteArray pattern, jboolean icase) {
-    (void)cls;
-    if (!index || !pattern || rule < 0) return;
-    char *p = bytes_utf(env, pattern);
-    vx_rule_index_add((VxRuleIndex *)(intptr_t)index, (uint32_t)rule, p, icase ? 1 : 0);
-    free(p);
-}
-
-JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_ruleIndexMark(JNIEnv *env, jclass cls, jlong index,
-                                                                             jbyteArray text, jbyteArray marks) {
-    (void)cls;
-    if (!index || !text || !marks) return;
-    char *t = bytes_utf(env, text);
-    jsize n = (*env)->GetArrayLength(env, marks);
-    jbyte *m = (*env)->GetByteArrayElements(env, marks, NULL);
-    if (m) {
-        vx_rule_index_mark((const VxRuleIndex *)(intptr_t)index, t, (uint8_t *)m, (size_t)n);
-        (*env)->ReleaseByteArrayElements(env, marks, m, 0);
-    }
-    free(t);
-}
-
-JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_freeRuleIndex(JNIEnv *env, jclass cls, jlong index) {
-    (void)env; (void)cls;
-    if (index) vx_rule_index_free((VxRuleIndex *)(intptr_t)index);
-}
-
-// Start an utterance. text is UTF-8; ssml != 0 parses markup.
+// Start an utterance. text is UTF-8; ssml != 0 parses markup. As on Linux and Windows: the dictionaries in dict_dir
+// (cv_dict.h: the person's own entries, and the fetched ones when community is set; null: none) and Apple's rules (the voice's own release's when own_rules, then the
+// pronunciation pack's, setRulesPack) run here, on the text and never on markup or spelled text.
 JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env, jclass cls, jstring key, jstring fallback,
-                                                                     jbyteArray text, jboolean ssml, jint rate,
-                                                                     jint pitch, jint volume) {
+                                                                     jstring language, jbyteArray text, jboolean ssml,
+                                                                     jint rate, jint pitch, jint volume,
+                                                                     jboolean own_rules, jstring dict_dir,
+                                                                     jboolean community) {
     (void)cls;
     if (!g_stream) return -1;
     char *k = dup_utf(env, key), *f = dup_utf(env, fallback), *t = bytes_utf(env, text);
+    char *lang = dup_utf(env, language), *dd = dup_utf(env, dict_dir);
     pthread_mutex_lock(&g_mu);
     reload_if_asked();
     if (!g_stream) {
         pthread_mutex_unlock(&g_mu);
-        free(k); free(f); free(t);
+        free(k); free(f); free(t); free(lang); free(dd);
         return -1;
     }
     vxs_set_rules_pack(g_stream, g_pack);  // for each segment's vxs_start
     vxs_set_apple_tone(g_stream, g_tone);
     vxs_set_steady_pauses(g_stream, g_steady);
     vxs_set_spelling_pauses(g_stream, g_spell_pauses);
+    vxs_set_spell_lowercase(g_stream, g_spell_lower);
     cv_free_utterance(&g_utt);
-    if (ssml) cv_parse_ssml(t, rate, pitch, volume, &g_utt);
-    else cv_parse_plain(t, rate, pitch, volume, &g_utt);
+    const char *language_tag = lang ? lang : "";
+    const CvRules *rules = cv_rules_for_voice_pack(g_voices_root, g_downloads_root, k, language_tag, own_rules ? 1 : 0,
+                                                   g_pack[0] ? g_pack : NULL);
+    const CvDict *dict = dd && dd[0] ? cv_dict_for_voice_ex(dd, k, language_tag, community ? 1 : 0) : NULL;
+    CvPhonemeVoice pv = {g_voices_root, g_downloads_root, k, language_tag};
+    if (ssml) cv_parse_ssml_dict(t, rate, pitch, volume, rules, dict, cv_voice_phonemes, &pv, &g_utt);
+    else cv_parse_plain_dict(t, rate, pitch, volume, rules, dict, cv_voice_phonemes, &pv, &g_utt);
     snprintf(g_key, sizeof g_key, "%s", k);
     snprintf(g_fallback, sizeof g_fallback, "%s", f ? f : "");
     g_seg = 0;
@@ -224,7 +204,7 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
     atomic_store(&g_cancel, 0);
     jint n = (jint)g_utt.n;
     pthread_mutex_unlock(&g_mu);
-    free(k); free(f); free(t);
+    free(k); free(f); free(t); free(lang); free(dd);
     return n;
 }
 

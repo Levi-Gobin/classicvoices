@@ -60,6 +60,9 @@ public class ImportService extends Service {
     private static final LinkedList<Job> QUEUE = new LinkedList<>();
     private static final List<Listener> LISTENERS = new ArrayList<>();
     private static volatile boolean running, cancelAll, cancelCurrent;
+    // A fast-code build stopped for a job someone asked for: queued again, not a failure (forum, 2026-11:
+    // downloads sat at 0% behind the build the app queues each time it opens)
+    private static volatile boolean pausedForOther;
     private static final List<String> ERRORS = new ArrayList<>();  // "label: message" of failed jobs, until dismissed
     private static volatile String lastMessage = "";
     private static volatile double lastFraction = -1;
@@ -72,7 +75,23 @@ public class ImportService extends Service {
         synchronized (LOCK) {
             for (Job q : QUEUE) if (q.kind.equals(j.kind) && q.arg.equals(j.arg)) return;
             if (currentJob != null && currentJob.kind.equals(j.kind) && currentJob.arg.equals(j.arg)) return;
-            QUEUE.add(j);
+            if (j.kind.equals(FastCode.JOB)) {
+                QUEUE.add(j);
+            } else {
+                // What someone asked for goes ahead of a fast-code build, which can take a long while on a
+                // phone; a build that's running stops and comes back after it.
+                int at = QUEUE.size();
+                for (int i = 0; i < QUEUE.size(); i++) if (QUEUE.get(i).kind.equals(FastCode.JOB)) { at = i; break; }
+                QUEUE.add(at, j);
+                Job cur = currentJob;
+                if (cur != null && cur.kind.equals(FastCode.JOB) && !pausedForOther) {
+                    pausedForOther = true;
+                    cancelCurrent = true;
+                    boolean queuedAgain = false;
+                    for (Job q : QUEUE) queuedAgain |= q.kind.equals(FastCode.JOB);
+                    if (!queuedAgain) QUEUE.add(new Job(cur.kind, cur.arg, cur.label));
+                }
+            }
         }
         Intent i = new Intent(c, ImportService.class);
         if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i);
@@ -204,10 +223,12 @@ public class ImportService extends Service {
                 }
             }
             String error = null;
+            boolean paused = false;
             try {
                 run(j);
             } catch (Progress.Cancelled e) {
-                error = j.label + ": " + getString(R.string.import_cancelled);
+                if (pausedForOther && j.kind.equals(FastCode.JOB) && !cancelAll) paused = true;
+                else error = j.label + ": " + getString(R.string.import_cancelled);
             } catch (Exception e) {
                 error = j.label + ": " + (e.getMessage() != null ? e.getMessage() : e.toString());
                 synchronized (ERRORS) {
@@ -221,7 +242,9 @@ public class ImportService extends Service {
             }
             synchronized (LOCK) {
                 currentJob = null;  // done: the screen shows it as such when it hears
+                if (j.kind.equals(FastCode.JOB)) pausedForOther = false;
             }
+            if (paused) continue;  // it's queued again, after what was asked for
             if (j.kind.equals(FastCode.JOB)) FastCode.autoOff(this, error != null);
             else if (error == null && !cancelAll) {
                 MacCompacts.startIfNeeded(this);

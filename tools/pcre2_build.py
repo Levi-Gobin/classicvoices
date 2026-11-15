@@ -1,6 +1,7 @@
 """PCRE2, compiled into the Windows engine DLLs (the NVDA add-on's cvengine and
-the SAPI engine), which run Apple's pronunciation rules with it. Linux and
-Android use the system's copy instead. The source is fetched from the PCRE2
+the SAPI engine) and Android's libclassicvoices.so (android/build.sh), which
+run Apple's pronunciation rules and the community dictionaries with it. Linux
+uses the system's copy instead. The source is fetched from the PCRE2
 project's release (checked against its SHA-256) into build/, never committed.
 
     from pcre2_build import objects

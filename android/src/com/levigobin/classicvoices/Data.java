@@ -244,6 +244,8 @@ final class Data {
 
     static boolean spellingPauses(Context c) { return prefs(c).getBoolean("spelling_pauses", false); }
 
+    static boolean spellLowercase(Context c) { return prefs(c).getBoolean("spell_lowercase", false); }
+
     static boolean hasEngine(Context c, String build) {
         return new File(new File(voicesDir(c), build), "voiced").isFile();
     }

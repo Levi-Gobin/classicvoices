@@ -135,6 +135,8 @@
     <string name="setting_rules_explained">The text rules each voice\'s own iOS or Mac OS X release applied before speaking: “iOS” is spelled out, “OS X” is “OS ten”, St and Dr become Street and Drive, and so on.</string>
     <string name="setting_newer_rules">Newer pronunciation rules</string>
     <string name="setting_newer_rules_explained">Apple\'s later pronunciation dictionary and rules, added to the voice\'s own. Turning this on downloads them from Apple for every language (about 5 MB).</string>
+    <string name="setting_dictionaries">Community pronunciation dictionaries</string>
+    <string name="setting_dictionaries_explained">Pronunciation fixes written by Classic Voices users, for every voice of a language (github.com/nicopn/classicvoices-dicts). Turned on, Classic Voices fetches them and checks for new ones every few hours.</string>
     <string name="newer_rules_job">Newer pronunciation rules</string>
     <string name="newer_rules_catalog">Finding the pronunciation rules</string>
     <string name="newer_rules_bad_catalog">Apple\'s list of pronunciation rules couldn\'t be read</string>
@@ -148,6 +150,8 @@
     <string name="setting_steady_pauses_explained">The voices shorten a pause the faster they speak, so at high rates a pause TalkBack or an app asks for almost disappears. With this on, it lasts as long at any rate.</string>
     <string name="setting_spelling_pauses">Pauses when spelling</string>
     <string name="setting_spelling_pauses_explained">The voices pause before, between and after spelled letters. Off, spelling is as quick as the rest of the speech. iOS 3 and 4 voices always pause.</string>
+    <string name="setting_spell_lowercase">Don\'t say "capital" when spelling</string>
+    <string name="setting_spell_lowercase_explained">Capital letters are spelled like small ones, without "capital" before them. TalkBack can still tell them apart its own way, if it\'s set to.</string>
     <string name="tts_heading">Text-to-speech</string>
     <string name="open_tts_settings">Open text-to-speech settings</string>
     <string name="summary_none">No voices yet. Nothing of Apple\'s comes with Classic Voices: get the firmware in the iOS tab, and its voices are taken out of it.</string>

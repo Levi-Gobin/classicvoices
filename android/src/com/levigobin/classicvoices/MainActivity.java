@@ -159,6 +159,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
         MacCompacts.startIfNeeded(this);
         if (!FastCode.autoOff(this)) FastCode.startIfNeeded(this);
         Pronunciation.startIfNeeded(this);
+        Dictionaries.refreshIfDue(this);
 
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -1037,11 +1038,13 @@ public class MainActivity extends Activity implements ImportService.Listener {
         s.append("Preferred engine: ").append(engine).append('\n');
         s.append("Settings: rules ").append(Data.rulesEnabled(this) ? "on" : "off").append(", newer rules ")
                 .append(Pronunciation.enabled(this) ? (Pronunciation.downloaded(this) ? "on" : "on, not downloaded") : "off")
+                .append(", community dictionaries ").append(Dictionaries.enabled(this) ? "on" : "off")
                 .append(", pitch fallback ")
                 .append(Data.fallbackEnabled(this) ? "on" : "off").append(", tone as on iPhone and Mac ")
                 .append(Data.appleTone(this) ? "on" : "off").append(", steady pauses ")
                 .append(Data.steadyPauses(this) ? "on" : "off").append(", spelling pauses ")
-                .append(Data.spellingPauses(this) ? "on" : "off").append('\n');
+                .append(Data.spellingPauses(this) ? "on" : "off").append(", no \"capital\" when spelling ")
+                .append(Data.spellLowercase(this) ? "on" : "off").append('\n');
         for (String e : ImportService.errors()) s.append("Error: ").append(e).append('\n');
         return s.toString().trim();
     }
@@ -1059,6 +1062,15 @@ public class MainActivity extends Activity implements ImportService.Listener {
                     }
                 });
         text(getString(R.string.setting_newer_rules_explained));
+        check("community_dictionaries", getString(R.string.setting_dictionaries), Dictionaries.enabled(this),
+                new CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(CompoundButton b, boolean on) {
+                        Data.prefs(MainActivity.this).edit().putBoolean("community_dictionaries", on).commit();
+                        if (on) Dictionaries.refresh(MainActivity.this, true);
+                    }
+                });
+        text(getString(R.string.setting_dictionaries_explained));
         check("pitch_fallback", getString(R.string.setting_fallback), Data.fallbackEnabled(this), pref("pitch_fallback"));
         text(getString(R.string.setting_fallback_explained));
         check("apple_tone", getString(R.string.setting_apple_tone), Data.appleTone(this), pref("apple_tone"));
@@ -1068,6 +1080,9 @@ public class MainActivity extends Activity implements ImportService.Listener {
         check("spelling_pauses", getString(R.string.setting_spelling_pauses), Data.spellingPauses(this),
                 pref("spelling_pauses"));
         text(getString(R.string.setting_spelling_pauses_explained));
+        check("spell_lowercase", getString(R.string.setting_spell_lowercase), Data.spellLowercase(this),
+                pref("spell_lowercase"));
+        text(getString(R.string.setting_spell_lowercase_explained));
 
         section(getString(R.string.tts_heading));
         String engine = Settings.Secure.getString(getContentResolver(), "tts_default_synth");
