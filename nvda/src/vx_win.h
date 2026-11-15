@@ -11,6 +11,8 @@
 #include <io.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -32,6 +34,16 @@ void vx_win_speech_priority(void);  // the calling thread above normal (vxstream
 #define stat(p, b) vx_stat_utf8((p), (b))
 #define getpagesize() 4096
 #define nanosleep(ts, rem) (vx_sleep_ns((ts)->tv_sec * 1000000000LL + (ts)->tv_nsec), 0)
+
+// strndup: the older mingw runtimes (msvcrt; the CI's gcc) don't have it.
+static inline char *vx_strndup(const char *s, size_t n) {
+    size_t l = 0;
+    while (l < n && s[l]) l++;
+    char *d = (char *)malloc(l + 1);
+    if (d) { memcpy(d, s, l); d[l] = 0; }
+    return d;
+}
+#define strndup vx_strndup
 
 // Apple QoS thread attributes: no-ops here (the worker thread is plenty fast).
 #define pthread_attr_set_qos_class_np(attr, cls, pri) 0
