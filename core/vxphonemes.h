@@ -32,6 +32,10 @@ char *vx_phoneme_text(const char *voices_root, const char *asset_root, const cha
 // Whether the IPA has a vowel or a syllabic consonant.
 int vx_ipa_has_vowel(const char *ipa);
 
+// X-SAMPA -> IPA (UTF-8, malloc'd); NULL, with the offending byte's offset in
+// *bad (may be NULL), when something in it isn't X-SAMPA.
+char *vx_xsampa_to_ipa(const char *xsampa, size_t len, size_t *bad);
+
 #ifdef __cplusplus
 }
 #endif

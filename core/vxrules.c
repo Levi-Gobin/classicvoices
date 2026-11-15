@@ -278,9 +278,119 @@ void vx_rule_index_free(VxRuleIndex *x) {
     free(x);
 }
 
+static void index_put(VxRuleIndex *x, uint32_t rule, char *lit, int icase) {
+    size_t n = strlen(lit);
+    unsigned char *u = (unsigned char *)lit;
+    Bucket *b = n >= 2 ? &x->two[icase != 0][key2(u[0], u[1])] : &x->one[icase != 0][u[0]];
+    if (b->n == b->cap) {
+        b->cap = b->cap ? b->cap * 2 : 4;
+        b->e = realloc(b->e, b->cap * sizeof *b->e);
+    }
+    b->e[b->n++] = (Entry){rule, (uint32_t)n, lit};
+}
+
+// The branches of the alternation in p[0..len) at depth 0 (outside groups and classes), as offsets; their
+// number, or 0 when there is no such alternation (or too many branches).
+static int split_branches(const char *p, size_t len, size_t *start, size_t *end, int max) {
+    int n = 0, depth = 0, cls = 0;
+    size_t from = 0;
+    for (size_t i = 0; i < len; i++) {
+        char c = p[i];
+        if (c == '\\') { i++; continue; }
+        if (cls) { if (c == ']') cls = 0; continue; }
+        if (c == '[') cls = 1;
+        else if (c == '(') depth++;
+        else if (c == ')') depth--;
+        else if (c == '|' && depth == 0) {
+            if (n == max) return 0;
+            start[n] = from; end[n] = i; n++;
+            from = i + 1;
+        }
+    }
+    if (!n || n == max) return 0;
+    start[n] = from; end[n] = len;
+    return n + 1;
+}
+
+// Every match of p contains one of these literals: the branches of an alternation that every match goes
+// through (the whole pattern's, or a group's that isn't optional), when each branch has a literal of its own.
+// Their number (put in lits, malloc'd), or 0. A community dictionary's "\b(colour|color)\b" otherwise runs on
+// every text.
+static int branch_literals(const char *p, int icase, char **lits, int max) {
+    size_t len = strlen(p), bs[64], be[64];
+    if (max > 64) max = 64;
+    // the whole pattern's alternation; without one, each group at depth 1 that every match passes through
+    int top = split_branches(p, len, bs, be, max) >= 2;
+    for (size_t g = top ? len : 0; g <= len; g++) {
+        size_t from, to;
+        if (g == len) {
+            if (!top) break;
+            from = 0; to = len;
+        } else {
+            if (p[g] != '(' || (g && p[g - 1] == '\\')) continue;
+            int depth = 0, cls = 0, outer = 1;
+            for (size_t k = 0; k < g; k++) {  // only groups at the top level
+                if (p[k] == '\\') { k++; continue; }
+                if (cls) { if (p[k] == ']') cls = 0; continue; }
+                if (p[k] == '[') cls = 1;
+                else if (p[k] == '(') depth++;
+                else if (p[k] == ')') depth--;
+            }
+            outer = depth == 0 && !cls;
+            if (!outer) continue;
+            size_t k = g + 1;
+            depth = 1; cls = 0;
+            for (; k < len && depth; k++) {
+                if (p[k] == '\\') { k++; continue; }
+                if (cls) { if (p[k] == ']') cls = 0; continue; }
+                if (p[k] == '[') cls = 1;
+                else if (p[k] == '(') depth++;
+                else if (p[k] == ')') depth--;
+            }
+            if (depth) return 0;
+            char q = k < len ? p[k] : 0;
+            if (q == '?' || q == '*' || (q == '{' && k + 1 < len && p[k + 1] == '0')) continue;  // optional
+            from = g + 1;
+            to = k - 1;
+            if (from + 1 < to && p[from] == '?') {  // (?:...), (?<name>...), (?P<name>...)
+                if (p[from + 1] == ':') from += 2;
+                else if (p[from + 1] == '<' && p[from + 2] != '=' && p[from + 2] != '!') {
+                    while (from < to && p[from] != '>') from++;
+                    from++;
+                } else if (p[from + 1] == 'P' && p[from + 2] == '<') {
+                    while (from < to && p[from] != '>') from++;
+                    from++;
+                } else continue;  // lookaround and the like
+            }
+        }
+        int nb = split_branches(p + from, to - from, bs, be, max);
+        if (nb < 2) continue;
+        int ok = 1;
+        for (int i = 0; i < nb && ok; i++) {
+            char *b = malloc(be[i] - bs[i] + 1);
+            memcpy(b, p + from + bs[i], be[i] - bs[i]);
+            b[be[i] - bs[i]] = 0;
+            lits[i] = vx_rule_literal(b, icase);
+            free(b);
+            if (!lits[i] || !lits[i][0]) {
+                for (int j = 0; j <= i; j++) free(lits[j]);
+                ok = 0;
+            }
+        }
+        if (ok) return nb;
+    }
+    return 0;
+}
+
 void vx_rule_index_add(VxRuleIndex *x, uint32_t rule, const char *pattern, int icase) {
     if (pattern && strstr(pattern, "(?i")) icase = 1;
     char *lit = vx_rule_literal(pattern, icase);
+    if (!lit && pattern) {
+        char *lits[64];
+        int n = branch_literals(pattern, icase, lits, 64);
+        for (int i = 0; i < n; i++) index_put(x, rule, lits[i], icase);
+        if (n) return;
+    }
     if (!lit) {
         if (x->nalways == x->capalways) {
             x->capalways = x->capalways ? x->capalways * 2 : 16;

@@ -3,6 +3,7 @@
 #include "mt/mtengine.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <math.h>
 #include <stdarg.h>
 #include <os/log.h>
@@ -84,7 +85,23 @@ typedef struct {
     Vx *vx;
     uint64_t last_used;
     int failures;  // utterances in a row the engine refused
+    char ldir[1200];       // the voice's folder (its phoneme table)
+    char *sym[256];        // phoneme code -> L&H+ symbol, read when first needed (sym_read)
+    int sym_read;
+    struct { char ch[8]; char *lhp; } spelled[64];  // characters as this voice spells them (spelled_lhp)
+    int nspelled;
+    struct { char word[64]; size_t stem; char *lhp; } spliced[32];  // word endings as this voice says them
+    int nspliced;  // (spliced_suffix; a ring once full)
 } EngineSlot;
+
+static void slot_forget(EngineSlot *e) {   // what was learnt about the voice, when another takes the slot
+    for (int i = 0; i < 256; i++) { free(e->sym[i]); e->sym[i] = NULL; }
+    for (int i = 0; i < e->nspelled; i++) free(e->spelled[i].lhp);
+    e->nspelled = 0;
+    for (int i = 0; i < 32 && i < e->nspliced; i++) free(e->spliced[i].lhp);
+    e->nspliced = 0;
+    e->sym_read = 0;
+}
 
 struct VxStream {
     char root[1024];        // holds <build>/voiced and <build>/TTSResources/<lang>
@@ -101,6 +118,7 @@ struct VxStream {
     char job_fallback[96];  // compact voice for pitch changes (see speak_segmented), or empty
     char *job_text;
     int job_rate, job_pitch, job_volume, job_pause;
+    int job_lead;   // a pause the request starts with: ms of leading silence to keep (LEAD_WHOLE: all of it), or 0
     char preload_lang[96];
     char next_pack[1024];     // vxs_set_rules_pack: for the next vxs_start / vxs_preload
     char job_pack[1024], preload_pack[1024];
@@ -127,6 +145,7 @@ struct VxStream {
     _Atomic int apple_tone;        // vxs_set_apple_tone(1)
     _Atomic int pauses_shorten;    // vxs_set_steady_pauses(0)
     _Atomic int spelling_pauses;   // vxs_set_spelling_pauses(1)
+    _Atomic int spell_lowercase;   // vxs_set_spell_lowercase(1)
     _Atomic uint64_t generation;
 
     // where each word of the current utterance starts (vxs_read_words)
@@ -204,6 +223,9 @@ static void engine_build(const char *key, char *out, size_t cap) {
 // <asset_root>/siri7/Aaron; it runs on 7.1.2's engine with that firmware's
 // common data (the 7.1 premium voices and Mandarin need it), or on 7.0.6's
 // where only that one was imported.
+// The voice folder open_engine last opened (its phoneme table: spelled_lhp)
+static _Thread_local char g_open_ldir[1200];
+
 static Vx *open_engine(const char *root, const char *asset_root, const char *key, char *err, size_t errlen) {
     char build[16], lang[80];
     const char *slash = strchr(key, '/');
@@ -223,6 +245,7 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
         }
         snprintf(ldir, sizeof ldir, "%s/siri7/%s", asset_root, lang);
         snprintf(cdir, sizeof cdir, "%s/%s/TTSResources/common", root, eng);
+        snprintf(g_open_ldir, sizeof g_open_ldir, "%s", ldir);
         Vx *vx = vx_open(voiced, ldir, cdir, err, errlen);
         if (vx) install_native(vx, eng);
         return vx;
@@ -242,6 +265,7 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
         if (access(ldir, R_OK) == 0) snprintf(ldir, sizeof ldir, "%s/%s/%s", root, build, lang);
         else snprintf(ldir, sizeof ldir, "%s/%s/%s", asset_root, build, lang);
         snprintf(cdir, sizeof cdir, "%s/%s/common", root, build);
+        snprintf(g_open_ldir, sizeof g_open_ldir, "%s", ldir);
         Vx *vx = vx_open(voiced, ldir, cdir, err, errlen);
         if (vx) install_native(vx, eng);
         return vx;
@@ -253,6 +277,7 @@ static Vx *open_engine(const char *root, const char *asset_root, const char *key
     if (enhanced) snprintf(ldir, sizeof ldir, "%s/%s/%s", asset_root, build, lang);
     else snprintf(ldir, sizeof ldir, "%s/%s/TTSResources/%s", root, build, lang);
     snprintf(cdir, sizeof cdir, "%s/%s/TTSResources/common", root, build);
+    snprintf(g_open_ldir, sizeof g_open_ldir, "%s", ldir);
     Vx *vx = vx_open(voiced, ldir, cdir, err, errlen);
     if (vx) install_native(vx, build);
     return vx;
@@ -329,6 +354,8 @@ static Vx *engine_for_opt(VxStream *s, const char *key, const char *pack, int ev
         if (!vx) return NULL;
     }
     if (pack[0]) load_pack(vx, key, pack);
+    slot_forget(lru);
+    snprintf(lru->ldir, sizeof lru->ldir, "%s", g_open_ldir);
     snprintf(lru->build, sizeof lru->build, "%s", g_native_build);
     snprintf(lru->key, sizeof lru->key, "%s", key);
     snprintf(lru->pack, sizeof lru->pack, "%s", pack);
@@ -387,6 +414,7 @@ static const float kAppleTone[TONE_TAPS] = {
 #define TAIL_KEEP_FRAMES 660            // ~30 ms kept after the last sound
 #define TAIL_JOINED_FRAMES 110          // ~5 ms when another voice goes straight on (language switching)
 #define QUIET_FLUSH_FRAMES (22050 * 2)  // don't hold more than 2 s of silence
+#define LEAD_WHOLE 5000                 // job_lead: keep the engine's whole leading silence (up to 5 s)
 
 typedef struct {
     VxStream *s;
@@ -400,6 +428,8 @@ typedef struct {
     size_t nrin, caprin;
     double rpos;     // next output position, in input samples relative to rin[0]
     size_t cap_quiet; // if nonzero, the next silent run is shortened to this (segment joins)
+    int lead_ms;      // a pause the request starts with: this much of the leading silence stays (NVDA's 1 s
+                      // before a character's description, sent as its own utterance)
     // diagnostics: silent runs (>= 40 ms) inside the output, as heard
     uint64_t out_pos, quiet_out, heard;
     char gaplog[256];
@@ -700,19 +730,20 @@ static int on_pcm(void *ctx, const int16_t *pcm, size_t n) {
         int loud = pcm[i] > QUIET_LEVEL || pcm[i] < -QUIET_LEVEL;
         uint32_t at = base + (uint32_t)i;
         if (!k->got_first) {
+            size_t win = PREROLL_FRAMES + (size_t)k->lead_ms * (size_t)k->rate / 1000;   // + a requested pause
             if (!loud) {
                 if (k->npend) words_hold(k, at, k->nquiet);
                 hold_quiet(k, pcm[i]);
-                if (k->nquiet > PREROLL_FRAMES * 4) {  // keep only the last preroll window
-                    memmove(k->quiet, k->quiet + k->nquiet - PREROLL_FRAMES, PREROLL_FRAMES * sizeof(int16_t));
-                    if (k->npend) words_drop_front(k, k->nquiet - PREROLL_FRAMES);
-                    k->nquiet = PREROLL_FRAMES;
+                if (k->nquiet > win * 4) {  // keep only the last preroll window
+                    memmove(k->quiet, k->quiet + k->nquiet - win, win * sizeof(int16_t));
+                    if (k->npend) words_drop_front(k, k->nquiet - win);
+                    k->nquiet = win;
                 }
                 continue;
             }
             k->got_first = 1;
             s->first_ms = now_ms() - k->t0;
-            size_t pre = k->nquiet < PREROLL_FRAMES ? k->nquiet : PREROLL_FRAMES;
+            size_t pre = k->nquiet < win ? k->nquiet : win;
             if (k->npend) words_resolve(k, 1, 0, 0, k->nquiet - pre, pre);
             if (push(k, k->quiet + k->nquiet - pre, pre)) return 1;
             k->nquiet = 0;
@@ -818,6 +849,322 @@ static int32_t *word_map(const char *seg, const int32_t *src, size_t m, int32_t 
 // the text (inline_prosody 0), so those split it too and become parameters
 // for the pieces after them; and whatever is in effect when the text is split
 // starts the next piece again, since each piece is its own engine call.
+// ---- a character spelled inside other speech
+//
+// MathCAT sends each letter of an expression as <say-as interpret-as='characters'>x</say-as>, which NVDA passes
+// as a CharacterModeCommand: ESC\tn=spell\x ESC\tn=normal\ in the middle of "x squared plus 2 x minus 5".
+// Going into spelling and out again is a phrase break each time (~200 ms of silence before and after the
+// letter). So a single character spelled among other words is said with the phonemes the voice spells it with,
+// as L&H+ input (ESC\toi=lhp\), and the sentence goes on. The voice is asked once per character (it spells it,
+// silently, and its phoneme markers say what it said); the answer stays with the engine.
+
+static const unsigned char *find_tag(const unsigned char *d, size_t n, size_t from, const unsigned char *w) {
+    for (size_t i = from; i + 4 <= n; i++) if (!memcmp(d + i, w, 4)) return d + i;
+    return NULL;
+}
+static unsigned le16(const unsigned char *p) { return p[0] | p[1] << 8; }
+static unsigned le32(const unsigned char *p) { return p[0] | p[1] << 8 | p[2] << 16 | (unsigned)p[3] << 24; }
+
+// The voice's phoneme codes -> L&H+ symbols: its STMC/STMF tables (names XOR 0xA9) where # is 35, in
+// phonmap_*.dat (iOS 3/4, Lion) or clc_<lang>_<voice>_cfg*.dat. The input table (with ') wins over the
+// engine's own phone table; a Siri voice's phone table prefixes each phone with a letter ("et%{" = t%{).
+static void load_symbols(EngineSlot *e) {
+    int pri[256];
+    for (int i = 0; i < 256; i++) pri[i] = 1 << 30;
+    DIR *dir = opendir(e->ldir);
+    if (!dir) return;
+    struct dirent *de;
+    while ((de = readdir(dir))) {
+        const char *n = de->d_name;
+        if (strncmp(n, "phonmap_", 8) && (strncmp(n, "clc_", 4) || !strstr(n + 4, "_cfg") || strstr(n, "_cfg") == n + 7)) continue;
+        char path[1400];
+        snprintf(path, sizeof path, "%s/%s", e->ldir, n);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        long size = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        unsigned char *d = size > 0 && size < (32 << 20) ? malloc((size_t)size) : NULL;
+        size_t len = d ? fread(d, 1, (size_t)size, f) : 0;
+        fclose(f);
+        unsigned char stmc[4], stmf[4];
+        for (int i = 0; i < 4; i++) { stmc[i] = (unsigned char)("STMC"[i] ^ 0xA9); stmf[i] = (unsigned char)("STMF"[i] ^ 0xA9); }
+        for (const unsigned char *c = d ? find_tag(d, len, 0, stmc) : NULL; c; c = find_tag(d, len, (size_t)(c - d) + 4, stmc)) {
+            size_t at = (size_t)(c - d);
+            if (at + 16 > len) continue;
+            unsigned k = le16(c + 10), v = le16(c + 12), count = le16(c + 14);
+            const unsigned char *t = find_tag(d, len, at + 8, stmf);
+            if (!k || !v || !t || (size_t)(t - d) + 8 + (size_t)count * (k + v) > len || le32(t + 4) != count * (k + v)) continue;
+            int quote = 0, hash = 0;
+            for (unsigned j = 0; j < count; j++) {
+                const unsigned char *key = t + 8 + (size_t)j * (k + v);
+                if (key[0] == '\'' && (k == 1 || !key[1])) quote = 1;
+                if (key[0] == '#' && (k == 1 || !key[1]) && key[k] == 35 && (v == 1 || !key[k + 1])) hash = 1;
+            }
+            if (!hash) continue;
+            for (unsigned j = 0; j < count; j++) {
+                const unsigned char *key = t + 8 + (size_t)j * (k + v), *val = key + k;
+                if (!val[0] || (v > 1 && val[1])) continue;
+                const char *ks = (const char *)key;
+                size_t kl = strnlen(ks, k);
+                if (!quote && kl >= 2 && ks[0] >= 'a' && ks[0] <= 'z' && ((ks[1] >= 'a' && ks[1] <= 'z') || strchr("$@^", ks[1]))) {
+                    ks++;
+                    kl--;
+                }
+                int p = (quote ? 0 : 100) + (int)kl;
+                if (e->sym[val[0]] && pri[val[0]] <= p) continue;
+                free(e->sym[val[0]]);
+                e->sym[val[0]] = strndup(ks, kl);
+                pri[val[0]] = p;
+            }
+        }
+        free(d);
+    }
+    closedir(dir);
+}
+
+typedef struct { uint32_t code[32]; int n; } PhonemeList;
+static void collect_phoneme(void *ctx, uint32_t code, uint32_t sample) {
+    (void)sample;
+    PhonemeList *l = ctx;
+    if (l->n < 32) l->code[l->n++] = code;
+}
+static int discard_pcm(void *ctx, const int16_t *x, size_t n) { (void)ctx; (void)x; (void)n; return 0; }
+static void collect_phoneme_64(void *ctx, uint32_t code, uint32_t sample) {
+    (void)sample;
+    struct { uint32_t code[64]; int n; } *l = ctx;
+    if (l->n < 64) l->code[l->n++] = code;
+    else l->n = 64;
+}
+
+static char *spliced_word(EngineSlot *e, const char *start, size_t len, const char *rest);
+
+// The character as this voice spells it, in L&H+, as one word with its syllables marked ("'d^.bl%).ju:" for w: a
+// letter of several syllables said as one run falls in pitch, as phonemes without marks do), or NULL if it
+// can't be told.
+static const char *spelled_lhp(VxStream *s, Vx *vx, const char *ch, size_t len) {
+    EngineSlot *e = NULL;
+    for (int i = 0; i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) e = &s->engines[i];
+    if (!e || len >= sizeof e->spelled[0].ch) return NULL;
+    for (int i = 0; i < e->nspelled; i++)
+        if (strlen(e->spelled[i].ch) == len && !memcmp(e->spelled[i].ch, ch, len)) return e->spelled[i].lhp;
+    if (e->nspelled == (int)(sizeof e->spelled / sizeof e->spelled[0])) return NULL;
+    if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
+    char text[32];
+    snprintf(text, sizeof text, "\x1b\\tn=spell\\%.*s", (int)len, ch);
+    PhonemeList l = {{0}, 0};
+    vx_set_phoneme_callback(vx, collect_phoneme, &l);
+    int rc = vx_speak_utf8(vx, text, discard_pcm, NULL);
+    vx_set_phoneme_callback(vx, NULL, NULL);
+    char lhp[256] = "'";
+    size_t o = 1;
+    int said = 0, ok = !rc;
+    for (int i = 0; i < l.n && ok; i++) {
+        const char *y = e->sym[l.code[i] & 255];
+        if (!y) { ok = 0; break; }
+        if (!strcmp(y, "#") || !strcmp(y, "_")) continue;   // silence
+        o += (size_t)snprintf(lhp + o, sizeof lhp - o, "%s%s", said ? " " : "", y);
+        said = 1;
+        if (o >= sizeof lhp - 1) ok = 0;
+    }
+    snprintf(e->spelled[e->nspelled].ch, sizeof e->spelled[0].ch, "%.*s", (int)len, ch);
+    char *joined = ok && said ? spliced_word(e, "'", 1, lhp + 1) : NULL;  // the symbols after the stress mark
+    e->spelled[e->nspelled].lhp = joined ? joined : ok && said ? strdup(lhp) : NULL;   // (NULL: spell it as before)
+    return e->spelled[e->nspelled++].lhp;
+}
+
+// The voice's phonemes for text said plainly, silences left out: L&H+ symbols into out (space-separated), their
+// number into *n; 0 if they can't all be told. Said at the fastest rate: the same phonemes (checked on a set of
+// words), about a third of the time (the audio is thrown away).
+static int plain_phonemes(EngineSlot *e, Vx *vx, const char *text, char *out, size_t cap, int *n) {
+    struct { uint32_t code[64]; int n; } l = {{0}, 0};
+    char t[160];
+    snprintf(t, sizeof t, "\x1b\\rate=400\\\x1b\\tn=normal\\%s", text);
+    vx_set_phoneme_callback(vx, collect_phoneme_64, &l);
+    int rc = vx_speak_utf8(vx, t, discard_pcm, NULL);
+    vx_set_phoneme_callback(vx, NULL, NULL);
+    if (rc || l.n >= 64) return 0;
+    size_t o = 0;
+    *n = 0;
+    out[0] = 0;
+    for (int i = 0; i < l.n; i++) {
+        const char *y = e->sym[l.code[i] & 255];
+        if (!y) return 0;
+        if (!strcmp(y, "#") || !strcmp(y, "_")) continue;
+        o += (size_t)snprintf(out + o, o < cap ? cap - o : 0, "%s%s", *n ? " " : "", y);
+        if (o >= cap) return 0;
+        (*n)++;
+    }
+    return 1;
+}
+
+// How this voice ends `word` past its first `stem` bytes, in L&H+ ("boosted", 5 -> "I d"): its phonemes for the
+// whole word less as many as it says for the stem alone. NULL if that can't be told. (A community dictionary's
+// phonetic span followed by letters: cv_dict.h.)
+static const char *spliced_suffix(VxStream *s, Vx *vx, const char *word, size_t stem) {
+    EngineSlot *e = NULL;
+    for (int i = 0; i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) e = &s->engines[i];
+    size_t wl = strlen(word);
+    if (!e || !stem || stem >= wl || wl >= sizeof e->spliced[0].word) return NULL;
+    int have = e->nspliced < 32 ? e->nspliced : 32;
+    for (int i = 0; i < have; i++)
+        if (e->spliced[i].stem == stem && !strcmp(e->spliced[i].word, word)) return e->spliced[i].lhp;
+    if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
+    char whole[512], part[512], stem_text[64];
+    int nw = 0, ns = 0;
+    snprintf(stem_text, sizeof stem_text, "%.*s", (int)stem, word);
+    char *lhp = NULL;
+    if (plain_phonemes(e, vx, word, whole, sizeof whole, &nw) && plain_phonemes(e, vx, stem_text, part, sizeof part, &ns) &&
+        ns > 0 && nw > ns) {
+        const char *q = whole;
+        for (int i = 0; i < ns && q; i++) { q = strchr(q, ' '); if (q) q++; }
+        if (q && *q) lhp = strdup(q);
+    }
+    int slot = e->nspliced++ % 32;
+    if (e->nspliced > 32) free(e->spliced[slot].lhp);
+    snprintf(e->spliced[slot].word, sizeof e->spliced[slot].word, "%s", word);
+    e->spliced[slot].stem = stem;
+    e->spliced[slot].lhp = lhp;
+    return lhp;
+}
+
+// How this voice starts `word` with its first `pre` bytes, in L&H+ ("decompile", 1 -> "d"): its phonemes for the
+// whole word, less as many at the end as it says for the rest alone. NULL if that can't be told. (Letters right
+// before a community dictionary's phonetic span: cv_dict.h.) Cached with the endings, as stem pre + 1000000.
+static const char *spliced_prefix(VxStream *s, Vx *vx, const char *word, size_t pre) {
+    EngineSlot *e = NULL;
+    for (int i = 0; i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) e = &s->engines[i];
+    size_t wl = strlen(word), key = pre + 1000000;
+    if (!e || !pre || pre >= wl || wl >= sizeof e->spliced[0].word) return NULL;
+    int have = e->nspliced < 32 ? e->nspliced : 32;
+    for (int i = 0; i < have; i++)
+        if (e->spliced[i].stem == key && !strcmp(e->spliced[i].word, word)) return e->spliced[i].lhp;
+    if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
+    char whole[512], part[512];
+    int nw = 0, nr = 0;
+    char *lhp = NULL;
+    if (plain_phonemes(e, vx, word, whole, sizeof whole, &nw) && plain_phonemes(e, vx, word + pre, part, sizeof part, &nr) &&
+        nr > 0 && nw > nr) {
+        const char *q = whole;
+        for (int i = 0; i < nw - nr && q; i++) { q = strchr(q, ' '); if (q) q++; }
+        size_t len = q ? (size_t)(q - whole - 1) : strlen(whole);
+        lhp = strndup(whole, len);
+        for (char *c = lhp; *c; c++) if (*c == ' ') memmove(c, c + 1, strlen(c));  // one word: no spaces
+    }
+    int slot = e->nspliced++ % 32;
+    if (e->nspliced > 32) free(e->spliced[slot].lhp);
+    snprintf(e->spliced[slot].word, sizeof e->spliced[slot].word, "%s", word);
+    e->spliced[slot].stem = key;
+    e->spliced[slot].lhp = lhp;
+    return lhp;
+}
+
+// L&H+ symbols a syllable is built on (vowels start with one of these), and the consonants a syllable may begin
+// with in pairs (pl, tR+, sk ...).
+static int lhp_vowel(const char *y) { return strchr("aeiouyAEIOUY$@^", y[0]) != NULL || strstr(y, "%)") != NULL; }  // (%): syllabic)
+static int lhp_stop(const char *y) { return strchr("pbtdkg", y[0]) && (!y[1] || y[1] == '{'); }
+static int lhp_glide(const char *y) { return !strcmp(y, "R+") || !strcmp(y, "l") || !strcmp(y, "w") || !strcmp(y, "j"); }
+static int lhp_onset(char **c, int k) {
+    if (k <= 1) return 1;
+    if (k == 2) return ((lhp_stop(c[0]) || c[0][0] == 'f' || c[0][0] == 'T' || c[0][0] == 'S') && lhp_glide(c[1])) ||
+                       (c[0][0] == 's' && !c[0][1] && (lhp_stop(c[1]) || c[1][0] == 'm' || c[1][0] == 'n'));
+    return k == 3 && c[0][0] == 's' && !c[0][1] && lhp_stop(c[1]) && lhp_glide(c[2]);
+}
+
+// The dictionary's phonemes for a word's start (L&H+, marked as vxphonemes writes them) and the voice's own
+// for its rest ("I d", spliced_suffix), as one word: no spaces (Vocalizer would phrase each piece apart), and
+// syllable marks from the start's last vowel on, before each vowel's onset. malloc'd; NULL if the start can't be
+// read as this voice's symbols.
+static char *spliced_word(EngineSlot *e, const char *start, size_t len, const char *rest) {
+    char *tok[160];
+    int n = 0, start_n;
+    for (size_t i = 0; i < len && n < 120;) {  // the start, longest symbols first
+        size_t best = 0;
+        if (start[i] == '\'' || start[i] == '.' || start[i] == '_' || start[i] == ':')
+            best = start[i] == '\'' && start[i + 1] == '2' ? 2 : 1;
+        if (!best)
+            for (int c = 0; c < 256; c++) {
+                const char *y = e->sym[c];
+                size_t l = y ? strlen(y) : 0;
+                if (l > best && l <= len - i && !strncmp(start + i, y, l) && strcmp(y, "#") && strcmp(y, "_")) best = l;
+            }
+        if (!best) { for (int k = 0; k < n; k++) free(tok[k]); return NULL; }
+        tok[n++] = strndup(start + i, best);
+        i += best;
+    }
+    start_n = n;
+    for (const char *r = rest; *r && n < 158;) {
+        const char *sp = strchr(r, ' ');
+        size_t l = sp ? (size_t)(sp - r) : strlen(r);
+        if (l) tok[n++] = strndup(r, l);
+        r += l;
+        while (*r == ' ') r++;
+    }
+    // English voices: vxphonemes marks u's length (Samantha would read a syllabified "bu." as in "book")
+    int long_u = strstr(e->ldir, "/en-") != NULL || strstr(e->key, "/en-") != NULL;
+    for (size_t i = 0; i + 1 < len && !long_u; i++) long_u = start[i] == 'u' && start[i + 1] == ':';
+    int from = 0;  // the start's last vowel
+    for (int i = 0; i < start_n; i++) if (lhp_vowel(tok[i])) from = i;
+    char *out = malloc(len + strlen(rest) * 2 + 64);
+    size_t o = 0;
+    int last_vowel = -1;
+    for (int i = 0; i < n; i++) {
+        int mark = tok[i][0] == '\'' || tok[i][0] == '.' || tok[i][0] == '_' || tok[i][0] == ':';
+        if (!mark && lhp_vowel(tok[i]) && i > from && i >= start_n && last_vowel >= 0) {
+            // the consonants since the last vowel, unless a mark already starts this syllable
+            int k = 0, marked = 0;
+            char *c[16];
+            for (int j = last_vowel + 1; j < i; j++) {
+                if (tok[j][0] == '\'' || tok[j][0] == '.' || tok[j][0] == '_') marked = 1;
+                else if (tok[j][0] == ':') continue;
+                else if (k < 16) c[k++] = tok[j];
+            }
+            if (!marked) {
+                int onset = k;
+                while (onset > 0 && lhp_onset(c + onset - 1, k - onset + 1)) onset--;
+                size_t back = 0;  // the onset's symbols are already written: put the mark before them
+                for (int j = onset; j < k; j++) back += strlen(c[j]);
+                memmove(out + o - back + 1, out + o - back, back);
+                out[o - back] = '.';
+                o++;
+            }
+        }
+        size_t l = strlen(tok[i]);
+        memcpy(out + o, tok[i], l);
+        o += l;
+        if (long_u && i >= start_n && !strcmp(tok[i], "u")) out[o++] = ':';
+        if (!mark && lhp_vowel(tok[i])) last_vowel = i;
+    }
+    out[o] = 0;
+    for (int i = 0; i < n; i++) free(tok[i]);
+    return out;
+}
+
+// Is anything said outside spelling (words a spelled character sits among)?
+static int plain_text_beyond_spelling(const char *t) {
+    int spelling = 0;
+    for (const char *p = t; *p;) {
+        if (p[0] == 0x1b && p[1] == '\\') {
+            const char *e = strchr(p + 2, '\\');
+            if (!e) break;
+            if (!strncmp(p + 2, "tn=spell\\", 9)) spelling = 1;
+            else if (!strncmp(p + 2, "tn=", 3)) spelling = 0;
+            p = e + 1;
+            continue;
+        }
+        if (!spelling && (isalnum((unsigned char)*p) || (unsigned char)*p >= 0x80)) return 1;
+        p++;
+    }
+    return 0;
+}
+
+static size_t utf8_char_len(const char *c) {
+    unsigned char b = (unsigned char)*c;
+    size_t n = b < 0x80 ? 1 : b >= 0xF0 ? 4 : b >= 0xE0 ? 3 : b >= 0xC0 ? 2 : 0;
+    for (size_t i = 1; i < n; i++) if (((unsigned char)c[i] & 0xC0) != 0x80) return 0;
+    return n;
+}
+
 static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const char *fallback_key, int rate, int volume,
                            Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch, int inline_prosody) {
     static const char kEos[] = "\x1b\\eos=1\\", kPitch[] = "\x1b\\pitch=";
@@ -834,6 +1181,25 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
     const char *p = text;
     Vx *fb = NULL;
     int fb_tried = 0;
+    // a character spelled among other words: said inline (spelled_lhp); not on iOS 3 and 4 (no ESC\toi=lhp\),
+    // nor where pitch changes go to a compact fallback (it would spell it in its own way)
+    static const char kSpellOn[] = "\x1b\\tn=spell\\", kSpellOff[] = "\x1b\\tn=normal\\";
+    static const char kSplice[] = "\x1b\\cvsp=", kLhpIn[] = "\x1b\\toi=lhp\\", kLhpOut[] = "\x1b\\toi=orth\\";
+    static const char kPrefix[] = "\x1b\\cvpp=";
+    // a word's start as this voice says it (ESC\cvpp=), waiting for the phonemes it goes in front of
+    const char *pending_pre = NULL;
+    size_t pending_at = 0;
+#define PUT_PENDING_PREFIX(next) do { \
+        if (pending_pre) { \
+            SEG_PUT(pending_pre, strlen(pending_pre), pending_at); \
+            int vowel_ = 0; \
+            for (const char *c_ = pending_pre; *c_ && !vowel_; c_++) vowel_ = strchr("aeiouyAEIOUY$@^", *c_) != NULL; \
+            if (vowel_ && *(next) != '\'' && *(next) != '.' && *(next) != '"') SEG_PUT(".", 1, pending_at); \
+            pending_pre = NULL; \
+        } \
+    } while (0)
+    int inline_spell = inline_prosody && !(fallback_key && pitch != 50) && strstr(text, kSpellOn) &&
+                       plain_text_beyond_spelling(text);
 #define SEG_PUT(str, len, from) do { \
         if (m + (size_t)(len) + 1 > cap) { \
             cap = (m + (size_t)(len) + 1) * 2; \
@@ -925,6 +1291,87 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
                 if (sticky[i][0]) SEG_PUT(sticky[i], strlen(sticky[i]), p - text);
             continue;
         }
+        if (inline_spell && !strncmp(p, kSpellOn, sizeof kSpellOn - 1)) {
+            const char *c = p + sizeof kSpellOn - 1;
+            while (*c == ' ') c++;
+            size_t cl = *c && *c != 0x1b && *c != ' ' ? utf8_char_len(c) : 0;
+            const char *z = c + cl;
+            while (cl && *z == ' ') z++;
+            const char *lhp = cl && !strncmp(z, kSpellOff, sizeof kSpellOff - 1) ? spelled_lhp(s, vx, c, cl) : NULL;
+            if (lhp) {
+                static const char kIn[] = " \x1b\\toi=lhp\\", kOut[] = "\x1b\\toi=orth\\ ";
+                SEG_PUT(kIn, sizeof kIn - 1, c - text);
+                SEG_PUT(lhp, strlen(lhp), c - text);
+                SEG_PUT(kOut, sizeof kOut - 1, c - text);
+                p = z + sizeof kSpellOff - 1;
+                continue;
+            }
+        }
+        if (!strncmp(p, kPrefix, sizeof kPrefix - 1)) {
+            // ESC\cvpp=<word>|<its first letters>\ before phonemes: the letters as the voice says them at the start
+            // of the word, joined to the phonemes (cv_dict.h); else said as letters, as they were
+            const char *at = p, *w = p + sizeof kPrefix - 1, *bar = strchr(w, '|'), *we = bar ? strchr(bar, '\\') : NULL;
+            p = we ? we + 1 : p + strlen(p);
+            if (!bar || !we || bar - w >= 63 || we - bar - 1 >= 47 || we == bar + 1) continue;
+            char word[64], letters[48];
+            snprintf(word, sizeof word, "%.*s", (int)(bar - w), w);
+            snprintf(letters, sizeof letters, "%.*s", (int)(we - bar - 1), bar + 1);
+            size_t pl = strlen(letters);
+            int starts = pl < strlen(word);
+            for (size_t i = 0; starts && i < pl; i++) starts = tolower((unsigned char)word[i]) == tolower((unsigned char)letters[i]);
+            const char *pre = starts &&
+                (!strncmp(p, kLhpIn, sizeof kLhpIn - 1) || !strncmp(p, kSplice, sizeof kSplice - 1))
+                ? spliced_prefix(s, vx, word, pl) : NULL;
+            if (pre) { pending_pre = pre; pending_at = (size_t)(at - text); }
+            else SEG_PUT(letters, pl, at - text);
+            continue;
+        }
+        if (pending_pre && !strncmp(p, kLhpIn, sizeof kLhpIn - 1)) {
+            SEG_PUT(kLhpIn, sizeof kLhpIn - 1, pending_at);
+            p += sizeof kLhpIn - 1;
+            PUT_PENDING_PREFIX(p);
+            continue;
+        }
+        if (!strncmp(p, kSplice, sizeof kSplice - 1)) {
+            // ESC\cvsp=<word>|<stem bytes>\ ESC\toi=lhp\<phonemes>ESC\toi=orth\<rest of word>: the phonemes stand
+            // for the word's start, and its rest is said as the voice says it in the whole word (cv_dict.h).
+            // The command itself never reaches the engine.
+            const char *w = p + sizeof kSplice - 1, *bar = strchr(w, '|'), *we = strchr(w, '\\');
+            p = we ? we + 1 : p + strlen(p);
+            if (!bar || !we || bar > we || bar - w >= 63) continue;
+            char word[64];
+            snprintf(word, sizeof word, "%.*s", (int)(bar - w), w);
+            size_t stem = (size_t)atoi(bar + 1), wl = strlen(word);
+            const char *x = p + sizeof kLhpIn - 1, *xe = strncmp(p, kLhpIn, sizeof kLhpIn - 1) ? NULL : strstr(x, kLhpOut);
+            if (!xe || stem >= wl) continue;
+            const char *rest = xe + sizeof kLhpOut - 1;
+            size_t rl = wl - stem;
+            int same = 1;
+            for (size_t i = 0; i < rl && same; i++)
+                same = tolower((unsigned char)rest[i]) == tolower((unsigned char)word[stem + i]);
+            if (!same) continue;
+            const char *suffix = spliced_suffix(s, vx, word, stem);
+            if (!suffix) continue;
+            EngineSlot *slot = NULL;
+            for (int i = 0; i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) slot = &s->engines[i];
+            char *joined = slot ? spliced_word(slot, x, (size_t)(xe - x), suffix) : NULL;
+            SEG_PUT(kLhpIn, sizeof kLhpIn - 1, pending_pre ? pending_at : (size_t)(p - text));
+            PUT_PENDING_PREFIX(joined ? joined : x);
+            if (joined) {
+                SEG_PUT(joined, strlen(joined), x - text);
+                // the engine's word ends at the switch back to text: there, the word's end (a word event spans
+                // the whole word)
+                SEG_PUT(kLhpOut, sizeof kLhpOut - 1, rest + rl - text);
+                free(joined);
+            } else {
+                SEG_PUT(x, xe - x, x - text);
+                SEG_PUT(" ", 1, rest - text);
+                SEG_PUT(suffix, strlen(suffix), rest - text);
+                SEG_PUT(kLhpOut, sizeof kLhpOut - 1, rest - text);
+            }
+            p = rest + rl;
+            continue;
+        }
         if (sticky_kind >= 0) {  // inline: keep it, and remember it for the next piece
             const char *e = strchr(p + 2, '\\');
             size_t len = e ? (size_t)(e - p) + 1 : strlen(p);
@@ -949,6 +1396,7 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
         p++;
     }
 #undef SEG_PUT
+#undef PUT_PENDING_PREFIX
     free(seg);
     free(src);
     return rc;
@@ -1196,12 +1644,12 @@ static void *worker(void *arg) {
         snprintf(fallback, sizeof fallback, "%s", s->job_fallback);
         snprintf(s->cur_pack, sizeof s->cur_pack, "%s", s->job_pack);
         char *text = s->job_text;
-        int rate = s->job_rate, pitch = s->job_pitch, volume = s->job_volume, pause = s->job_pause;
+        int rate = s->job_rate, pitch = s->job_pitch, volume = s->job_volume, pause = s->job_pause, lead = s->job_lead;
         s->job_text = NULL;
         s->has_job = 0;
         pthread_mutex_unlock(&s->mu);
 
-        Sink k = {.s = s, .t0 = now_ms(), .rate = OUT_RATE, .last_pos = -1, .tone = atomic_load(&s->apple_tone)};
+        Sink k = {.s = s, .t0 = now_ms(), .rate = OUT_RATE, .last_pos = -1, .tone = atomic_load(&s->apple_tone), .lead_ms = lead};
         if (is_mt_key(lang)) {
             MtEngine *mt = mt_for(s, lang);
             if (mt && !atomic_load(&s->cancel)) {
@@ -1348,6 +1796,8 @@ void vxs_set_apple_tone(VxStream *s, int on) { atomic_store(&s->apple_tone, on ?
 void vxs_set_steady_pauses(VxStream *s, int on) { atomic_store(&s->pauses_shorten, !on); }
 void vxs_set_spelling_pauses(VxStream *s, int on) { atomic_store(&s->spelling_pauses, on ? 1 : 0); }
 
+void vxs_set_spell_lowercase(VxStream *s, int on) { atomic_store(&s->spell_lowercase, on ? 1 : 0); }
+
 void vxs_cancel(VxStream *s) {
     pthread_mutex_lock(&s->mu);
     atomic_store(&s->cancel, 1);
@@ -1397,6 +1847,24 @@ static char *typed_commands(const char *t) {
     }
     *w = 0;
     return o;
+}
+
+// The pause a request starts with (ESC\pause=N\ before any text; bookmarks and voice settings may come
+// first), in ms; 0 if it starts with something said.
+static int leading_pause_ms(const char *t) {
+    int ms = 0;
+    while (t && *t) {
+        if (*t == ' ' || *t == '\t' || *t == '\n' || *t == '\r') { t++; continue; }
+        if (t[0] != 0x1b || t[1] != '\\') break;
+        const char *end = strchr(t + 2, '\\');
+        if (!end) break;
+        if (!strncmp(t + 2, "pause=", 6)) ms += atoi(t + 8);
+        else if (strncmp(t + 2, "mrk=", 4) && strncmp(t + 2, "rate=", 5) && strncmp(t + 2, "pitch=", 6) &&
+                 strncmp(t + 2, "vol=", 4) && strncmp(t + 2, "pitchpct=", 9))
+            break;   // (spelling, phoneme input ...: what follows is said)
+        t = end + 1;
+    }
+    return ms;
 }
 
 // The voices shorten ESC\pause=N\ by the speaking rate: 1000 ms is 305 ms at
@@ -1458,6 +1926,49 @@ static char *timing_commands(const char *t, const char *key, int rate, int stead
     return o;
 }
 
+// A capital letter's lowercase, where it keeps the same length in UTF-8 (ASCII, Latin-1, Latin Extended-A, Greek,
+// Cyrillic); the code point itself otherwise.
+static uint32_t lower_same_length(uint32_t c) {
+    if (c >= 'A' && c <= 'Z') return c + 32;
+    if (c >= 0xC0 && c <= 0xDE && c != 0xD7) return c + 32;
+    if (c >= 0x100 && c <= 0x17F && c != 0x130 && c != 0x131 && c != 0x138 && c != 0x149 && c != 0x17F) {
+        if (c == 0x178) return 0xFF;  // (two bytes either way)
+        int odd_upper = (c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E);
+        return odd_upper ? ((c & 1) ? c + 1 : c) : ((c & 1) ? c : c + 1);
+    }
+    if (c >= 0x391 && c <= 0x3AB && c != 0x3A2) return c + 32;
+    if (c >= 0x410 && c <= 0x42F) return c + 32;
+    if (c >= 0x400 && c <= 0x40F) return c + 80;
+    return c;
+}
+
+// The text with the letters it spells (ESC\tn=spell\ ... ESC\tn=normal\) in lowercase, so the voice doesn't say
+// "capital" before them (vxs_set_spell_lowercase); the same length, so every position stays. malloc'd.
+static char *lowercase_spelled(const char *t) {
+    char *o = strdup(t);
+    int spelling = 0;
+    for (char *p = o; *p;) {
+        if (*p == 0x1b && p[1] == '\\') {
+            if (!strncmp(p, "\x1b\\tn=spell\\", 11)) spelling = 1;
+            else if (!strncmp(p, "\x1b\\tn=", 5)) spelling = 0;
+            char *e = strchr(p + 2, '\\');
+            p = e ? e + 1 : p + strlen(p);
+            continue;
+        }
+        unsigned char c = (unsigned char)*p;
+        if (!spelling) { p++; continue; }
+        if (c < 0x80) { *p = (char)lower_same_length(c); p++; continue; }
+        if ((c & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+            uint32_t cp = (uint32_t)(c & 0x1F) << 6 | (uint32_t)(p[1] & 0x3F), lc = lower_same_length(cp);
+            if (lc != cp && lc >= 0x80 && lc < 0x800) { p[0] = (char)(0xC0 | lc >> 6); p[1] = (char)(0x80 | (lc & 0x3F)); }
+            p += 2;
+            continue;
+        }
+        p++;
+    }
+    return o;
+}
+
 void vxs_start(VxStream *s, const char *lang, const char *utf8_text, int rate, int pitch, int volume,
                int trailing_pause_ms) {
     vxs_start_with_fallback(s, lang, NULL, utf8_text, rate, pitch, volume, trailing_pause_ms);
@@ -1477,7 +1988,23 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
                                       atomic_load(&s->spelling_pauses));
         s->job_text = typed_commands(timed ? timed : utf8_text);
         free(timed);
+        // spelled letters lowercased, so "capital" isn't said (vxs_set_spell_lowercase); after typed_commands, so
+        // a typed \tn=spell\ counts too
+        if (s->job_text && atomic_load(&s->spell_lowercase) && strstr(s->job_text, "\x1b\\tn=spell\\")) {
+            char *l = lowercase_spelled(s->job_text);
+            free(s->job_text);
+            s->job_text = l;
+        }
     }
+    // A pause before anything is said survives the leading-silence trim: as asked, or (pauses shortening with
+    // the rate) as long as the voice makes it
+    int lead = 0;
+    if (!is_mt_key(lang)) {   // (as asked: typed \pause=N\ too, before the rate adjusts it)
+        char *typed = typed_commands(utf8_text);
+        lead = leading_pause_ms(typed ? typed : utf8_text);
+        free(typed);
+    }
+    s->job_lead = lead <= 0 ? 0 : atomic_load(&s->pauses_shorten) ? LEAD_WHOLE : lead > 5000 ? 5000 : lead;
     s->job_rate = rate < 10 ? 10 : rate > 400 ? 400 : rate;  // Vocalizer's floor is 50; MacinTalk's modern curve goes lower
     s->job_pitch = pitch < 50 ? 50 : pitch > 200 ? 200 : pitch;
     s->job_volume = volume < 0 ? 80 : volume > 100 ? 100 : volume;  // 80 = engine default

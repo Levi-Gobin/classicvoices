@@ -81,8 +81,28 @@ static const unsigned char *find(const unsigned char *d, size_t n, size_t from, 
     return NULL;
 }
 
+static void inv_add(Inventory *inv, const unsigned char *key, unsigned k) {
+    size_t len = strnlen((const char *)key, k);
+    if (!len) return;
+    inv->sym = realloc(inv->sym, (inv->n + 1) * sizeof *inv->sym);
+    inv->sym[inv->n] = malloc(len + 1);
+    memcpy(inv->sym[inv->n], key, len);
+    inv->sym[inv->n++][len] = 0;
+}
+
+static int has_key(const unsigned char *base, unsigned k, unsigned v, unsigned count, const unsigned char *key) {
+    for (unsigned j = 0; j < count; j++)
+        if (strlen((const char *)key) <= k && !strncmp((const char *)base + (size_t)j * (k + v), (const char *)key, k)) return 1;
+    return 0;
+}
+
 // The symbol table in an engine data file: of its key/value tables (chunks
-// named STMC / STMF, XORed with 0xA9), the one whose keys hold ' and #.
+// named STMC / STMF, XORed with 0xA9), the one whose keys hold ' and #. The
+// table after it is the voice's phoneme set, and normally all of it is in
+// there; Cantonese's table is instead a romanization (tone digits on its
+// vowels, an aspirated p) that lacks most of the phoneme set, while the voice
+// reads the L&H+ phoneme set itself: then the inventory is the phoneme set
+// with the table's marks (' . _ ...).
 static Inventory *read_inventory(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -95,8 +115,9 @@ static Inventory *read_inventory(const char *path) {
     fclose(f);
     unsigned char stmc[4], stmf[4];
     for (int i = 0; i < 4; i++) { stmc[i] = (unsigned char)("STMC"[i] ^ 0xA9); stmf[i] = (unsigned char)("STMF"[i] ^ 0xA9); }
-    Inventory *inv = NULL;
-    for (const unsigned char *c = find(d, n, 0, stmc); c && !inv; c = find(d, n, (size_t)(c - d) + 4, stmc)) {
+    const unsigned char *in = NULL, *ph = NULL;  // the symbol table, the phoneme set
+    unsigned ik = 0, iv = 0, ic = 0, pk = 0, pv = 0, pc = 0;
+    for (const unsigned char *c = find(d, n, 0, stmc); c && !ph; c = find(d, n, (size_t)(c - d) + 4, stmc)) {
         size_t at = (size_t)(c - d);
         if (at + 16 > n || rd32(c + 4) < 10) continue;
         unsigned k = rd16(c + 10), v = rd16(c + 12), count = rd16(c + 14);
@@ -110,17 +131,31 @@ static Inventory *read_inventory(const char *path) {
             if (key[0] == '\'' && (k == 1 || !key[1])) quote = 1;
             if (key[0] == '#' && (k == 1 || !key[1])) hash = 1;
         }
-        if (!quote || !hash) continue;
-        inv = calloc(1, sizeof *inv);
-        inv->sym = calloc(count, sizeof *inv->sym);
-        for (unsigned j = 0; j < count; j++) {
-            const unsigned char *key = base + (size_t)j * (k + v);
-            size_t len = strnlen((const char *)key, k);
-            if (!len) continue;
-            inv->sym[inv->n] = malloc(len + 1);
-            memcpy(inv->sym[inv->n], key, len);
-            inv->sym[inv->n++][len] = 0;
+        if (!in && quote && hash) { in = base; ik = k; iv = v; ic = count; }
+        else if (in && !quote && !hash) { ph = base; pk = k; pv = v; pc = count; }
+    }
+    Inventory *inv = NULL;
+    if (in) {
+        unsigned total = 0, missing = 0;
+        for (unsigned j = 0; ph && j < pc; j++) {
+            const unsigned char *key = ph + (size_t)j * (pk + pv);
+            if (!key[0]) continue;
+            total++;
+            unsigned char sym[64] = {0};
+            memcpy(sym, key, pk < 63 ? pk : 63);
+            if (!has_key(in, ik, iv, ic, sym)) missing++;
         }
+        int phoneme_set = missing * 2 > total;
+        inv = calloc(1, sizeof *inv);
+        for (unsigned j = 0; j < ic; j++) {
+            const unsigned char *key = in + (size_t)j * (ik + iv);
+            int mark = 1;
+            for (unsigned q = 0; q < ik && key[q]; q++)
+                if ((key[q] >= 'a' && key[q] <= 'z') || (key[q] >= 'A' && key[q] <= 'Z') || (key[q] >= '0' && key[q] <= '9') ||
+                    key[q] >= 0x80) mark = 0;
+            if (!phoneme_set || mark) inv_add(inv, key, ik);
+        }
+        for (unsigned j = 0; phoneme_set && j < pc; j++) inv_add(inv, ph + (size_t)j * (pk + pv), pk);
         qsort(inv->sym, inv->n, sizeof *inv->sym, cmp_str);
     }
     free(d);
@@ -129,14 +164,14 @@ static Inventory *read_inventory(const char *path) {
 
 static int match_voice_file(const char *n) {
     // phonmap_<lang>_<voice>.dat (iOS 3-4, Lion), or clc_<lang>_<voice>_cfg<N>.dat
-    // (iOS 5-6, Mountain Lion, Mavericks), not clc_<lang>_cfg...
+    // (iOS 5-6, Mountain Lion, Mavericks; the voice may have a hyphen, ting-ting), not clc_<lang>_cfg...
     size_t len = strlen(n);
     if (len < 5 || strcmp(n + len - 4, ".dat")) return 0;
     if (!strncmp(n, "phonmap_", 8)) return 1;
     if (strncmp(n, "clc_", 4) || len < 8 || n[7] != '_' || !strncmp(n + 8, "cfg", 3)) return 0;
     const char *cfg = strstr(n + 8, "_cfg");
     if (!cfg) return 0;
-    for (const char *p = n + 8; p < cfg; p++) if (*p < 'a' || *p > 'z') return 0;
+    for (const char *p = n + 8; p < cfg; p++) if ((*p < 'a' || *p > 'z') && *p != '-') return 0;
     for (const char *p = cfg + 4; p < n + len - 4; p++) if (*p < '0' || *p > '9') return 0;
     return cfg + 4 < n + len - 4;
 }
@@ -314,38 +349,38 @@ static AppleMap *apple_map(const char *voices_root, const char *language) {
 // R+ in an American voice); an empty spelling drops the sound.
 static const struct { uint32_t ipa; const char *lhp; int vowel; } kBase[] = {
     // vowels
-    {'i', "i|I|i0|e", 1}, {'y', "y|Y|i|u", 1}, {0x268, "i0|i|I", 1}, {0x289, "u0|u", 1},
+    {'i', "i|I|i0|e", 1}, {'y', "y|Y|i|u", 1}, {0x268, "i0|i|I", 1}, {0x289, "u0|U0|u", 1},
     {0x26F, "u-|u|U", 1}, {'u', "u|U|u-|u0|o", 1}, {0x26A, "I|i|e", 1}, {0x28F, "Y|y|I", 1},
     {0x28A, "U|u|u-|o", 1}, {'e', "e|E|e&I|i", 1}, {0xF8, "e+|E+|e|o", 1},
-    {0x258, "$|e", 1}, {0x275, "o0|U0|u0|o", 1}, {0x264, "o-|o", 1},
-    {'o', "o|O|o&U|o-|u", 1}, {0x259, "$|E0|e|E|a|@", 1}, {0x25B, "E|e|a", 1},
+    {0x258, "$|e", 1}, {0x275, "o0|U0|u0|o|e+|E+", 1}, {0x264, "o-|o", 1},
+    {'o', "o|o&U|O|o-|u", 1}, {0x259, "$|E0|e0|e|E|a|@", 1}, {0x25B, "E|e|a", 1},
     {0x153, "E+|e+|E|e", 1}, {0x25C, "E0|$|E|e", 1}, {0x25E, "E0|$", 1},
     {0x28C, "^|$|a|A|o", 1}, {0x254, "O|o", 1}, {0xE6, "@|E|a|e", 1},
-    {0x250, "a0|$|a|^", 1}, {'a', "a|A|@|a0|^", 1}, {0x276, "E+|a", 1},
-    {0x251, "A|a|A+", 1}, {0x252, "A+|O|A|o", 1},
-    {0x25A, "$ R+|$", 1}, {0x25D, "E0 R+|E0", 1},
-    // plosives
-    {'p', "p", 0}, {'b', "b", 0}, {'t', "t", 0}, {'d', "d", 0}, {0x288, "t+|t", 0},
+    {0x250, "a0|$|^|a", 1}, {'a', "a|A|@|a0|^", 1}, {0x276, "E+|a", 1},
+    {0x251, "A|a|A+|@", 1}, {0x252, "A+|O|A|o", 1},
+    {0x25A, "$ R+|$%r|$", 1}, {0x25D, "E0 R+|E0", 1},
+    // plosives (a voice without voiced ones, Danish's, says them as its plain p t k)
+    {'p', "p", 0}, {'b', "b|p", 0}, {'t', "t", 0}, {'d', "d|t", 0}, {0x288, "t+|t", 0},
     {0x256, "d+|d", 0}, {'c', "c|k", 0}, {0x25F, "j-|J|g", 0}, {'k', "k", 0},
-    {'g', "g", 0}, {0x261, "g", 0}, {'q', "q|k", 0}, {0x262, "g", 0}, {0x294, "?|", 0},
+    {'g', "g|k", 0}, {0x261, "g|k", 0}, {'q', "q|k", 0}, {0x262, "g", 0}, {0x294, "?|", 0},
     // nasals
     {'m', "m", 0}, {0x271, "M|m", 0}, {'n', "n", 0}, {0x273, "n+|n", 0}, {0x272, "n~|n", 0},
     {0x14B, "nK|N|n", 0}, {0x274, "N|nK|n", 0},
     // trills, taps
     {0x299, "b", 0}, {'r', "r|r6|R+|R|R\\", 0}, {0x280, "R\\|R|r", 0},
-    {0x27E, "r6|r|d|R+", 0}, {0x27D, "r6|r", 0}, {0x27A, "r6|l", 0},
+    {0x27E, "r6|r|d|R+", 0}, {0x27D, "r+|r6|r", 0}, {0x27A, "r6|l", 0},
     // fricatives
-    {0x278, "F|f|h", 0}, {0x3B2, "B|v|b", 0}, {'f', "f|F|p", 0}, {'v', "v|V|w|b", 0},
+    {0x278, "F|P|f|h", 0}, {0x3B2, "B|v|b", 0}, {'f', "f|F|p", 0}, {'v', "v|V|w|b", 0},
     {0x3B8, "T|t|s", 0}, {0xF0, "D|d|z", 0}, {'s', "s", 0}, {'z', "z|s", 0}, {0x283, "S|s+|c~|s", 0},
     {0x292, "Z|z~|S|z", 0}, {0x282, "s+|S|s", 0}, {0x290, "z+|Z|z", 0},
-    {0x255, "c~|S", 0}, {0x291, "z~|Z", 0}, {0xE7, "C|S|c~|x|h", 0},
+    {0x255, "c~|C|S", 0}, {0x291, "z~|Z", 0}, {0xE7, "C|S|c~|x|h", 0},
     {0x29D, "J|j", 0}, {'x', "x|X|h|k", 0}, {0x263, "G|g", 0}, {0x3C7, "X|x", 0},
     {0x281, "R|R\\|r|R+|r6", 0}, {0x127, "h-|h", 0}, {0x295, "?\\|?|", 0},
     {'h', "h|h6|x", 0}, {0x266, "h6|h", 0}, {0x267, "h6~|S", 0}, {0x26C, "l", 0}, {0x26E, "l", 0},
     // approximants
     {0x28B, "V|v|w", 0}, {0x279, "R+|r|R|r6", 0}, {0x27B, "R+|r|R|r6", 0},
     {'j', "j|i", 0}, {0x270, "G|w", 0}, {'l', "l|r6|r", 0}, {0x26D, "l+|l", 0},
-    {0x28E, "l~|j|l", 0}, {0x29F, "l", 0}, {0x26B, "l|l+", 0}, {'w', "w|u|v", 0},
+    {0x28E, "l~|j|l", 0}, {0x29F, "l", 0}, {0x26B, "l|l+", 0}, {'w', "w|u:~|u|v", 0},
     {0x28D, "w", 0}, {0x265, "h\\|j", 0},
 };
 
@@ -355,20 +390,49 @@ static int base_index(uint32_t c) {
     return -1;
 }
 
-// English diphthongs as dictionaries write them, when a voice spells them
-// differently from their parts (a British "goat" is əʊ, o&U).
+// Where one language's voice says a sound with a symbol that other voices use
+// for another sound, so that no order of kBase's spellings suits them all.
+static const struct { const char *lang; uint32_t ipa; const char *lhp; } kLang[] = {
+    {"de", 0x250, "$ R|$"},    // ɐ is German's vocalic r (besser, Oper): the voice's $R
+    {"nl", 0x28F, "^|Y|y|I"},  // ʏ (bus) is the Dutch voice's ^; its y is the y of "fuut"
+    {"es", 0x3B8, "T|s"},      // θ: Latin American Spanish says s (seseo)
+};
+
+static int lang_is(const char *lang, const char *code) {
+    return lang && (lang[0] | 0x20) == code[0] && (lang[1] | 0x20) == code[1] && (!lang[2] || lang[2] == '-' || lang[2] == '_');
+}
+
+// A sound's spellings in the voice's language ("de-DE"; may be NULL).
+static const char *lhp_of(int base, const char *lang) {
+    for (size_t i = 0; i < sizeof kLang / sizeof *kLang; i++)
+        if (kLang[i].ipa == kBase[base].ipa && lang_is(lang, kLang[i].lang)) return kLang[i].lhp;
+    return kBase[base].lhp;
+}
+
+// Diphthongs as dictionaries write them, when a voice spells them differently
+// from their parts (a British "goat" is əʊ, o&U; Dutch "buit" is œy, ^&y).
 static const struct { uint32_t a, b; const char *lhp; } kDiphthongs[] = {
     {0x259, 0x28A, "o&U"}, {'o', 0x28A, "o&U"}, {'e', 0x26A, "e&I"}, {'a', 0x26A, "a&I"}, {0x251, 0x26A, "a&I"},
     {'a', 0x28A, "a&U"}, {0x254, 0x26A, "O&I"}, {0x26A, 0x259, "I&$"}, {'e', 0x259, "E&$"}, {0x25B, 0x259, "E&$"},
-    {0x28A, 0x259, "U&$"}, {0x254, 0x259, "O"},
+    {0x28A, 0x259, "U&$"}, {0x254, 0x259, "O"}, {0x153, 'y', "^&y"},
+};
+// tried after the pair's own parts: Korean's affricate is c
+static const struct { uint32_t a, b; const char *lhp; } kPairsLast[] = {
+    {'t', 0x283, "c"}, {'t', 0x255, "c"},
 };
 static const uint32_t kAffricates[][2] = {
-    {'t', 0x283}, {'d', 0x292}, {'t', 0x255}, {'d', 0x291}, {'t', 's'}, {'d', 'z'}, {'p', 'f'},
+    {'t', 0x283}, {'d', 0x292}, {'t', 0x255}, {'d', 0x291}, {'t', 's'}, {'d', 'z'}, {'p', 'f'}, {0x288, 0x282}, {'t', 0x282},
 };
 
 // modifiers -> the L&H+ suffixes to try (in that order) on the symbol before
 static const struct { uint32_t ipa; const char *suffix; } kSuffix[] = {
-    {0x2D0, ":"}, {0x303, "%~|~"}, {0x329, "%)"}, {0x30D, "%)"}, {0x2B0, "%{|{"}, {0x2B2, "%j"},
+    {0x2D0, ":"}, {0x303, "%~|~"}, {0x329, "%)"}, {0x30D, "%)"}, {0x2B2, "%j"}, {0x2B7, "%w"},
+    {0x2B0, "%{|{|%:"},  // aspirated; a voiced stop with it is murmured (Hindi bʰ written for bʱ)
+    {0x2B1, "%:|%{|{"}, {0x324, "%:"},  // murmured, breathy
+    {0x2E4, "%K"}, {0x2E0, "%K"},  // pharyngealized, velarized: Arabic's emphatic consonants
+    {0x32F, ":~"},  // non-syllabic: Romanian's e̯ o̯ i̯ u̯
+    {0x31D, "%T"},  // raised: Czech ř is r̝
+    {0x348, "`"},  // tense (fortis): Korean ㅃ ㄸ ㄲ ㅉ ㅆ, p͈ written p* in X-SAMPA here
     {0x2DE, ""},  // ˞ is a following R+
 };
 #define RHOTIC 0x2DE
@@ -384,9 +448,9 @@ static int is_tie(uint32_t c) { return c == 0x35C || c == 0x361; }
 static int is_tone(uint32_t c) { return c >= 0x2E5 && c <= 0x2E9; }
 // everything else that can follow a sound and changes nothing L&H+ can say
 static int is_ignored(uint32_t c) {
-    static const uint32_t k[] = {0x32A, 0x325, 0x32C, 0x32F, 0x31A, 0x2BC, 0x2D1, 0x31F, 0x320, 0x308, 0x33D, 0x2E0,
-                                 0x2E4, 0x2B7, 0x334, 0x339, 0x31C, 0x31D, 0x31E, 0x318, 0x319, 0x324, 0x330, 0x33C,
-                                 0x33A, 0x33B, 0x306, 0x301, 0x300, 0x304, 0x30B, 0x30F, 0x30C, 0x302, 0x2191, 0x2193};
+    static const uint32_t k[] = {0x32A, 0x325, 0x32C, 0x31A, 0x2BC, 0x2D1, 0x31F, 0x320, 0x308, 0x33D, 0x334, 0x339,
+                                 0x31C, 0x31E, 0x318, 0x319, 0x330, 0x33C, 0x33A, 0x33B, 0x306, 0x301, 0x300, 0x304,
+                                 0x30B, 0x30F, 0x30C, 0x302, 0x2191, 0x2193};
     if (is_tone(c)) return 1;
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) if (k[i] == c) return 1;
     return 0;
@@ -442,8 +506,116 @@ static int tokens(const uint32_t *ipa, size_t n, Token *out, size_t cap) {
     return (int)m;
 }
 
+// --- syllables. Vocalizer phrases phonetic input by its syllable marks: without them a word of several
+// syllables gets a falling, sentence-final pitch and a pause after it (measured on iOS 6 Samantha). When the
+// IPA marks none, a word's syllables are found here: a boundary between two vowels (not inside a diphthong),
+// and inside a run of consonants before the longest onset a word can start with (pl, str ...). A stress mark
+// already starts its syllable.
+
+static int has_mod(const Token *t, uint32_t m) {
+    for (int k = 0; k < t->nmods; k++) if (t->mods[k] == m) return 1;
+    return 0;
+}
+
+static int tok_vowel(const Token *t) {
+    if (t->kind != K_SOUND) return 0;
+    if (has_mod(t, 0x32F)) return 0;  // a non-syllabic vowel (Romanian's e̯a) belongs to its neighbour's syllable
+    if (kBase[t->base[0]].vowel) return 1;
+    return has_mod(t, 0x329) || has_mod(t, 0x30D);  // syllabic consonant
+}
+
+static uint32_t tok_ipa(const Token *t) { return kBase[t->base[0]].ipa; }
+
+// b continues the vowel a as one syllable (eɪ, aʊ, a non-syllabic i̯ ...)
+static int glides_on(const Token *a, const Token *b) {
+    (void)a;
+    if (has_mod(b, 0x32F)) return 1;
+    uint32_t c = tok_ipa(b);
+    return c == 0x26A || c == 0x28A;  // ɪ ʊ
+}
+
+struct Spelling;
+static int pair_spelling(const Token *a, const Token *b, int bbase, const Inventory *inv, const char *lang,
+                         struct Spelling *out);
+
+static int is_stop(uint32_t c) {
+    return c == 'p' || c == 'b' || c == 't' || c == 'd' || c == 'k' || c == 'g' || c == 'c' || c == 'q' || c == 0x261;
+}
+static int is_liquid_glide(uint32_t c) {
+    return c == 'l' || c == 'r' || c == 'w' || c == 'j' || c == 0x279 || c == 0x27B || c == 0x281 || c == 0x280;
+}
+static int is_sibilant(uint32_t c) { return c == 's' || c == 0x283; }  // s ʃ
+
+// Can a word start with these consonants?
+static int legal_onset(const Token *t, const int *at, int k) {
+    if (k <= 1) return 1;
+    uint32_t c[3];
+    for (int i = 0; i < k && i < 3; i++) {
+        if (t[at[i]].nbase == 2) return 0;  // an affricate starts it only on its own
+        c[i] = tok_ipa(&t[at[i]]);
+    }
+    if (k == 2) {
+        if (is_liquid_glide(c[1]))
+            return (is_stop(c[0]) && !((c[0] == 't' || c[0] == 'd') && c[1] == 'l')) || c[0] == 'f' || c[0] == 'v' ||
+                   c[0] == 0x3B8 || c[0] == 0x283 || c[0] == 's' ||
+                   (c[1] == 'j' && (c[0] == 'h' || c[0] == 'm' || c[0] == 'n' || c[0] == 'z'));
+        if (is_sibilant(c[0])) return is_stop(c[1]) || c[1] == 'm' || c[1] == 'n' || c[1] == 'f';
+        return (c[0] == 't' && (c[1] == 0x283 || c[1] == 's')) || (c[0] == 'd' && c[1] == 0x292);  // tʃ dʒ unmarked
+    }
+    if (k == 3) return is_sibilant(c[0]) && is_stop(c[1]) && is_liquid_glide(c[2]);
+    return 0;
+}
+
+// The tokens with syllable marks added to words that have none; returns the new count. Two vowels the voice
+// has one symbol for (German ɔʏ, O&y; Thai's ia) are one syllable too, unless the first already ends a diphthong.
+static int syllabify(const Token *t, int n, Token *out, int cap, const Inventory *inv, const char *lang) {
+    int m = 0;
+    for (int ws = 0; ws < n;) {
+        int we = ws;
+        int marked = 0;
+        while (we < n && t[we].kind != K_WORD) { marked |= t[we].kind == K_SYL; we++; }
+        int prev_end = -1;  // index past the last nucleus
+        int glided = 0;     // the token before continues the one before it
+        for (int i = ws; i < we; i++) {
+            int glide = 0;
+            if (i > ws && tok_vowel(&t[i]) && tok_vowel(&t[i - 1]))
+                glide = glides_on(&t[i - 1], &t[i]) ||
+                        (!glided && t[i].nbase == 1 && t[i - 1].nbase == 1 &&
+                         pair_spelling(&t[i - 1], &t[i], t[i].base[0], inv, lang, NULL));
+            if (!marked && tok_vowel(&t[i]) && !glide) {
+                // a new nucleus: where does its syllable start?
+                if (prev_end >= 0) {
+                    int stressed = 0, at[16], k = 0;
+                    for (int j = prev_end; j < i; j++) {
+                        if (t[j].kind == K_STRESS) stressed = 1;
+                        else if (t[j].kind == K_SOUND && k < 16) at[k++] = j;
+                    }
+                    if (!stressed) {
+                        int split = k;  // all of them before it, unless an onset can take some
+                        while (split > 0 && legal_onset(t, at + split - 1, k - split + 1)) split--;
+                        int before = split < k ? at[split] : i;  // the token the boundary goes in front of
+                        // tokens prev_end..i are already copied: put the mark in place
+                        int pos = m - (i - before);
+                        if (m < cap) {
+                            memmove(&out[pos + 1], &out[pos], (size_t)(m - pos) * sizeof *out);
+                            out[pos] = (Token){.kind = K_SYL};
+                            m++;
+                        }
+                    }
+                }
+            }
+            if (m < cap) out[m++] = t[i];
+            if (tok_vowel(&t[i])) prev_end = i + 1;
+            glided = glide;
+        }
+        if (we < n && m < cap) out[m++] = t[we];  // the word boundary
+        ws = we + 1;
+    }
+    return m;
+}
+
 // One spelling: up to 4 symbols.
-typedef struct { char s[4][16]; int n; } Spelling;
+typedef struct Spelling { char s[4][16]; int n; } Spelling;
 typedef struct { Spelling *v; size_t n, cap; } Spellings;
 
 static void sp_add(Spellings *l, const Spelling *s) {
@@ -476,8 +648,11 @@ static Spelling parse_spelling(const char *s, size_t len) {
         } \
     } while (0)
 
-// Candidate L&H+ spellings for one sound (bases tied when nb is 2).
-static void spellings(const int *base, int nb, const uint32_t *mods, int nmods, Spellings *out) {
+// Candidate L&H+ spellings for one sound (bases tied when nb is 2) in the voice's language (may be NULL). A pair's
+// own spellings are its first part's spellings joined to the second's by &, the first also with its length mark
+// (Thai's i:&a); alimit, when above 0, keeps only that many of the first part's spellings.
+static void spellings(const int *base, int nb, const uint32_t *mods, int nmods, const char *lang, int alimit,
+                      Spellings *out) {
     Spellings c = {0};
     if (nb == 2) {  // an affricate or a diphthong
         for (size_t i = 0; i < sizeof kDiphthongs / sizeof *kDiphthongs; i++)
@@ -485,53 +660,82 @@ static void spellings(const int *base, int nb, const uint32_t *mods, int nmods, 
                 Spelling s = parse_spelling(kDiphthongs[i].lhp, strlen(kDiphthongs[i].lhp));
                 sp_add(&c, &s);
             }
-        EACH_ALT(kBase[base[0]].lhp, a, al, {
-            EACH_ALT(kBase[base[1]].lhp, b, bl, {
-                if (al && bl && !memchr(a, ' ', al) && !memchr(b, ' ', bl)) {
+        // the parts' spellings, nearest pairs first: by how far down both lists they are (Cantonese ɵy is E+&y,
+        // not o&u)
+        const char *pa[8], *pb[8];
+        size_t la[8], lb[8];
+        int na = 0, nb2 = 0;
+        EACH_ALT(lhp_of(base[0], lang), a, al, { if (na < 8) { pa[na] = a; la[na++] = al; } });
+        EACH_ALT(lhp_of(base[1], lang), b, bl, { if (nb2 < 8) { pb[nb2] = b; lb[nb2++] = bl; } });
+        if (alimit > 0 && alimit < na) na = alimit;
+        for (int sum = 0; sum <= na + nb2 - 2; sum++)
+            for (int i = 0; i < na && i <= sum; i++) {
+                int j = sum - i;
+                if (j >= nb2 || !la[i] || !lb[j] || memchr(pa[i], ' ', la[i]) || memchr(pb[j], ' ', lb[j])) continue;
+                for (int len = 0; len < 2; len++) {
                     Spelling s = {.n = 1};
-                    snprintf(s.s[0], sizeof s.s[0], "%.*s&%.*s", (int)al, a, (int)bl, b);
+                    snprintf(s.s[0], sizeof s.s[0], "%.*s%s&%.*s", (int)la[i], pa[i], len ? ":" : "", (int)lb[j], pb[j]);
                     sp_add(&c, &s);
                 }
-            });
-        });
+            }
+        for (size_t i = 0; i < sizeof kPairsLast / sizeof *kPairsLast; i++)
+            if (kPairsLast[i].a == kBase[base[0]].ipa && kPairsLast[i].b == kBase[base[1]].ipa) {
+                Spelling s = parse_spelling(kPairsLast[i].lhp, strlen(kPairsLast[i].lhp));
+                sp_add(&c, &s);
+            }
     } else {
-        EACH_ALT(kBase[base[0]].lhp, a, al, {
+        EACH_ALT(lhp_of(base[0], lang), a, al, {
             Spelling s = parse_spelling(a, al);
             sp_add(&c, &s);
         });
     }
-    // the suffixes go on the last symbol: all of them, then fewer
+    // the suffixes go on the last symbol: all of them, then fewer. A nasal vowel first tries every spelling
+    // nasal, then oral (Canadian French's vowel of "brin" is the voice's e%~, not its oral E).
     const char *suf[8];
-    int ns = 0, rhotic = 0, found;
-    for (int i = 0; i < nmods; i++) {
+    int ns = 0, rhotic = 0, nasal = -1, found;
+    for (int i = 0; i < nmods && ns < 8; i++) {
         const char *x = suffix_of(mods[i], &found);
         if (mods[i] == RHOTIC) rhotic = 1;
-        else if (x && *x) suf[ns++] = x;
+        else if (x && *x) {
+            if (mods[i] == 0x303 && nasal < 0) nasal = ns;
+            suf[ns++] = x;
+        }
     }
     Spellings o = {0};
-    for (size_t i = 0; i < c.n; i++) {
-        for (int k = ns; k > 0 && c.v[i].n; k--) {
-            // every combination of the first k suffixes' alternatives
-            int idx[8] = {0}, cnt[8];
-            for (int j = 0; j < k; j++) { cnt[j] = 1; for (const char *p = suf[j]; *p; p++) cnt[j] += *p == '|'; }
-            for (;;) {
-                Spelling s = c.v[i];
-                char *last = s.s[s.n - 1];
-                for (int j = 0; j < k; j++) {
-                    const char *p = suf[j];
-                    for (int q = 0; q < idx[j]; q++) p = strchr(p, '|') + 1;
-                    const char *e = strchr(p, '|');
-                    size_t l = e ? (size_t)(e - p) : strlen(p), have = strlen(last);
-                    if (have + l < sizeof s.s[0]) { memcpy(last + have, p, l); last[have + l] = 0; }
+    for (int round = nasal >= 0 ? 0 : 1; round < 2; round++)
+        for (size_t i = 0; i < c.n; i++) {
+            for (int k = ns; k > (round ? 0 : nasal) && c.v[i].n; k--) {
+                // every combination of the first k suffixes' alternatives
+                int idx[8] = {0}, cnt[8];
+                for (int j = 0; j < k; j++) { cnt[j] = 1; for (const char *p = suf[j]; *p; p++) cnt[j] += *p == '|'; }
+                for (;;) {
+                    Spelling s = c.v[i];
+                    char *last = s.s[s.n - 1];
+                    size_t base_len = strlen(last);
+                    char marks[32] = "";  // the % marks without their %, for a %"..." group
+                    int all_pct = k > 1;
+                    for (int j = 0; j < k; j++) {
+                        const char *p = suf[j];
+                        for (int q = 0; q < idx[j]; q++) p = strchr(p, '|') + 1;
+                        const char *e = strchr(p, '|');
+                        size_t l = e ? (size_t)(e - p) : strlen(p), have = strlen(last);
+                        if (have + l < sizeof s.s[0]) { memcpy(last + have, p, l); last[have + l] = 0; }
+                        if (*p != '%') all_pct = 0;
+                        else if (strlen(marks) + l < sizeof marks) strncat(marks, p + 1, l - 1);
+                    }
+                    sp_add(&o, &s);
+                    // several % marks are written as one group: kʷʰ is k%"w{"
+                    if (all_pct && base_len + strlen(marks) + 3 < sizeof s.s[0]) {
+                        snprintf(last + base_len, sizeof s.s[0] - base_len, "%%\"%s\"", marks);
+                        sp_add(&o, &s);
+                    }
+                    int j = k - 1;
+                    while (j >= 0 && ++idx[j] == cnt[j]) idx[j--] = 0;
+                    if (j < 0) break;
                 }
-                sp_add(&o, &s);
-                int j = k - 1;
-                while (j >= 0 && ++idx[j] == cnt[j]) idx[j--] = 0;
-                if (j < 0) break;
             }
+            if (round) sp_add(&o, &c.v[i]);
         }
-        sp_add(&o, &c.v[i]);
-    }
     free(c.v);
     if (rhotic) {  // with a following R+ first
         Spellings r = {0};
@@ -562,40 +766,110 @@ static int is_affricate(uint32_t a, uint32_t b) {
     return 0;
 }
 
+// How many of a sound's spellings come before and include the first one the voice has; 0 if none.
+static int first_available(int base, const Inventory *inv, const char *lang) {
+    int i = 0, at = 0;
+    EACH_ALT(lhp_of(base, lang), a, al, {
+        i++;
+        if (!at && al) {
+            Spelling s = parse_spelling(a, al);
+            int ok = s.n > 0;
+            for (int j = 0; j < s.n && ok; j++) ok = inv_has(inv, s.s[j]);
+            if (ok) at = i;
+        }
+    });
+    return at;
+}
+
+// The one symbol the voice has for two sounds in a row (a diphthong, aɪ, or an affricate written without a tie
+// bar, tʃ), the second taken as bbase; into out when it isn't NULL. A diphthong to ɪ ʊ or a non-syllabic vowel
+// may use any spelling of its parts. Elsewhere (ɔʏ, Thai's ia, dz) the first part must be the voice's own sound
+// or a nearer one, not a stand-in: British i+ə ("video") isn't its ɪə, I&$, and German dz isn't its t&s.
+static int pair_spelling(const Token *a, const Token *b, int bbase, const Inventory *inv, const char *lang,
+                         Spelling *out) {
+    int pair[2] = {a->base[0], bbase};
+    uint32_t x = kBase[pair[0]].ipa, y = kBase[pair[1]].ipa;
+    int vowels = kBase[pair[0]].vowel && kBase[pair[1]].vowel;
+    if (!vowels && !is_affricate(x, y)) return 0;
+    if (has_mod(a, 0x32F)) return 0;  // a rising diphthong (Slovak i̯u) isn't the voice's falling one
+    int limit = 0;
+    if (!vowels || !glides_on(a, b)) {
+        limit = first_available(pair[0], inv, lang);
+        if (!limit) return 0;
+    }
+    uint32_t mods[16];
+    int nm = 0;
+    for (int k = 0; k < a->nmods; k++) mods[nm++] = a->mods[k];
+    for (int k = 0; k < b->nmods && nm < 8; k++) mods[nm++] = b->mods[k];
+    Spellings l;
+    spellings(pair, 2, mods, nm, lang, limit, &l);
+    const Spelling *s = pick(&l, inv);
+    if (s && out) *out = *s;
+    free(l.v);
+    return s != NULL;
+}
+
 static void put_spelling(Str *o, const Spelling *s) {
     for (int j = 0; j < s->n; j++) str_puts(o, s->s[j]);
 }
 
-static char *convert(const Token *t, int n, const Inventory *inv) {
+static char *convert(const Token *t, int n, const Inventory *inv, const char *lang) {
+    int english = lang_is(lang, "en"), danish = lang_is(lang, "da");
     Str o = {0};
     str_puts(&o, "");
     for (int i = 0; i < n; i++) {
-        if (t[i].kind == K_STRESS) { str_puts(&o, t[i].stress == 1 ? "'" : inv_has(inv, "'2") ? "'2" : ""); continue; }
-        if (t[i].kind == K_SYL) { str_puts(&o, "."); continue; }
+        if (t[i].kind == K_STRESS && t[i].stress == 1) {
+            // inside a word a stress mark follows a syllable mark (as in Nuance's own examples, '2Ek.spl$.'ne&I.S$n):
+            // without one Samantha pauses before the stressed syllable (so&U.l$'d@d)
+            if (o.n && o.s[o.n - 1] != '_' && o.s[o.n - 1] != '.') str_puts(&o, ".");
+            str_puts(&o, "'");
+            continue;
+        }
+        // Secondary stress is left out (Nico: Vocalizer gives a word with it the same falling pitch as
+        // one without syllable marks); it still starts a syllable.
+        if (t[i].kind == K_STRESS || t[i].kind == K_SYL) {
+            char last = o.n ? o.s[o.n - 1] : '_';
+            if (last != '_' && last != '.' && last != '\'') str_puts(&o, ".");
+            continue;
+        }
         if (t[i].kind == K_WORD) { str_puts(&o, "_"); continue; }
         int got = 0;
         // two sounds the voice writes as one: a diphthong (aɪ) or an
         // affricate (tʃ) written without a tie bar
         if (i + 1 < n && t[i + 1].kind == K_SOUND && t[i].nbase == 1 && t[i + 1].nbase == 1) {
-            uint32_t a = kBase[t[i].base[0]].ipa, b = kBase[t[i + 1].base[0]].ipa;
-            if ((kBase[t[i].base[0]].vowel && kBase[t[i + 1].base[0]].vowel) || is_affricate(a, b)) {
-                int pair[2] = {t[i].base[0], t[i + 1].base[0]};
-                uint32_t mods[16];
-                int nm = 0;
-                for (int k = 0; k < t[i].nmods; k++) mods[nm++] = t[i].mods[k];
-                for (int k = 0; k < t[i + 1].nmods && nm < 8; k++) mods[nm++] = t[i + 1].mods[k];
-                Spellings l;
-                spellings(pair, 2, mods, nm, &l);
-                const Spelling *s = pick(&l, inv);
-                if (s) { put_spelling(&o, s); got = 1; i++; }
-                free(l.v);
-            }
+            int b = t[i + 1].base[0];
+            // a w or j the voice can't say, after a vowel and not before one, ends a diphthong (Czech has no w:
+            // its "ow" is o&u)
+            uint32_t g = kBase[b].ipa;
+            if (kBase[t[i].base[0]].vowel && ((g == 'w' && !inv_has(inv, "w")) || (g == 'j' && !inv_has(inv, "j"))) &&
+                !(i + 2 < n && tok_vowel(&t[i + 2])))
+                b = base_index(g == 'w' ? 'u' : 'i');
+            Spelling s;
+            if (pair_spelling(&t[i], &t[i + 1], b, inv, lang, &s)) { put_spelling(&o, &s); got = 1; i++; }
         }
         if (!got) {
+            uint32_t mods[9];
+            int nm = t[i].nmods;
+            memcpy(mods, t[i].mods, sizeof t[i].mods);
+            // Danish p t k starting a word or a stressed syllable, before a vowel or l r j v (or alone), are aspirated,
+            // as if written pʰ (elsewhere, as after s, they are the voice's plain p t k, which are also its b d g)
+            uint32_t c = kBase[t[i].base[0]].ipa;
+            const Token *nx = i + 1 < n ? &t[i + 1] : NULL;
+            uint32_t next = nx && nx->kind == K_SOUND ? tok_ipa(nx) : 0;
+            int starts = i == 0 || t[i - 1].kind == K_WORD || t[i - 1].kind == K_STRESS;
+            if (danish && t[i].nbase == 1 && (c == 'p' || c == 't' || c == 'k') && !has_mod(&t[i], 0x2B0) && starts &&
+                (!nx || nx->kind == K_WORD || tok_vowel(nx) || is_liquid_glide(next) || next == 'v' || next == 0x28B))
+                mods[nm++] = 0x2B0;
             Spellings l;
-            spellings(t[i].base, t[i].nbase, t[i].mods, t[i].nmods, &l);
+            spellings(t[i].base, t[i].nbase, mods, nm, lang, 0, &l);
             const Spelling *s = pick(&l, inv);
-            if (s) { put_spelling(&o, s); got = 1; }
+            if (s) {
+                put_spelling(&o, s);
+                got = 1;
+                // English voices read a syllabified "bu." or "bus." with the u of "book" (iOS 6 Samantha); with
+                // its length marked it stays as written, and the mark changes nothing else (timing, pitch)
+                if (english && s->n == 1 && !strcmp(s->s[0], "u") && !inv_has(inv, "u:")) str_puts(&o, ":");
+            }
             free(l.v);
         }
         if (!got && t[i].nbase == 2) {  // say the tied parts one by one
@@ -604,7 +878,7 @@ static char *convert(const Token *t, int n, const Inventory *inv) {
             got = 1;
             for (int k = 0; k < 2 && got; k++) {
                 Spellings l;
-                spellings(&t[i].base[k], 1, NULL, 0, &l);
+                spellings(&t[i].base[k], 1, NULL, 0, lang, 0, &l);
                 const Spelling *s = pick(&l, inv);
                 if (s) put_spelling(&part, s);
                 else got = 0;
@@ -648,16 +922,17 @@ static char *apple(const char *ipa, const AppleMap *m, const Inventory *inv) {
     return o.s;
 }
 
-static char *to_lhp(const char *ipa, const Inventory *inv, const AppleMap *m) {
+static char *to_lhp(const char *ipa, const Inventory *inv, const AppleMap *m, const char *lang) {
     uint32_t cp[512];
     size_t n = decode(ipa, cp, 512);
     int tones = 0;
     for (size_t i = 0; i < n; i++) tones |= is_tone(cp[i]);
     char *r = NULL;
     if (m && tones && (r = apple(ipa, m, inv))) return r;  // Apple's map knows tones (Chinese)
-    Token t[512];
+    Token t[512], syl[768];
     int nt = tokens(cp, n, t, 512);
-    if (nt > 0) r = convert(t, nt, inv);
+    if (nt > 0) nt = syllabify(t, nt, syl, 768, inv, lang);
+    if (nt > 0) r = convert(syl, nt, inv, lang);
     if (!r && m) r = apple(ipa, m, inv);
     return r;
 }
@@ -780,12 +1055,62 @@ char *vx_phoneme_text(const char *voices_root, const char *asset_root, const cha
     voice_dir(voices_root, asset_root, voice_key, dir, sizeof dir);
     const Inventory *inv = inventory(dir);
     if (!inv) return NULL;
-    char *lhp = to_lhp(ipa, inv, apple_map(voices_root, language));
+    char *lhp = to_lhp(ipa, inv, apple_map(voices_root, language), language);
     if (!lhp) return NULL;
     size_t n = strlen(lhp) + 32;
     char *o = malloc(n);
     if (ios4) snprintf(o, n, "\x1b/+%s\x1b/+", lhp);
     else snprintf(o, n, "\x1b\\toi=lhp\\%s\x1b\\toi=orth\\", lhp);
     free(lhp);
+    return o;
+}
+
+// --- X-SAMPA (the community dictionaries' phonetic spans, ports/host/cv_dict.h and ios/Shared/CommunityDictionary.swift)
+
+typedef struct { const char *x, *ipa; } XS;
+static const XS kXsampa[] = {
+    // vowels
+    {"i", "i"}, {"y", "y"}, {"1", "ɨ"}, {"}", "ʉ"}, {"M", "ɯ"}, {"u", "u"}, {"I", "ɪ"}, {"Y", "ʏ"}, {"U", "ʊ"},
+    {"e", "e"}, {"2", "ø"}, {"@\\", "ɘ"}, {"8", "ɵ"}, {"7", "ɤ"}, {"o", "o"}, {"@", "ə"}, {"E", "ɛ"}, {"9", "œ"},
+    {"3", "ɜ"}, {"3\\", "ɞ"}, {"V", "ʌ"}, {"O", "ɔ"}, {"{", "æ"}, {"6", "ɐ"}, {"a", "a"}, {"&", "ɶ"}, {"A", "ɑ"},
+    {"Q", "ɒ"}, {"@`", "ɚ"}, {"3`", "ɝ"}, {"I\\", "ᵻ"}, {"U\\", "ᵿ"},
+    // consonants
+    {"p", "p"}, {"b", "b"}, {"t", "t"}, {"d", "d"}, {"t`", "ʈ"}, {"d`", "ɖ"}, {"c", "c"}, {"J\\", "ɟ"}, {"k", "k"},
+    {"g", "ɡ"}, {"q", "q"}, {"G\\", "ɢ"}, {"?", "ʔ"}, {"m", "m"}, {"F", "ɱ"}, {"n", "n"}, {"n`", "ɳ"}, {"J", "ɲ"},
+    {"N", "ŋ"}, {"N\\", "ɴ"}, {"B\\", "ʙ"}, {"r", "r"}, {"R\\", "ʀ"}, {"4", "ɾ"}, {"r`", "ɽ"}, {"p\\", "ɸ"},
+    {"B", "β"}, {"f", "f"}, {"v", "v"}, {"T", "θ"}, {"D", "ð"}, {"s", "s"}, {"z", "z"}, {"S", "ʃ"}, {"Z", "ʒ"},
+    {"s`", "ʂ"}, {"z`", "ʐ"}, {"C", "ç"}, {"j\\", "ʝ"}, {"x", "x"}, {"G", "ɣ"}, {"X", "χ"}, {"R", "ʁ"},
+    {"X\\", "ħ"}, {"?\\", "ʕ"}, {"h", "h"}, {"h\\", "ɦ"}, {"K", "ɬ"}, {"K\\", "ɮ"}, {"v\\", "ʋ"}, {"P", "ʋ"},
+    {"r\\", "ɹ"}, {"r\\`", "ɻ"}, {"j", "j"}, {"M\\", "ɰ"}, {"l", "l"}, {"l`", "ɭ"}, {"L", "ʎ"}, {"L\\", "ʟ"},
+    {"w", "w"}, {"H", "ɥ"}, {"W", "ʍ"}, {"5", "ɫ"}, {"s\\", "ɕ"}, {"z\\", "ʑ"}, {"l\\", "ɺ"}, {"x\\", "ɧ"},
+    // stress, length, syllables, diacritics
+    {"\"", "ˈ"}, {"%", "ˌ"}, {":", "ː"}, {":\\", "ˑ"}, {".", "."}, {"~", "\xcc\x83"}, {"_~", "\xcc\x83"},
+    {"=", "\xcc\xa9"}, {"_=", "\xcc\xa9"}, {"_h", "ʰ"}, {"_0", "\xcc\xa5"}, {"_j", "ʲ"}, {"'", "ʲ"}, {"_w", "ʷ"},
+    {"`", "˞"}, {"_G", "ˠ"}, {"_?\\", "ˤ"}, {"_t", "\xcc\xa4"}, {"_^", "\xcc\xaf"}, {"_}", "\xcc\x9a"}, {"_r", "\xcc\x9d"},
+    {"*", "\xcd\x88"},  // not X-SAMPA's own: tense, as Korean linguistics writes it (p* for p͈)
+    {" ", " "}, {"-", ""},
+};
+
+char *vx_xsampa_to_ipa(const char *x, size_t len, size_t *bad) {
+    char *o = malloc(len * 4 + 1);
+    size_t k = 0;
+    for (size_t i = 0; i < len;) {
+        const XS *best = NULL;
+        size_t bl = 0;
+        for (size_t j = 0; j < sizeof kXsampa / sizeof *kXsampa; j++) {
+            size_t l = strlen(kXsampa[j].x);
+            if (l > bl && l <= len - i && !memcmp(x + i, kXsampa[j].x, l)) { best = &kXsampa[j]; bl = l; }
+        }
+        if (!best) {
+            if (bad) *bad = i;
+            free(o);
+            return NULL;
+        }
+        size_t il = strlen(best->ipa);
+        memcpy(o + k, best->ipa, il);
+        k += il;
+        i += bl;
+    }
+    o[k] = 0;
     return o;
 }

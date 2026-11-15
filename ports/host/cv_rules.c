@@ -21,6 +21,7 @@ typedef struct pcre2_match_data_8 pcre2_match_data;
 #define PCRE2_UCP 0x00020000u
 #define PCRE2_UTF 0x00080000u
 #define PCRE2_SUBSTITUTE_GLOBAL 0x00000100u
+#define PCRE2_SUBSTITUTE_UNSET_EMPTY 0x00000200u  // a group that took no part ((ed)?) is empty, not an error
 #define PCRE2_SUBSTITUTE_OVERFLOW_LENGTH 0x00001000u
 #define PCRE2_SUBSTITUTE_MATCHED 0x00010000u
 #define PCRE2_SUBSTITUTE_REPLACEMENT_ONLY 0x00020000u
@@ -36,6 +37,7 @@ static int (*p_match)(const pcre2_code *, const uint8_t *, size_t, size_t, uint3
 static pcre2_match_data *(*p_md_create)(const pcre2_code *, void *);
 static void (*p_md_free)(pcre2_match_data *);
 static size_t *(*p_ovector)(pcre2_match_data *);
+static void (*p_code_free)(pcre2_code *);
 static int pcre_state;  // 0 untried, 1 loaded, -1 unavailable
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 
@@ -49,6 +51,7 @@ static int load_pcre(void) {
     p_md_create = (pcre2_match_data * (*)(const pcre2_code *, void *)) pcre2_match_data_create_from_pattern_8;
     p_md_free = pcre2_match_data_free_8;
     p_ovector = (size_t * (*)(pcre2_match_data *)) pcre2_get_ovector_pointer_8;
+    p_code_free = pcre2_code_free_8;
 #else
     void *h = dlopen("libpcre2-8.so.0", RTLD_NOW | RTLD_LOCAL);
     if (!h) h = dlopen("libpcre2-8.so", RTLD_NOW | RTLD_LOCAL);
@@ -61,6 +64,7 @@ static int load_pcre(void) {
         p_md_create = (pcre2_match_data * (*)(const pcre2_code *, void *)) dlsym(h, "pcre2_match_data_create_from_pattern_8");
         p_md_free = (void (*)(pcre2_match_data *))dlsym(h, "pcre2_match_data_free_8");
         p_ovector = (size_t * (*)(pcre2_match_data *)) dlsym(h, "pcre2_get_ovector_pointer_8");
+        p_code_free = (void (*)(pcre2_code *))dlsym(h, "pcre2_code_free_8");
     }
 #endif
     pcre_state = p_compile && p_substitute ? 1 : -1;
@@ -210,14 +214,14 @@ char *cv_rules_apply(const CvRules *rules, const char *text) {
         uint8_t *out = malloc(cap);
         size_t outlen = cap;
         int rc = p_substitute(rules->r[i].re, (const uint8_t *)cur, PCRE2_ZERO_TERMINATED, 0,
-                              PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, NULL, NULL,
+                              PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_UNSET_EMPTY | PCRE2_SUBSTITUTE_OVERFLOW_LENGTH, NULL, NULL,
                               (const uint8_t *)rules->r[i].repl, PCRE2_ZERO_TERMINATED, out, &outlen);
         if (rc == PCRE2_ERROR_NOMEMORY) {  // outlen now holds the size needed
             free(out);
             cap = outlen + 1;
             out = malloc(cap);
             outlen = cap;
-            rc = p_substitute(rules->r[i].re, (const uint8_t *)cur, PCRE2_ZERO_TERMINATED, 0, PCRE2_SUBSTITUTE_GLOBAL,
+            rc = p_substitute(rules->r[i].re, (const uint8_t *)cur, PCRE2_ZERO_TERMINATED, 0, PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_UNSET_EMPTY,
                               NULL, NULL, (const uint8_t *)rules->r[i].repl, PCRE2_ZERO_TERMINATED, out, &outlen);
         }
         if (rc > 0) {  // rc = number of replacements
@@ -273,11 +277,15 @@ char *cv_rules_apply_mapped(const CvRules *rules, const char *text, const int32_
                 uint8_t rep[1024];
                 size_t rl = sizeof rep;
                 if (p_substitute(rules->r[i].re, (const uint8_t *)cur.s, cur.n, ms,
-                                 PCRE2_SUBSTITUTE_MATCHED | PCRE2_SUBSTITUTE_REPLACEMENT_ONLY, md, NULL,
+                                 PCRE2_SUBSTITUTE_MATCHED | PCRE2_SUBSTITUTE_REPLACEMENT_ONLY | PCRE2_SUBSTITUTE_UNSET_EMPTY, md, NULL,
                                  (const uint8_t *)rules->r[i].repl, PCRE2_ZERO_TERMINATED, rep, &rl) < 0) break;
                 mput(&out, cur.s + copied, ms - copied, cur.m + copied, 0);
-                // the replacement stands for the text it replaced: map it there
-                mput(&out, (const char *)rep, rl, NULL, ms < cur.n ? cur.m[ms] : (cur.n ? cur.m[cur.n - 1] : 0));
+                // the replacement stands for the text it replaced: map it there, its last byte to the replaced
+                // text's last, so a word it rewrote keeps its length (SAPI's word events)
+                int32_t first = ms < cur.n ? cur.m[ms] : (cur.n ? cur.m[cur.n - 1] : 0);
+                int32_t last = me > ms && me - 1 < cur.n ? cur.m[me - 1] : first;
+                if (rl > 1) mput(&out, (const char *)rep, rl - 1, NULL, first);
+                if (rl > 0) mput(&out, (const char *)rep + rl - 1, 1, NULL, rl > 1 ? last : first);
                 copied = me;
                 changed = 1;
                 if (me > ms) pos = me;
@@ -305,6 +313,59 @@ char *cv_rules_apply_mapped(const CvRules *rules, const char *text, const int32_
     else free(cur.m);
     return cur.s;
 }
+
+// ------------------------------------------------- rule sets made elsewhere
+
+int cv_rules_available(void) {
+    pthread_mutex_lock(&g_mu);
+    int ok = load_pcre();
+    pthread_mutex_unlock(&g_mu);
+    return ok;
+}
+
+CvRules *cv_rules_new(void) {
+    CvRules *rs = calloc(1, sizeof *rs);
+    rs->index = vx_rule_index_new();
+    pthread_mutex_init(&rs->mu, NULL);
+    return rs;
+}
+
+void cv_rules_add(CvRules *rs, const char *pattern, int caseless, const char *pcre2_template) {
+    if (rs->n % 256 == 0) rs->r = realloc(rs->r, (rs->n + 256) * sizeof *rs->r);
+    Rule *r = &rs->r[rs->n];
+    memset(r, 0, sizeof *r);
+    r->pat = strdup(pattern);
+    r->opts = PCRE2_UTF | PCRE2_UCP | (caseless ? PCRE2_CASELESS : 0);
+    r->repl = strdup(pcre2_template);
+    vx_rule_index_add(rs->index, (uint32_t)rs->n, r->pat, caseless);
+    rs->n++;
+}
+
+#ifndef PCRE2_ANCHORED
+#define PCRE2_ANCHORED 0x80000000u
+#endif
+#ifndef PCRE2_ENDANCHORED
+#define PCRE2_ENDANCHORED 0x20000000u
+#endif
+
+int cv_regex_full_match(const char *pattern, int caseless, const char *text) {
+    if (!load_pcre() || !p_match || !p_md_create || !p_md_free || !pattern || !text) return 0;
+    int err;
+    size_t erroff;
+    pcre2_code *re = p_compile((const uint8_t *)pattern, strlen(pattern),
+                               PCRE2_UTF | PCRE2_UCP | PCRE2_ANCHORED | PCRE2_ENDANCHORED | (caseless ? PCRE2_CASELESS : 0),
+                               &err, &erroff, NULL);
+    if (!re) return 0;
+    pcre2_match_data *md = p_md_create(re, NULL);
+    int ok = md && p_match(re, (const uint8_t *)text, strlen(text), 0, 0, md, NULL) >= 0;
+    if (md) p_md_free(md);
+    if (p_code_free) p_code_free(re);  // (a library without it: a few bytes per call, choices only)
+    return ok;
+}
+
+int cv_rules_compiles(CvRules *rs, size_t i) { return i < rs->n && rule_code(rs, i) != NULL; }
+
+size_t cv_rules_count(const CvRules *rs) { return rs ? rs->n : 0; }
 
 // ---------------------------------------------------------------- per voice
 

@@ -49,6 +49,17 @@ char *cv_rules_apply(const CvRules *rules, const char *text);
 // otherwise the text comes back unchanged.
 char *cv_rules_apply_mapped(const CvRules *rules, const char *text, const int32_t *map_in, int32_t **map_out);
 
+// A rule set built by the caller (the community dictionaries, cv_dict.c):
+// patterns in PCRE2 syntax, replacements as PCRE2 templates ($1, $$).
+// cv_rules_available says whether PCRE2 could be loaded at all.
+int cv_rules_available(void);
+CvRules *cv_rules_new(void);
+void cv_rules_add(CvRules *rules, const char *pattern, int caseless, const char *pcre2_template);
+int cv_rules_compiles(CvRules *rules, size_t i);  // compiles rule i now; 0 if it doesn't
+size_t cv_rules_count(const CvRules *rules);
+// Whether pattern (PCRE2 syntax) matches all of text (a dictionary choice's alternatives, cv_dict.c).
+int cv_regex_full_match(const char *pattern, int caseless, const char *text);
+
 #ifdef __cplusplus
 }
 #endif

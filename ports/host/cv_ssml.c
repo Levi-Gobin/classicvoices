@@ -8,6 +8,7 @@
 #include <strings.h>
 
 #include "cv_rules.h"
+#include "cv_dict.h"
 #include "vxphonemes.h"
 #include "vxstream.h"
 
@@ -66,6 +67,7 @@ typedef struct {
     const CvRules *rules;
     CvPhonemeFn phoneme;
     void *ctx;
+    const CvDict *dict;  // the community dictionary (cv_dict.h), applied before the rules; may be NULL
 } Opts;
 
 // A token that is heard: text with something in it, or phonemes.
@@ -104,7 +106,9 @@ static void finish(Seg *s, const Opts *o, CvUtterance *out) {
         switch (t->kind) {
         case T_TEXT: {
             for (char *p = t->text; *p; p++) if (*p == 0x1b) *p = ' ';
-            char *r = cv_rules_apply(spell ? NULL : o->rules, t->text);  // spelled text is read as it is
+            // spelled text is read as it is
+            char *r = !spell && o->dict ? cv_dict_speech_text(o->dict, o->rules, t->text, o->phoneme, o->ctx)
+                                        : cv_rules_apply(spell ? NULL : o->rules, t->text);
             puts_(&b, r);
             free(r);
             break;
@@ -314,8 +318,13 @@ static int spelled(const char *interpret_as) {
 
 void cv_parse_ssml_ex(const char *in, int base_rate, int base_pitch, int base_volume, const CvRules *rules,
                       CvPhonemeFn phoneme, void *ctx, CvUtterance *out) {
+    cv_parse_ssml_dict(in, base_rate, base_pitch, base_volume, rules, NULL, phoneme, ctx, out);
+}
+
+void cv_parse_ssml_dict(const char *in, int base_rate, int base_pitch, int base_volume, const CvRules *rules,
+                        const CvDict *dict, CvPhonemeFn phoneme, void *ctx, CvUtterance *out) {
     memset(out, 0, sizeof *out);
-    Opts o = {rules, phoneme, ctx};
+    Opts o = {rules, phoneme, ctx, dict};
     Seg s = {0};
     s.rate = base_rate;
     s.volume = base_volume;
@@ -435,8 +444,13 @@ void cv_parse_ssml_ex(const char *in, int base_rate, int base_pitch, int base_vo
 }
 
 void cv_parse_plain(const char *in, int base_rate, int base_pitch, int base_volume, CvUtterance *out) {
+    cv_parse_plain_dict(in, base_rate, base_pitch, base_volume, NULL, NULL, NULL, NULL, out);
+}
+
+void cv_parse_plain_dict(const char *in, int base_rate, int base_pitch, int base_volume, const CvRules *rules,
+                         const CvDict *dict, CvPhonemeFn phoneme, void *ctx, CvUtterance *out) {
     memset(out, 0, sizeof *out);
-    Opts o = {0};
+    Opts o = {rules, phoneme, ctx, dict};
     Seg s = {0};
     s.rate = base_rate;
     s.volume = base_volume;

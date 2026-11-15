@@ -39,6 +39,10 @@ void vx_request_stop(Vx *vx);
 enum { VX_MARK_SENTENCE = 1, VX_MARK_WORD = 2, VX_MARK_BOOKMARK = 8 };
 typedef void (*VxWordCallback)(void *ctx, uint32_t kind, uint32_t text_pos, uint32_t text_len, uint32_t sample);
 void vx_set_word_callback(Vx *vx, VxWordCallback cb, void *ctx);
+// Each phoneme as the engine says it: its code (the value of its symbol in the voice's own L&H+ table) and the
+// sample, counted from the start of the call, where it begins. Stays set until changed; NULL turns it off.
+typedef void (*VxPhonemeCallback)(void *ctx, uint32_t code, uint32_t sample);
+void vx_set_phoneme_callback(Vx *vx, VxPhonemeCallback cb, void *ctx);
 
 // Load a user dictionary ("application/edct-bin-dictionary") or rule set
 // ("application/x-vocalizer-rettt+text") into the open instance, as iOS 7 and

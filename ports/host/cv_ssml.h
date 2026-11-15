@@ -53,9 +53,16 @@ void cv_parse_ssml_rules(const char *in, int base_rate, int base_pitch, int base
 // ... and phonemes through `phoneme` (NULL: each element's own text is said).
 void cv_parse_ssml_ex(const char *in, int base_rate, int base_pitch, int base_volume, const struct CvRules *rules,
                       CvPhonemeFn phoneme, void *ctx, CvUtterance *out);
+// ... and the community dictionary first (cv_dict.h; NULL: none), its phonetic spans through `phoneme`.
+struct CvDict;
+void cv_parse_ssml_dict(const char *in, int base_rate, int base_pitch, int base_volume, const struct CvRules *rules,
+                        const struct CvDict *dict, CvPhonemeFn phoneme, void *ctx, CvUtterance *out);
 // The same for text that is never markup (Android hands engines plain text,
 // which may well start with '<').
 void cv_parse_plain(const char *in, int base_rate, int base_pitch, int base_volume, CvUtterance *out);
+// ... with the dictionary and rules (as cv_parse_ssml_dict).
+void cv_parse_plain_dict(const char *in, int base_rate, int base_pitch, int base_volume, const struct CvRules *rules,
+                         const struct CvDict *dict, CvPhonemeFn phoneme, void *ctx, CvUtterance *out);
 void cv_free_utterance(CvUtterance *u);
 
 #ifdef __cplusplus

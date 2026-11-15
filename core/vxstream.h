@@ -124,6 +124,8 @@ void vxs_set_steady_pauses(VxStream *s, int on);
 // the voices themselves do; off by default, it doesn't (except iOS 3 and 4,
 // which always do). From the next utterance on.
 void vxs_set_spelling_pauses(VxStream *s, int on);
+// Spelled letters said without "capital" before them: they're lowercased first (off by default).
+void vxs_set_spell_lowercase(VxStream *s, int on);
 
 // Timing of the most recent utterance (milliseconds), for diagnostics.
 double vxs_last_first_audio_ms(VxStream *s);

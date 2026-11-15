@@ -118,6 +118,8 @@ struct Vx {
     void *cb_ctx;
     VxWordCallback word_cb;
     void *word_ctx;
+    VxPhonemeCallback phon_cb;
+    void *phon_ctx;
     int cancelled;
     _Atomic int stop_req;  // vx_request_stop, from another thread
     int stop_sent;
@@ -1355,17 +1357,19 @@ static void outnotify(Vx *vx) {
         // Markers before this buffer's audio. VE_MARKINFO is 40 bytes here:
         // {?, type, src pos, src len (bytes of the UTF-16 input), dest pos
         // (samples into the utterance), dest len, phoneme, bookmark id, ...};
-        // type 1 = sentence, 2 = word, 8 = bookmark.
+        // type 1 = sentence, 2 = word, 4 = phoneme (its code at +24), 8 = bookmark.
         uint32_t mc = g32(&vx->cpu.k, param + 12), mp = g32(&vx->cpu.k, param + 16);
-        if (vx->word_cb && mp && !vx->cancelled) {
+        if ((vx->word_cb || vx->phon_cb) && mp && !vx->cancelled) {
             if (mc > MARK_SLOTS) mc = MARK_SLOTS;
             check_range(vx, mp, mc * MARK_SIZE);
             for (uint32_t i = 0; i < mc; i++) {
                 uint32_t q = mp + i * MARK_SIZE;
                 uint32_t type = g32(&vx->cpu.k, q + 4);
-                if (type == VX_MARK_SENTENCE || type == VX_MARK_WORD || type == VX_MARK_BOOKMARK)
+                if (vx->word_cb && (type == VX_MARK_SENTENCE || type == VX_MARK_WORD || type == VX_MARK_BOOKMARK))
                     vx->word_cb(vx->word_ctx, type, g32(&vx->cpu.k, q + 8) / 2, g32(&vx->cpu.k, q + 12) / 2,
                                 g32(&vx->cpu.k, q + 16));
+                else if (vx->phon_cb && type == 4)
+                    vx->phon_cb(vx->phon_ctx, g32(&vx->cpu.k, q + 24) & 255, g32(&vx->cpu.k, q + 16));
             }
         }
         if (n && p && vx->cb && !vx->cancelled) {
@@ -1694,6 +1698,11 @@ int vx_load_resource(Vx *vx, const char *mime, const void *data, size_t len) {
     UNGUARD(vx);
     if (rc) snprintf(vx->err, sizeof vx->err, "ttsResourceLoad %s failed: %#x", mime, rc);
     return (int)rc;
+}
+
+void vx_set_phoneme_callback(Vx *vx, VxPhonemeCallback cb, void *ctx) {
+    vx->phon_cb = cb;
+    vx->phon_ctx = ctx;
 }
 
 void vx_set_word_callback(Vx *vx, VxWordCallback cb, void *ctx) {
