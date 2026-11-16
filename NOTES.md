@@ -2444,7 +2444,8 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
 ## Dictionary editor, own entries, publishing with git (2026-11-14, Nico's design, uncommitted)
 
 - Layers (ports/host/cv_dict.c, CommunityDictionary.swift): Dictionaries/Mine/<file> holds the person's own
-  entries (NVDA .dic format), used first and even with the community switch off; Mine/<file>.removed lists
+  entries (NVDA .dic format), used even with the community switch off (they were used first until 2026-11-16; see
+  "Entry order" below); Mine/<file>.removed lists
   fetched entries they took out (pattern TAB type). The fetched files count only when the switch is on
   (cv_dict_for_voice_ex(..., community)). Every caller now always passes the folder plus the switch (NVDA,
   SAPI, Linux speechd/cvsay, Android, the Apple extension). Local/ (a whole-file replacement) is gone.
@@ -2624,3 +2625,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   first: Samantha (all 168 en.dic spans with %, by ear), all five English voices sentence-final, and mid-
   sentence (metaphor, screenshot, exponential: the same audio as without '2); every iOS 6 voice takes '2
   as stress (nothing read out, durations the same).
+- Entry order (Levi, 2026-11-16): within each file, entries apply in the order they're written, as they will be
+  once published: the fetched file's entries in order, one the person changed in its place, one they removed left
+  out, then their own additions in their order (so an entry added to fix the output of a community one, like
+  "youtu dot be" after the dot rule, sees that output). Before, the person's entries all ran first. Files: the
+  narrower first (en-us.dic, then en.dic), an entry of a later file with an earlier file's pattern and type left
+  out, as before. ports/host/cv_dict.c build() (DictFile: path, removed, mine) and CommunityDictionary.merged();
+  tested together on the same folder (C under ASan, the Swift harness): identical.

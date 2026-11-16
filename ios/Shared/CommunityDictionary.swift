@@ -145,8 +145,9 @@ final class CommunityDictionary: @unchecked Sendable {
     nonisolated(unsafe) private static var cache: [String: CommunityDictionary] = [:]
     private static let lock = NSLock()
 
-    /// The dictionary for a voice: the person's own entries, then the fetched files when `community` is on (less
-    /// the entries the person removed); nil when there's nothing. Read again when a file changes.
+    /// The dictionary for a voice: each file the fetched one when `community` is on (less the entries the person
+    /// removed) with the person's own merged in, in written order (load); nil when there's nothing. Read again when
+    /// a file changes.
     static func forVoice(key: String, language: String, community: Bool) -> CommunityDictionary? {
         guard let dir = folder, !editing else { return nil }
         let fm = FileManager.default
@@ -157,25 +158,25 @@ final class CommunityDictionary: @unchecked Sendable {
             return "\(u.path):\(attrs[.size] ?? 0):\((attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)|"
         }
         let names = names(voiceKey: key, language: language)
-        for layer in 0..<(community ? 2 : 1) {
-            for name in names {
-                let mine = dir.appendingPathComponent("Mine").appendingPathComponent(name)
-                let file = layer == 0 ? mine : dir.appendingPathComponent(name)
-                guard let st = stamp(file) else { continue }
+        for name in names {
+            let mine = dir.appendingPathComponent("Mine").appendingPathComponent(name)
+            var file: URL?, removed: URL?, own: URL?
+            if let st = stamp(mine) { own = mine; id += st }
+            if community, let st = stamp(dir.appendingPathComponent(name)) {
+                file = dir.appendingPathComponent(name)
                 id += st
-                var removed: URL?
-                if layer == 1 {
-                    let r = mine.appendingPathExtension("removed")
-                    if let rs = stamp(r) { removed = r; id += "-" + rs }
-                }
-                files.append(DictFile(url: file, removed: removed))
+                let r = mine.appendingPathExtension("removed")
+                if let rs = stamp(r) { removed = r; id += "-" + rs }
             }
+            if file != nil || own != nil { files.append(DictFile(url: file, removed: removed, mine: own)) }
         }
         guard !files.isEmpty else { return nil }
-        let sig = files.map(\.url.path).joined(separator: "|")
+        let sig = files.map { ($0.url ?? $0.mine!).path + ($0.mine != nil ? "+" : "") }.joined(separator: "|")
         lock.lock()
         if let hit = cache[id] { lock.unlock(); return hit }
-        let total = files.reduce(0) { $0 + ((try? fm.attributesOfItem(atPath: $1.url.path)[.size] as? Int) ?? 0) }
+        let total = files.reduce(0) { sum, f in
+            sum + [f.url, f.mine].compactMap { $0 }.reduce(0) { $0 + ((try? fm.attributesOfItem(atPath: $1.path)[.size] as? Int) ?? 0) }
+        }
         if total > syncBytes || latest[sig] != nil {
             // Speech never waits for a big dictionary (50,000 entries: well over 100 ms to read), nor for a changed
             // one: it loads in the background, the voice speaking with the earlier copy, or without, until then.
@@ -201,8 +202,9 @@ final class CommunityDictionary: @unchecked Sendable {
     nonisolated(unsafe) private static var latest: [String: CommunityDictionary] = [:]
     nonisolated(unsafe) private static var loading = Set<String>()
 
-    /// A file of a dictionary, and for a fetched one the list of its entries the person removed.
-    private struct DictFile { let url: URL; let removed: URL? }
+    /// A file of a dictionary: the fetched one (nil with the community dictionaries off, or none), the entries of it
+    /// the person removed, and the person's own (Mine/<file>).
+    private struct DictFile { let url: URL?; let removed: URL?; let mine: URL? }
 
     /// A dictionary from text in the same format (trying one entry out in the editor).
     static func fromText(_ text: String) -> CommunityDictionary {
@@ -220,7 +222,8 @@ final class CommunityDictionary: @unchecked Sendable {
         var narrower = Set<String>()  // pattern + type of the files read so far
         var choices: [Int: SpanChoices] = [:]
         for file in files {
-            guard let text = try? String(contentsOf: file.url, encoding: .utf8) else { continue }
+            let fetched = file.url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+            let own = file.mine.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
             var removed = Set<String>()  // type TAB pattern
             if let r = file.removed, let rt = try? String(contentsOf: r, encoding: .utf8) {
                 for l in rt.split(whereSeparator: \.isNewline) {
@@ -228,9 +231,40 @@ final class CommunityDictionary: @unchecked Sendable {
                     if let p = f.first, !p.isEmpty { removed.insert("\(f.count > 1 ? Int(f[1]) ?? 0 : 0)\t\(p)") }
                 }
             }
-            add(text, removed: removed, entries: &entries, ipa: &ipa, choices: &choices, narrower: &narrower)
+            add(merged(fetched, own, removed: removed), removed: [], entries: &entries, ipa: &ipa, choices: &choices,
+                narrower: &narrower)
         }
         return CommunityDictionary(entries: entries, ipa: ipa, choices: choices)
+    }
+
+    /// The entry's key (type TAB pattern), nil for comments, blank and bad lines.
+    private static func lineKey(_ line: Substring) -> String? {
+        let l = line.hasPrefix("\u{FEFF}") ? line.dropFirst() : line
+        if l.isEmpty || l.hasPrefix("#") { return nil }
+        let f = l.split(separator: "\t", omittingEmptySubsequences: false)
+        guard f.count >= 2, !f[0].isEmpty else { return nil }
+        return "\(f.count > 3 ? Int(f[3]) ?? 0 : 0)\t\(f[0])"
+    }
+
+    /// One file's entries in the order they're written, as they'll be once the person's changes are published
+    /// (Levi, 2026-11-16): the fetched ones in order, one the person changed in its place, one they removed left
+    /// out, then the person's own additions in their order (ports/host/cv_dict.c does the same).
+    static func merged(_ fetched: String, _ own: String, removed: Set<String>) -> String {
+        var mine: [(key: String?, line: Substring)] = own.split(whereSeparator: \.isNewline).map { (lineKey($0), $0) }
+        var out: [Substring] = []
+        for line in fetched.split(whereSeparator: \.isNewline) {
+            guard let k = lineKey(line) else { continue }
+            if removed.contains(k) { continue }
+            if let j = mine.firstIndex(where: { $0.key == k }) {
+                out.append(mine[j].line)  // the person's version, in its place
+                mine[j].key = nil
+                mine[j].line = ""
+            } else {
+                out.append(line)
+            }
+        }
+        out += mine.filter { $0.key != nil }.map(\.line)
+        return out.joined(separator: "\n")
     }
 
     /// One file's entries into a dictionary being built: an entry an earlier file has (same pattern and type), or

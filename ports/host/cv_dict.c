@@ -311,10 +311,11 @@ static Entry *read_entries(const char *text, size_t *count) {
 
 static int file_exists(const char *path, struct stat *st) { return stat(path, st) == 0 && S_ISREG(st->st_mode); }
 
-// One file of a dictionary: its path, and for a fetched file the list of its entries the person removed
-// (Mine/<file>.removed: pattern TAB type per line; "" for none).
+// One file of a dictionary: the fetched one (path, "" when the community dictionaries are off or there's none), the
+// person's own (mine: Mine/<file>, "" for none) and the fetched entries they removed (Mine/<file>.removed: pattern
+// TAB type per line; "" for none).
 #define MAXF 4
-typedef struct { char path[1400], removed[1400]; } DictFile;
+typedef struct { char path[1400], removed[1400], mine[1400]; } DictFile;
 
 static int removed_has(const char *text, const Entry *e) {
     if (!text) return 0;
@@ -354,8 +355,21 @@ static void add_entries(CvDict *d, Entry *e, size_t n, const char *removed, Entr
     }
 }
 
+static Entry *read_file_entries(const char *path, size_t *n) {
+    *n = 0;
+    char *text = path[0] ? slurp(path, NULL) : NULL;
+    if (!text) return NULL;
+    Entry *e = read_entries(text, n);
+    free(text);
+    return e;
+}
+
+static void free_entry(Entry *e) { free(e->pat); free(e->rep); }
+
 // A dictionary from its files, the first winning (an entry of a later file with the same pattern and type as one
-// of an earlier file is left out).
+// of an earlier file is left out). Within a file, the entries apply in the order they're written, as they will be
+// once the person's changes are published (Levi, 2026-11-16): the fetched entries in order, one the person changed
+// in its place, one they removed left out, then the person's own additions in their order.
 static CvDict *build(const DictFile *files, int np, const char *key) {
     CvDict *d = calloc(1, sizeof *d);
     snprintf(d->key, sizeof d->key, "%s", key);
@@ -363,15 +377,27 @@ static CvDict *build(const DictFile *files, int np, const char *key) {
     Entry *seen = NULL;
     size_t nseen = 0, capseen = 0;
     for (int f = 0; f < np; f++) {
-        char *text = slurp(files[f].path, NULL);
-        if (!text) continue;
+        size_t cn, mn;
+        Entry *ce = read_file_entries(files[f].path, &cn), *me = read_file_entries(files[f].mine, &mn);
         char *removed = files[f].removed[0] ? slurp(files[f].removed, NULL) : NULL;
-        size_t n;
-        Entry *e = read_entries(text, &n);
-        free(text);
-        add_entries(d, e, n, removed, &seen, &nseen, &capseen);
+        Entry *m = malloc((cn + mn + 1) * sizeof *m);
+        char *used = calloc(mn + 1, 1);
+        size_t k = 0;
+        for (size_t i = 0; i < cn; i++) {
+            if (removed_has(removed, &ce[i])) { free_entry(&ce[i]); continue; }
+            size_t j = 0;
+            while (j < mn && (used[j] || me[j].type != ce[i].type || strcmp(me[j].pat, ce[i].pat))) j++;
+            if (j < mn) { m[k++] = me[j]; used[j] = 1; free_entry(&ce[i]); }  // the person's version, in its place
+            else m[k++] = ce[i];
+        }
+        for (size_t j = 0; j < mn; j++)
+            if (!used[j]) m[k++] = me[j];
+        add_entries(d, m, k, NULL, &seen, &nseen, &capseen);
+        free(m);
+        free(used);
         free(removed);
-        free(e);
+        free(ce);
+        free(me);
     }
     for (size_t j = 0; j < nseen; j++) { free(seen[j].pat); free(seen[j].rep); }
     free(seen);
@@ -476,38 +502,45 @@ const CvDict *cv_dict_for_voice_ex(const char *dir, const char *voice_key, const
         char *dash = strchr(l, '-');
         if (dash) { *dash = 0; snprintf(names[nn++], sizeof names[0], "%s.dic", l); }
     }
-    // the person's own entries first (Mine/), then the fetched files when the community switch is on, less the
-    // entries the person removed from them
+    // each file: the fetched one when the community switch is on (less the entries the person removed), with the
+    // person's own (Mine/) merged in; their own entries work with the switch off too
     DictFile files[MAXF];
     char key[4096] = "";
     int np = 0;
     long long total = 0;
-    for (int layer = 0; layer < 2; layer++) {
-        if (layer == 1 && !community) break;
-        for (int i = 0; i < nn; i++) {
-            struct stat st, rst;
-            DictFile *f = &files[np];
-            f->removed[0] = 0;
-            if (layer == 0) snprintf(f->path, sizeof f->path, "%s/Mine/%s", dir, names[i]);
-            else snprintf(f->path, sizeof f->path, "%s/%s", dir, names[i]);
-            if (!file_exists(f->path, &st)) continue;
-            char part[3000];
-            snprintf(part, sizeof part, "%s:%lld:%lld|", f->path, (long long)st.st_size, (long long)st.st_mtime);
-            if (layer == 1) {
-                snprintf(f->removed, sizeof f->removed, "%s/Mine/%s.removed", dir, names[i]);
-                if (file_exists(f->removed, &rst)) {
-                    size_t pl = strlen(part);
-                    snprintf(part + pl, sizeof part - pl, "-%lld:%lld|", (long long)rst.st_size, (long long)rst.st_mtime);
-                } else f->removed[0] = 0;
-            }
+    for (int i = 0; i < nn && np < MAXF; i++) {
+        struct stat st;
+        DictFile *f = &files[np];
+        f->path[0] = f->removed[0] = f->mine[0] = 0;
+        char part[3000] = "";
+        snprintf(f->mine, sizeof f->mine, "%s/Mine/%s", dir, names[i]);
+        if (file_exists(f->mine, &st)) {
+            snprintf(part, sizeof part, "%s:%lld:%lld|", f->mine, (long long)st.st_size, (long long)st.st_mtime);
             total += (long long)st.st_size;
-            strncat(key, part, sizeof key - strlen(key) - 1);
-            np++;
+        } else f->mine[0] = 0;
+        if (community) {
+            snprintf(f->path, sizeof f->path, "%s/%s", dir, names[i]);
+            if (file_exists(f->path, &st)) {
+                size_t pl = strlen(part);
+                snprintf(part + pl, sizeof part - pl, "%s:%lld:%lld|", f->path, (long long)st.st_size, (long long)st.st_mtime);
+                total += (long long)st.st_size;
+                snprintf(f->removed, sizeof f->removed, "%s/Mine/%s.removed", dir, names[i]);
+                if (file_exists(f->removed, &st)) {
+                    pl = strlen(part);
+                    snprintf(part + pl, sizeof part - pl, "-%lld:%lld|", (long long)st.st_size, (long long)st.st_mtime);
+                } else f->removed[0] = 0;
+            } else f->path[0] = 0;
         }
+        if (!f->path[0] && !f->mine[0]) continue;
+        strncat(key, part, sizeof key - strlen(key) - 1);
+        np++;
     }
     if (!np || !cv_rules_available()) return NULL;
     char sig[MAXF * 1400 + 8] = "";  // the files, whatever their contents
-    for (int i = 0; i < np; i++) { strncat(sig, files[i].path, sizeof sig - strlen(sig) - 2); strcat(sig, "|"); }
+    for (int i = 0; i < np; i++) {
+        strncat(sig, files[i].path[0] ? files[i].path : files[i].mine, sizeof sig - strlen(sig) - 2);
+        strcat(sig, files[i].mine[0] ? "+|" : "|");
+    }
     pthread_mutex_lock(&g_mu);
     for (size_t i = 0; i < g_ndicts; i++)
         if (!strcmp(g_dicts[i]->key, key)) { pthread_mutex_unlock(&g_mu); return g_dicts[i]; }
