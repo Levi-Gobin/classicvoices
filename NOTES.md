@@ -2632,3 +2632,11 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   narrower first (en-us.dic, then en.dic), an entry of a later file with an earlier file's pattern and type left
   out, as before. ports/host/cv_dict.c build() (DictFile: path, removed, mine) and CommunityDictionary.merged();
   tested together on the same folder (C under ASan, the Swift harness): identical.
+- Previews (Levi, 2026-11-16): the entry alone (Preview), with the entries before it (Preview with Earlier
+  Entries) or with the whole file (Preview with All Entries), in the order the voice applies them, the draft in
+  the place of the entry it edits (a new one last); community entries only with the switch on
+  (DictionaryStore.previewEntries). iPhone/iPad: actions on each row and on the sheet's Preview button; Mac: actions
+  on the entry list's rows and on the entry page's Preview button. Preview buttons have the startsMediaSession
+  trait, so VoiceOver doesn't speak or click when they start; actions-menu items can't be silenced that way (no
+  traits on custom actions).
+

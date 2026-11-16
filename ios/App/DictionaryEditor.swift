@@ -284,13 +284,30 @@ struct DictionariesTab: View {
             }
             PageSection(rows.isEmpty ? "No entries yet" : "Entries") {
                 ForEach(rows) { row in
+                    let canPreview = !voices(for: file).isEmpty && row.entry.type != 1 && row.origin != .removed
                     OpenButton(title: row.entry.pattern,
                                detail: "\(row.entry.replacement) · \(Self.typeName(row.entry.type))\(row.entry.caseSensitive ? ", case sensitive" : "") · \(Self.whose(row.origin))") {
                         open(.entry(file, row.entry.key))
                     }
+                    .accessibilityActions {
+                        if canPreview {
+                            Button("Preview") { previewRow(file, row.entry, .alone) }
+                            Button("Preview with Earlier Entries") { previewRow(file, row.entry, .earlier) }
+                            Button("Preview with All Entries") { previewRow(file, row.entry, .all) }
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// An entry of the list said with its pattern as the test text (alone, with the entries before it, or with all).
+    private func previewRow(_ file: String, _ e: DictionaryStore.Entry, _ scope: DictionaryStore.PreviewScope) {
+        guard let v = voices(for: file).first, let key = v.entry?.key else { return }
+        let entries = DictionaryStore.previewEntries(file, entry: e, replacing: nil,
+                                                     community: library.settings.communityDictionaries, scope: scope)
+        DirectPlayer.shared.tryOut(e.pattern, entries: entries, voiceKey: key, language: v.language, rules: library.rules(for: v),
+                                   rulesPack: library.rulesPack(for: v), settings: library.settings)
     }
 
     static func typeName(_ t: Int) -> String { t == 1 ? "regular expression" : t == 2 ? "whole word" : "anywhere" }
@@ -351,7 +368,13 @@ private struct EntryPage: View {
                     }
                 }
                 // (without the entry: VoiceOver reads it so, the voices using no dictionary while this tab is open)
-                Button("Preview") { hear(withEntry: true) }.disabled(voices.isEmpty)
+                // a media session: VoiceOver stays quiet as it starts, so the voice is heard; the other two are its actions
+                Button("Preview") { hear(.alone) }.disabled(voices.isEmpty)
+                    .accessibilityAddTraits(.startsMediaSession)
+                    .accessibilityActions {
+                        Button("Preview with Earlier Entries") { hear(.earlier) }
+                        Button("Preview with All Entries") { hear(.all) }
+                    }
                 if voices.isEmpty {
                     Text("No voice of this language is built into the app to try it with.").foregroundStyle(.secondary)
                 }
@@ -421,12 +444,16 @@ private struct EntryPage: View {
             : "Converted \(r.done) words; \(r.left) stayed as they were").post()
     }
 
-    private func hear(withEntry: Bool) {
+    /// Says the test text with the entry alone, with the entries before it, or with the whole file, in the order the
+    /// voice applies them (the draft in the place of the entry it edits).
+    private func hear(_ scope: DictionaryStore.PreviewScope) {
         guard let v = voices.first(where: { $0.entry?.key == draft.voiceKey }), let key = v.entry?.key else { return }
         let text = draft.test.isEmpty ? draft.pattern : draft.test
         guard !text.isEmpty else { return }
         let e = draft.entry
-        DirectPlayer.shared.tryOut(text, entries: withEntry && !e.pattern.isEmpty ? e.line : "", voiceKey: key,
+        let entries = e.pattern.isEmpty ? "" : DictionaryStore.previewEntries(file, entry: e, replacing: draft.savedKey ?? self.key,
+                                                                              community: library.settings.communityDictionaries, scope: scope)
+        DirectPlayer.shared.tryOut(text, entries: entries, voiceKey: key,
                                    language: v.language, rules: library.rules(for: v), rulesPack: library.rulesPack(for: v),
                                    settings: library.settings)
     }

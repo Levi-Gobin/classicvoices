@@ -169,6 +169,28 @@ enum DictionaryStore {
         return out
     }
 
+    /// What a preview runs: the entry alone, with the entries before it, or with the whole file around it.
+    enum PreviewScope { case alone, earlier, all }
+
+    /// The entries a preview of `entry` runs, as .dic text, in the order the voice applies them (rows: the fetched
+    /// entries in order, the person's changes in place, removed ones left out, their additions last): the entry
+    /// takes the place of the one it replaces (`oldKey`, or its own key), a new one goes at the end. The fetched
+    /// entries count only when `community` is on, as for the voice.
+    static func previewEntries(_ name: String, entry: Entry, replacing oldKey: String?, community: Bool,
+                               scope: PreviewScope) -> String {
+        if scope == .alone { return entry.line }
+        var list = rows(name).filter { $0.origin != .removed && (community || $0.origin != .community) }.map(\.entry)
+        let keys = Set([oldKey, entry.key].compactMap { $0 })
+        if let i = list.firstIndex(where: { keys.contains($0.key) }) {
+            list[i] = entry
+            list = list.enumerated().filter { $0.offset == i || !keys.contains($0.element.key) }.map(\.element)
+        } else {
+            list.append(entry)
+        }
+        let at = list.firstIndex { $0.key == entry.key } ?? list.count - 1
+        return (scope == .earlier ? Array(list[...at]) : list).map(\.line).joined(separator: "\n")
+    }
+
     /// Every dictionary file there is, fetched or the person's.
     static func fileNames() -> [String] {
         var out = Set<String>()

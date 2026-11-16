@@ -46,7 +46,7 @@ struct MobileDictionariesTab: View {
                     ForEach(shown) { row in
                         MobileEntryRow(row: row, canPreview: !voices.isEmpty && row.entry.type != 1,
                                        edit: { editing = EditTarget(row: row) },
-                                       preview: { preview(row.entry) },
+                                       preview: { preview(row.entry, $0) },
                                        remove: { change("Removed") { DictionaryStore.remove(file, key: row.entry.key) } },
                                        restore: { change("Restored") { DictionaryStore.restore(file, key: row.entry.key) } })
                     }
@@ -96,9 +96,11 @@ struct MobileDictionariesTab: View {
         AccessibilityNotification.Announcement(said).post()
     }
 
-    private func preview(_ e: DictionaryStore.Entry) {
+    private func preview(_ e: DictionaryStore.Entry, _ scope: DictionaryStore.PreviewScope) {
         guard let v = voices.first, let key = v.entry?.key else { return }
-        DirectPlayer.shared.tryOut(e.pattern, entries: e.line, voiceKey: key, language: v.language,
+        let entries = DictionaryStore.previewEntries(file, entry: e, replacing: nil,
+                                                     community: library.settings.communityDictionaries, scope: scope)
+        DirectPlayer.shared.tryOut(e.pattern, entries: entries, voiceKey: key, language: v.language,
                                    rules: library.rules(for: v), rulesPack: library.rulesPack(for: v), settings: library.settings)
     }
 
@@ -113,12 +115,13 @@ struct MobileDictionariesTab: View {
     }
 }
 
-/// One entry: double-tap edits; Preview, Remove and Restore the community's as actions.
+/// One entry: double-tap edits; Preview (alone, with the entries before it, with all), Remove and Restore the
+/// community's as actions.
 private struct MobileEntryRow: View {
     let row: DictionaryStore.Row
     let canPreview: Bool
     let edit: () -> Void
-    let preview: () -> Void
+    let preview: (DictionaryStore.PreviewScope) -> Void
     let remove: () -> Void
     let restore: () -> Void
 
@@ -142,13 +145,17 @@ private struct MobileEntryRow: View {
             if row.origin == .changed || row.origin == .removed { Button("Restore", action: restore).tint(.green) }
         }
         .swipeActions(edge: .leading) {
-            if canPreview { Button("Preview", action: preview).tint(.blue) }
+            if canPreview { Button("Preview") { preview(.alone) }.tint(.blue) }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.entry.pattern), replaced by \(replacement), \(DictionariesTab.whose(row.origin))")
         .accessibilityAddTraits(.isButton)
         .accessibilityActions {
-            if canPreview { Button("Preview", action: preview) }
+            if canPreview {
+                Button("Preview") { preview(.alone) }
+                Button("Preview with Earlier Entries") { preview(.earlier) }
+                Button("Preview with All Entries") { preview(.all) }
+            }
             if row.origin != .removed { Button("Remove", action: remove) }
             if row.origin == .changed || row.origin == .removed { Button("Restore the Community’s", action: restore) }
         }
@@ -213,10 +220,16 @@ private struct MobileEntrySheet: View {
                             ForEach(voices) { v in Text("\(v.name), \(v.version.menuName)").tag(v.entry?.key ?? "") }
                         }
                     }
-                    Button("Preview", action: preview).disabled(voices.isEmpty)
+                    // starts a media session: VoiceOver stays silent (no "Preview", no tap sound) so the voice is heard
+                    Button("Preview") { preview(.alone) }.disabled(voices.isEmpty)
+                        .accessibilityAddTraits(.startsMediaSession)
+                        .accessibilityActions {
+                            Button("Preview with Earlier Entries") { preview(.earlier) }
+                            Button("Preview with All Entries") { preview(.all) }
+                        }
                 } footer: {
                     Text(voices.isEmpty ? "No voice of this language is built into the app to preview with."
-                                        : "Says the test text with this entry. Without it, any text is read as the voice says it, since the voices use no dictionary while this tab is open.")
+                                        : "Says the test text with this entry. Its actions also preview it with the entries before it, or with the whole dictionary, in the order the voice uses them. Without it, any text is read as the voice says it, since the voices use no dictionary while this tab is open.")
                 }
                 if let problem {
                     Section { Text(problem).foregroundStyle(.red) }
@@ -264,12 +277,14 @@ private struct MobileEntrySheet: View {
             : "Converted \(r.done) words; \(r.left) stayed as they were").post()
     }
 
-    private func preview() {
+    private func preview(_ scope: DictionaryStore.PreviewScope) {
         guard let v = voice, let key = v.entry?.key else { return }
         let text = test.isEmpty ? pattern : test
         guard !text.isEmpty else { return }
         let e = entry
-        DirectPlayer.shared.tryOut(text, entries: e.pattern.isEmpty ? "" : e.line, voiceKey: key, language: v.language,
+        let entries = e.pattern.isEmpty ? "" : DictionaryStore.previewEntries(file, entry: e, replacing: row?.entry.key,
+                                                                              community: library.settings.communityDictionaries, scope: scope)
+        DirectPlayer.shared.tryOut(text, entries: entries, voiceKey: key, language: v.language,
                                    rules: library.rules(for: v), rulesPack: library.rulesPack(for: v), settings: library.settings)
     }
 
