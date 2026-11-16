@@ -70,6 +70,28 @@ It asks what to build. On Windows you can build the iPhone app and the NVDA add-
 browser (the one-time code is copied for you), makes your own copy of this
 repository, builds there, and reads out each step as it finishes. It takes about an hour and a quarter (another hour for the Apple Vision Pro app).
 
+#### The development version
+To try changes that aren't released yet, build from the development (`dev`)
+branch instead. Expect rough edges.
+
+On Windows, in PowerShell:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Levi-Gobin/classicvoices/dev/classicvoices.ps1))) --dev
+```
+
+On a Mac, in Terminal:
+
+```sh
+bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/dev/classicvoices.sh) --dev
+```
+
+Your copy of the repository gets a `dev` branch matching this one's, and the
+build runs there. Running the normal command later goes back to building the
+release. The NVDA add-on, the Windows app, Linux and Android also have ready-made
+development builds on the
+[development builds page](https://github.com/Levi-Gobin/classicvoices/releases/tag/dev-latest).
+
 ## When the build finishes
 
 ### Windows

@@ -11,6 +11,12 @@
 # can also build the Apple Vision Pro app.
 # Running it again later updates your copy and builds the newest version.
 #
+# --dev builds the development version (the dev branch: changes not released yet) instead:
+#
+#   bash <(curl -fsSL https://raw.githubusercontent.com/Levi-Gobin/classicvoices/dev/classicvoices.sh) --dev
+#
+# (CLASSICVOICES_DEV=1 does the same.) Without a dev branch it builds the release.
+#
 # Everything it prints is plain lines, so it reads well with VoiceOver.
 set -euo pipefail
 
@@ -21,6 +27,14 @@ OUT="$HOME/Downloads"
 
 say() { printf '%s\n' "$*"; }
 fail() { say "Stopped: $*" >&2; exit 1; }
+
+DEV=${CLASSICVOICES_DEV:-}
+for arg in "$@"; do
+    case "$arg" in
+        --dev) DEV=1 ;;
+        *) fail "unknown option $arg (the only one is --dev, for the development version)." ;;
+    esac
+done
 
 # --- GitHub's command line tool, kept in ~/.classicvoices ------------------
 gh_tool() {
@@ -101,6 +115,29 @@ else
     fi
 fi
 
+# --- The development version (--dev) -----------------------------------------
+# Your copy gets a dev branch matching Classic Voices' own (it only ever holds build files, so it's simply
+# moved to the same commit), and the build runs on it.
+REF=""
+if [ -n "$DEV" ]; then
+    DEVSHA=$(gh api "repos/$UPSTREAM/git/ref/heads/dev" --jq .object.sha 2>/dev/null) || DEVSHA=""
+    if [ -z "$DEVSHA" ]; then
+        say "Classic Voices has no development version right now, so the released version is built."
+    else
+        say "Building the development version: changes that aren't released yet, so expect rough edges."
+        if [ "$REPO" != "$UPSTREAM" ]; then
+            if gh api "repos/$REPO/git/ref/heads/dev" >/dev/null 2>&1; then
+                gh api -X PATCH "repos/$REPO/git/refs/heads/dev" -f sha="$DEVSHA" -F force=true >/dev/null \
+                    || fail "couldn't update the dev branch of $REPO."
+            else
+                gh api -X POST "repos/$REPO/git/refs" -f ref=refs/heads/dev -f sha="$DEVSHA" >/dev/null \
+                    || fail "couldn't add the dev branch to $REPO."
+            fi
+        fi
+        REF=dev
+    fi
+fi
+
 # GitHub turns workflows off in new copies; turn this one on.
 gh api -X PUT "repos/$REPO/actions/permissions" -F enabled=true -f allowed_actions=all >/dev/null 2>&1 || true
 gh workflow enable "$WORKFLOW" -R "$REPO" >/dev/null 2>&1 || true
@@ -112,7 +149,7 @@ printf '%s' "$PASSWORD" | gh secret set IPA_PASSWORD -R "$REPO" >/dev/null || fa
 
 # --- Build -------------------------------------------------------------------
 STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-gh workflow run "$WORKFLOW" -R "$REPO" -f targets="$TARGETS" >/dev/null 2>&1 \
+gh workflow run "$WORKFLOW" -R "$REPO" ${REF:+--ref "$REF"} -f targets="$TARGETS" >/dev/null 2>&1 \
     || fail "couldn't start the build. Open https://github.com/$REPO/actions, turn workflows on if asked, and run this again."
 say "Build started. It takes about half an hour; you'll hear each step as it finishes."
 RUN=""

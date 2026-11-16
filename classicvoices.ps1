@@ -10,6 +10,13 @@
 # iPhone app. Running it again later updates your copy and builds the newest
 # version.
 #
+# The development version (the dev branch: changes not released yet) instead:
+#
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Levi-Gobin/classicvoices/dev/classicvoices.ps1))) --dev
+#
+# ($env:CLASSICVOICES_DEV = 1 before the usual line does the same, for the rest of that window.)
+# Without a dev branch it builds the release.
+#
 # Everything it prints is plain lines, so it reads well with a screen reader.
 
 & {
@@ -24,6 +31,7 @@
 
     function Say($text) { Write-Host $text }
     function Fail($text) { throw "Stopped: $text" }
+    $dev = [bool]$env:CLASSICVOICES_DEV -or ($args -contains '--dev') -or ($args -contains '-Dev')
 
     try {
         # $env:CLASSICVOICES_TARGETS = 'iphone nvda' skips the question.
@@ -126,6 +134,30 @@
             }
         }
 
+        # --- The development version (--dev) -----------------------------------
+        # Your copy gets a dev branch matching Classic Voices' own (it only ever holds build files, so it's
+        # simply moved to the same commit), and the build runs on it.
+        $ref = $null
+        if ($dev) {
+            $devSha = GH api "repos/$Upstream/git/ref/heads/dev" --jq .object.sha
+            if (-not $ghOk -or -not $devSha) {
+                Say 'Classic Voices has no development version right now, so the released version is built.'
+            } else {
+                Say "Building the development version: changes that aren't released yet, so expect rough edges."
+                if ($repo -ne $Upstream) {
+                    GH api "repos/$repo/git/ref/heads/dev" | Out-Null
+                    if ($ghOk) {
+                        GH api -X PATCH "repos/$repo/git/refs/heads/dev" -f "sha=$devSha" -F force=true | Out-Null
+                        if (-not $ghOk) { Fail "couldn't update the dev branch of $repo." }
+                    } else {
+                        GH api -X POST "repos/$repo/git/refs" -f ref=refs/heads/dev -f "sha=$devSha" | Out-Null
+                        if (-not $ghOk) { Fail "couldn't add the dev branch to $repo." }
+                    }
+                }
+                $ref = 'dev'
+            }
+        }
+
         # GitHub turns workflows off in new copies; turn this one on.
         GH api -X PUT "repos/$repo/actions/permissions" -F enabled=true -f allowed_actions=all | Out-Null
         GH workflow enable $Workflow -R $repo | Out-Null
@@ -141,7 +173,8 @@
 
         # --- Build ---------------------------------------------------------------
         $started = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        GH workflow run $Workflow -R $repo -f "targets=$targets" | Out-Null
+        if ($ref) { GH workflow run $Workflow -R $repo --ref $ref -f "targets=$targets" | Out-Null }
+        else { GH workflow run $Workflow -R $repo -f "targets=$targets" | Out-Null }
         if (-not $ghOk) { Fail "couldn't start the build. Open https://github.com/$repo/actions, turn workflows on if asked, and run this again." }
         Say "Build started. It takes about half an hour; you'll hear each step as it finishes."
         $run = $null
@@ -260,4 +293,4 @@
     } catch {
         Write-Host $_.Exception.Message
     }
-}
+} @args  # (--dev, when run as a script block)
