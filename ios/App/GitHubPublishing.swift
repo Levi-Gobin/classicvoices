@@ -180,15 +180,22 @@ enum GitHub {
                           expires: Date().addingTimeInterval(Double((o["expires_in"] as? Int) ?? 900)))
     }
 
-    /// Waits for the code to be entered on GitHub (cancel the task to stop), then keeps the keys.
+    /// Waits for the code to be entered on GitHub (cancel the task to stop), then keeps the keys. A request that
+    /// fails on the way is just asked again: going to Safari to enter the code suspends the app, and iOS drops its
+    /// connection ("The network connection was lost", Levi 2026-11-16), while GitHub has the code all along.
     static func finishSignIn(_ c: DeviceCode) async throws -> Tokens {
         var interval = max(1, c.interval)
         while Date() < c.expires {
             try await Task.sleep(for: .seconds(interval))
-            let (_, d) = try await request("POST", "\(web)/login/oauth/access_token",
+            let d: Data
+            do {
+                (_, d) = try await request("POST", "\(web)/login/oauth/access_token",
                                            form: ["client_id": clientID, "device_code": c.deviceCode,
                                                   "grant_type": "urn:ietf:params:oauth:grant-type:device_code"],
                                            accept: "application/json")
+            } catch Failure.network {
+                continue
+            }
             let o = object(d)
             if o["access_token"] != nil { return try await keep(o) }
             switch o["error"] as? String {
@@ -207,10 +214,14 @@ enum GitHub {
         guard let access = o["access_token"] as? String else { throw Failure.signedOut }
         let expiresIn = (o["expires_in"] as? Int) ?? 8 * 3600
         var login = known ?? ""
-        if login.isEmpty {
-            let (code, d) = try await request("GET", "\(api)/user", token: access)
-            guard code == 200, let l = object(d)["login"] as? String else { throw Failure.http(code, messageOf(d)) }
-            login = l
+        for attempt in 0..<10 where login.isEmpty {  // the key is good; a dropped connection mustn't lose it
+            do {
+                let (code, d) = try await request("GET", "\(api)/user", token: access)
+                guard code == 200, let l = object(d)["login"] as? String else { throw Failure.http(code, messageOf(d)) }
+                login = l
+            } catch Failure.network where attempt < 9 {
+                try await Task.sleep(for: .seconds(2))
+            }
         }
         let t = Tokens(access: access, expires: Date().addingTimeInterval(Double(expiresIn)),
                        refresh: o["refresh_token"] as? String ?? "", login: login)

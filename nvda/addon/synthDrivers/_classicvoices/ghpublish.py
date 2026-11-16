@@ -256,9 +256,14 @@ def finish_sign_in(data_root, code, cancelled=lambda: False):
             if cancelled():
                 return None
             time.sleep(0.1)
-        _s, j = _request("POST", web_base() + "/login/oauth/access_token",
-                         form={"client_id": client_id(), "device_code": code["device_code"],
-                               "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
+        try:
+            _s, j = _request("POST", web_base() + "/login/oauth/access_token",
+                             form={"client_id": client_id(), "device_code": code["device_code"],
+                                   "grant_type": "urn:ietf:params:oauth:grant-type:device_code"})
+        except GitHubError as e:
+            if e.status == 0:  # the connection dropped (Wi-Fi, sleep): GitHub still has the code; ask again
+                continue
+            raise
         j = j or {}
         err = j.get("error")
         if err == "authorization_pending":
@@ -269,7 +274,14 @@ def finish_sign_in(data_root, code, cancelled=lambda: False):
         if err:
             raise GitHubError(0, j.get("error_description") or err)
         tok = _store_grant(data_root, j)
-        _s, user = _request("GET", api_base() + "/user", token=tok["access"])
+        for attempt in range(10):  # the key is good; a dropped connection mustn't lose it
+            try:
+                _s, user = _request("GET", api_base() + "/user", token=tok["access"])
+                break
+            except GitHubError as e:
+                if e.status != 0 or attempt == 9:
+                    raise
+                time.sleep(2)
         tok["login"] = (user or {}).get("login")
         _save(data_root, tok)
         return tok["login"]
