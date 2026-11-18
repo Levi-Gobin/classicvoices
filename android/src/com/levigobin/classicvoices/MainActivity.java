@@ -62,8 +62,11 @@ public class MainActivity extends Activity implements ImportService.Listener {
     private final List<List<String[]>> stacks = new ArrayList<>();   // per browsing tab: routes
     private final List<List<String>> cameFrom = new ArrayList<>();   // the control that opened each page
     private final String[] query = {"", ""};
-    private int tab;
+    private int tab;  // 0 iOS, 1 macOS, 2 Settings, 3 Dictionaries (shown before Settings, as on the iPhone)
+    private static final int SETTINGS = 2, DICTIONARIES = 3;
     private Button[] tabButtons;
+    private DictionaryEditor dictionaries;
+    private boolean resumed;
     private Button back;
     private TextView where;
     private LinearLayout header, body, rootBody;
@@ -83,7 +86,8 @@ public class MainActivity extends Activity implements ImportService.Listener {
         super.onCreate(saved);
         setTitle(R.string.app_name);
         Update.check(this);
-        for (int i = 0; i < 2; i++) {
+        dictionaries = new DictionaryEditor(this);
+        for (int i = 0; i < 4; i++) {
             stacks.add(new ArrayList<String[]>());
             cameFrom.add(new ArrayList<String>());
         }
@@ -95,10 +99,12 @@ public class MainActivity extends Activity implements ImportService.Listener {
         bar.setOrientation(LinearLayout.HORIZONTAL);
         int pad = Ui.dp(this, 8);
         bar.setPadding(pad, pad, pad, 0);
-        String[] names = {getString(R.string.tab_ios), getString(R.string.tab_mac), getString(R.string.tab_settings)};
+        String[] names = {getString(R.string.tab_ios), getString(R.string.tab_mac), getString(R.string.tab_settings),
+                getString(R.string.tab_dictionaries)};
+        int[] order = {0, 1, DICTIONARIES, SETTINGS};
         tabButtons = new Button[names.length];
-        for (int i = 0; i < names.length; i++) {
-            final int which = i;
+        for (int pos = 0; pos < order.length; pos++) {
+            final int which = order[pos], i = which;
             Button b = new Button(this);
             b.setText(names[i]);
             b.setAllCaps(false);
@@ -109,7 +115,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
                     selectTab(which);
                 }
             });
-            b.setAccessibilityDelegate(new Delegate(getString(R.string.role_tab), i, names.length));
+            b.setAccessibilityDelegate(new Delegate(getString(R.string.role_tab), pos, names.length));
             bar.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
             tabButtons[i] = b;
         }
@@ -169,6 +175,11 @@ public class MainActivity extends Activity implements ImportService.Listener {
     }
 
     private void testHooks() {
+        // a mock GitHub for testing publishing (e.g. --es github_api http://10.0.2.2:8765 --es github_web
+        // http://10.0.2.2:8765; empty strings: the real one)
+        String api = getIntent().getStringExtra("github_api");
+        if (api != null) GitHub.setTestAddresses(this, api, getIntent().getStringExtra("github_web"));
+        if (getIntent().hasExtra("tab")) Data.prefs(this).edit().putInt("tab", getIntent().getIntExtra("tab", 0)).apply();
         String imports = getIntent().getStringExtra("import");
         if (imports != null) {
             for (String k : imports.split(",")) {
@@ -199,13 +210,18 @@ public class MainActivity extends Activity implements ImportService.Listener {
         super.onResume();
         Update.resume(this);  // back from letting Classic Voices install apps
         ImportService.addListener(this);
+        resumed = true;
+        Dictionaries.setEditing(tab == DICTIONARIES);
         reload();
         render(null, false);
+        dictionaries.publishAutomatically();
     }
 
     @Override
     protected void onPause() {
         ImportService.removeListener(this);
+        resumed = false;
+        Dictionaries.setEditing(false);
         super.onPause();
     }
 
@@ -217,7 +233,13 @@ public class MainActivity extends Activity implements ImportService.Listener {
 
     @Override
     public void onBackPressed() {
-        if (tab < 2 && !stacks.get(tab).isEmpty()) goBack();
+        if (tab != SETTINGS && !stacks.get(tab).isEmpty()) goBack();
+        else if (tab == DICTIONARIES && dictionaries.left(new Runnable() {
+            @Override
+            public void run() {
+                finish();
+            }
+        })) return;
         else super.onBackPressed();
     }
 
@@ -229,29 +251,37 @@ public class MainActivity extends Activity implements ImportService.Listener {
 
     // ---------------------------------------------------------------- navigation
 
-    private void selectTab(int which) {
+    private void selectTab(final int which) {
+        // leaving the dictionaries with changes not published and no sign-in: asks whether to sign in (Yes comes back)
+        if (tab == DICTIONARIES && which != DICTIONARIES) dictionaries.left(null);
+        switchTab(which);
+    }
+
+    private void switchTab(int which) {
         tab = which;
+        Dictionaries.setEditing(resumed && which == DICTIONARIES);
         Data.prefs(this).edit().putInt("tab", which).apply();
         render(null, false);
     }
 
-    private void open(String... route) {
+    void open(String... route) {
         stacks.get(tab).add(route);
         cameFrom.get(tab).add(focusedTag);
         render("where", true);
     }
 
-    private void goBack() {
+    void goBack() {
         List<String[]> s = stacks.get(tab);
         if (s.isEmpty()) return;
-        s.remove(s.size() - 1);
+        String[] gone = s.remove(s.size() - 1);
+        if (tab == DICTIONARIES) dictionaries.leaving(gone);
         List<String> c = cameFrom.get(tab);
         String from = c.isEmpty() ? null : c.remove(c.size() - 1);
         render(from, true);
     }
 
     private String[] route() {
-        if (tab == 2) return null;
+        if (tab == SETTINGS) return null;
         List<String[]> s = stacks.get(tab);
         return s.isEmpty() ? null : s.get(s.size() - 1);
     }
@@ -282,16 +312,25 @@ public class MainActivity extends Activity implements ImportService.Listener {
      * (the page title when opening a page, the row that opened it when going
      * back); announce: say so even if it's the same control.
      */
-    private void render(String focusTag, boolean announce) {
+    void render(String focusTag, boolean announce) {
         for (int i = 0; i < tabButtons.length; i++) tabButtons[i].setSelected(i == tab);
         body.removeAllViews();
         live.clear();
         autoTag = 0;
         rootBody = null;
         String[] r = route();
-        if (tab == 2) {
+        if (tab == SETTINGS) {
             header.setVisibility(View.GONE);
             settingsPage();
+        } else if (tab == DICTIONARIES) {
+            header.setVisibility(View.VISIBLE);
+            back.setEnabled(r != null);
+            List<String> crumbs = new ArrayList<>();
+            crumbs.add(getString(R.string.tab_dictionaries));
+            for (String[] x : stacks.get(tab)) crumbs.add(dictionaries.title(x));
+            where.setText(join(crumbs, " › "));
+            where.setContentDescription(getString(R.string.current_location, join(crumbs, ", ")));
+            dictionaries.page(r);
         } else {
             header.setVisibility(View.VISIBLE);
             back.setEnabled(r != null);
@@ -1218,7 +1257,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
 
     // ---------------------------------------------------------------- controls
 
-    private interface Choice {
+    interface Choice {
         void chose(int index);
     }
 
@@ -1264,19 +1303,19 @@ public class MainActivity extends Activity implements ImportService.Listener {
         return v;
     }
 
-    private void section(String title) {
+    void section(String title) {
         TextView t = Ui.heading(this, body, title);
         body.removeView(t);
         add(t, "h:" + title);
     }
 
-    private TextView text(String s) {
+    TextView text(String s) {
         TextView t = Ui.text(this, body, s);
         body.removeView(t);
         return add(t, null);
     }
 
-    private Button button(String tag, String label, View.OnClickListener l) {
+    Button button(String tag, String label, View.OnClickListener l) {
         Button b = Ui.button(this, body, label, l);
         body.removeView(b);
         b.setTag(tag);
@@ -1289,16 +1328,16 @@ public class MainActivity extends Activity implements ImportService.Listener {
         return b;
     }
 
-    private void check(String tag, String label, boolean on, CompoundButton.OnCheckedChangeListener l) {
+    CheckBox check(String tag, String label, boolean on, CompoundButton.OnCheckedChangeListener l) {
         CheckBox cb = new CheckBox(this);
         cb.setText(label);
         cb.setTextSize(16);
         cb.setChecked(on);
         cb.setOnCheckedChangeListener(l);
-        add(cb, tag);
+        return add(cb, tag);
     }
 
-    private EditText edit(String tag, String label, String value, boolean multiline) {
+    EditText edit(String tag, String label, String value, boolean multiline) {
         TextView l = new TextView(this);
         l.setText(label);
         l.setTextSize(16);
@@ -1316,7 +1355,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
         return add(e, tag);
     }
 
-    private void choice(String tag, String label, List<String> options, int selected, final Choice c) {
+    void choice(String tag, String label, List<String> options, int selected, final Choice c) {
         TextView l = new TextView(this);
         l.setText(label);
         l.setTextSize(16);
@@ -1339,6 +1378,60 @@ public class MainActivity extends Activity implements ImportService.Listener {
             public void onNothingSelected(AdapterView<?> p) {}
         });
         add(s, tag);
+    }
+
+    // ---------------------------------------------------------------- for the Dictionaries tab (DictionaryEditor)
+
+    LinearLayout body() { return body; }
+
+    /** Adds controls into container instead of the page (a part rebuilt by itself, like search results). */
+    void into(LinearLayout container, Runnable r) {
+        LinearLayout keep = body;
+        body = container;
+        try {
+            r.run();
+        } finally {
+            body = keep;
+        }
+    }
+
+    String focusedTag() { return focusedTag; }
+
+    void noteFocus(String tag) { focusedTag = tag; }
+
+    private String[] dictRoute() { return tab == DICTIONARIES ? route() : null; }
+
+    boolean onDictionaryRoot() { return tab == DICTIONARIES && route() == null; }
+
+    boolean onPublishingPage() {
+        String[] r = dictRoute();
+        return r != null && r[0].equals("publishing");
+    }
+
+    boolean onSignInPage() {
+        String[] r = dictRoute();
+        return r != null && r[0].equals("signin");
+    }
+
+    void showDictionaries() {
+        if (tab != DICTIONARIES) switchTab(DICTIONARIES);
+    }
+
+    /** Says text in a voice through the app's own engine, with the dictionary entries given (.dic text). */
+    void speakPreview(VoiceInfo v, String text, String entries) {
+        if (!ttsReady) {
+            Toast.makeText(this, R.string.not_ready, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Voice voice = null;
+        Set<Voice> all = tts.getVoices();
+        if (all != null) for (Voice x : all) if (x.getName().equals(v.androidName())) voice = x;
+        if (voice == null) voice = new Voice(v.androidName(), v.locale, Voice.QUALITY_NORMAL, Voice.LATENCY_LOW, false, null);
+        tts.setVoice(voice);
+        tts.setSpeechRate(1f);
+        Bundle params = new Bundle();
+        params.putString(TtsService.PREVIEW_ENTRIES, entries == null ? "" : entries);
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, "preview");
     }
 
     private static String join(List<String> parts, String sep) {

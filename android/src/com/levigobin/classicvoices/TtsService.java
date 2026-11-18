@@ -160,8 +160,15 @@ public class TtsService extends TextToSpeechService {
         if (text == null) text = "";
         // test builds log what they're asked to say (adb logcat -s CVSPEAK), to check TalkBack's wording
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) Log.d("CVSPEAK", text);
-        speak(this, v, text, cs instanceof Spanned ? (Spanned) cs : null, request.getSpeechRate(), request.getPitch(), cb);
+        // the dictionary editor's previews (DictionaryEditor.preview): the entries to try, as .dic text
+        android.os.Bundle params = request.getParams();
+        String entries = params != null ? params.getString(PREVIEW_ENTRIES) : null;
+        speak(this, v, text, cs instanceof Spanned ? (Spanned) cs : null, request.getSpeechRate(), request.getPitch(),
+                entries, cb);
     }
+
+    /** A request parameter (engine-specific keys start with the engine's package name): .dic text to preview with. */
+    static final String PREVIEW_ENTRIES = "com.levigobin.classicvoices.previewEntries";
 
     // The text as SSML when it has verbatim spans (said letter by letter); null when it has none. Apple's rules
     // and the community dictionary apply to the rest in the engine (Native.begin).
@@ -195,7 +202,8 @@ public class TtsService extends TextToSpeechService {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    private void speak(TtsService s, VoiceInfo v, String text, Spanned spans, int rate, int pitch, SynthesisCallback cb) {
+    private void speak(TtsService s, VoiceInfo v, String text, Spanned spans, int rate, int pitch, String entries,
+                       SynthesisCallback cb) {
         // Independent switches: the voice's own release's rules, Apple's later pack (its dictionary and rules)
         // and the community dictionaries; all run in the engine.
         String pack = Pronunciation.packFor(s, v);
@@ -218,8 +226,17 @@ public class TtsService extends TextToSpeechService {
         Native.setPauses(Data.steadyPauses(this), Data.spellingPauses(this), Data.spellLowercase(this));
         boolean community = Dictionaries.enabled(this);
         if (community) Dictionaries.refreshIfDue(this);
-        if (Native.begin(v.key, fallback, v.language, utf8, ssml != null, r, p, -1, Data.rulesEnabled(s),
-                Dictionaries.dir(this).getAbsolutePath(), community) < 0) {
+        int began;
+        if (entries != null) {
+            began = Native.beginWithEntries(v.key, fallback, v.language, utf8, ssml != null, r, p, -1, Data.rulesEnabled(s),
+                    entries.getBytes(java.nio.charset.Charset.forName("UTF-8")));
+        } else {
+            // while the dictionary editor is open the voices use no dictionary, so words are heard as they're read
+            String dicts = Dictionaries.editing() ? null : Dictionaries.dir(this).getAbsolutePath();
+            began = Native.begin(v.key, fallback, v.language, utf8, ssml != null, r, p, -1, Data.rulesEnabled(s), dicts,
+                    community);
+        }
+        if (began < 0) {
             Log.w(TAG, "engine not ready: " + Native.lastError());
             cb.error();
             return;

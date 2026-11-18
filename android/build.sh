@@ -96,8 +96,14 @@ print(fastcode.stamp(((sys.argv[2] + "/tools", sys.argv[2] + "/core", sys.argv[2
 "$BT/aapt2" compile --dir android/res -o "$OUT/res.zip"
 # DEBUG=1: a debuggable build, so adb can reach the app's files (run-as) while developing
 DBG=""
-[ "${DEBUG:-0}" = 1 ] && DBG="--debug-mode"
-"$BT/aapt2" link $DBG -I "$JAR" --manifest android/AndroidManifest.xml --min-sdk-version $MIN --target-sdk-version 34 \
+MANIFEST=android/AndroidManifest.xml
+if [ "${DEBUG:-0}" = 1 ]; then
+    DBG="--debug-mode"
+    # plain http too, for a mock GitHub on the Mac (publishing tests: http://10.0.2.2:<port> from the emulator)
+    sed 's/<application/<application android:usesCleartextTraffic="true"/' android/AndroidManifest.xml > "$OUT/AndroidManifest.xml"
+    MANIFEST=$OUT/AndroidManifest.xml
+fi
+"$BT/aapt2" link $DBG -I "$JAR" --manifest "$MANIFEST" --min-sdk-version $MIN --target-sdk-version 34 \
     --java "$OUT/gen" -A "$OUT/assets" -o "$OUT/base.apk" "$OUT/res.zip" --auto-add-overlay
 
 # ---- Java

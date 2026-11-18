@@ -15,6 +15,7 @@
 #include "cv_dict.h"
 #include "cv_rules.h"
 #include "vxlang.h"
+#include "vxphonemes.h"
 #include "cv_ssml.h"
 #include "vxstream.h"
 
@@ -168,20 +169,19 @@ JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_setPauses(JNIEnv 
 // Start an utterance. text is UTF-8; ssml != 0 parses markup. As on Linux and Windows: the dictionaries in dict_dir
 // (cv_dict.h: the person's own entries, and the fetched ones when community is set; null: none) and Apple's rules (the voice's own release's when own_rules, then the
 // pronunciation pack's, setRulesPack) run here, on the text and never on markup or spelled text.
-JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env, jclass cls, jstring key, jstring fallback,
-                                                                     jstring language, jbyteArray text, jboolean ssml,
-                                                                     jint rate, jint pitch, jint volume,
-                                                                     jboolean own_rules, jstring dict_dir,
-                                                                     jboolean community) {
-    (void)cls;
+// entries (may be NULL): dictionary text (cv_dict_from_text) used instead of dict_dir's files: the dictionary
+// editor's previews.
+static jint begin(JNIEnv *env, jstring key, jstring fallback, jstring language, jbyteArray text, jboolean ssml, jint rate,
+                  jint pitch, jint volume, jboolean own_rules, jstring dict_dir, jboolean community, jbyteArray entries) {
     if (!g_stream) return -1;
     char *k = dup_utf(env, key), *f = dup_utf(env, fallback), *t = bytes_utf(env, text);
     char *lang = dup_utf(env, language), *dd = dup_utf(env, dict_dir);
+    char *ent = entries ? bytes_utf(env, entries) : NULL;
     pthread_mutex_lock(&g_mu);
     reload_if_asked();
     if (!g_stream) {
         pthread_mutex_unlock(&g_mu);
-        free(k); free(f); free(t); free(lang); free(dd);
+        free(k); free(f); free(t); free(lang); free(dd); free(ent);
         return -1;
     }
     vxs_set_rules_pack(g_stream, g_pack);  // for each segment's vxs_start
@@ -193,7 +193,8 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
     const char *language_tag = lang ? lang : "";
     const CvRules *rules = cv_rules_for_voice_pack(g_voices_root, g_downloads_root, k, language_tag, own_rules ? 1 : 0,
                                                    g_pack[0] ? g_pack : NULL);
-    const CvDict *dict = dd && dd[0] ? cv_dict_for_voice_ex(dd, k, language_tag, community ? 1 : 0) : NULL;
+    const CvDict *dict = ent ? (ent[0] ? cv_dict_from_text(ent) : NULL)
+                       : dd && dd[0] ? cv_dict_for_voice_ex(dd, k, language_tag, community ? 1 : 0) : NULL;
     CvPhonemeVoice pv = {g_voices_root, g_downloads_root, k, language_tag};
     if (ssml) cv_parse_ssml_dict(t, rate, pitch, volume, rules, dict, cv_voice_phonemes, &pv, &g_utt);
     else cv_parse_plain_dict(t, rate, pitch, volume, rules, dict, cv_voice_phonemes, &pv, &g_utt);
@@ -204,8 +205,95 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env
     atomic_store(&g_cancel, 0);
     jint n = (jint)g_utt.n;
     pthread_mutex_unlock(&g_mu);
-    free(k); free(f); free(t); free(lang); free(dd);
+    free(k); free(f); free(t); free(lang); free(dd); free(ent);
     return n;
+}
+
+JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_begin(JNIEnv *env, jclass cls, jstring key, jstring fallback,
+                                                                     jstring language, jbyteArray text, jboolean ssml,
+                                                                     jint rate, jint pitch, jint volume,
+                                                                     jboolean own_rules, jstring dict_dir,
+                                                                     jboolean community) {
+    (void)cls;
+    return begin(env, key, fallback, language, text, ssml, rate, pitch, volume, own_rules, dict_dir, community, NULL);
+}
+
+// The same with the dictionary given as text (UTF-8, .dic lines): a preview in the dictionary editor.
+JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_beginWithEntries(JNIEnv *env, jclass cls, jstring key,
+                                                                                jstring fallback, jstring language,
+                                                                                jbyteArray text, jboolean ssml, jint rate,
+                                                                                jint pitch, jint volume,
+                                                                                jboolean own_rules, jbyteArray entries) {
+    (void)cls;
+    return begin(env, key, fallback, language, text, ssml, rate, pitch, volume, own_rules, NULL, 0, entries);
+}
+
+// ---------------------------------------------------------------- the dictionary editor
+
+// Engine text that says ipa in the voice, or null (vx_phoneme_text): the editor's list of the voice's sounds keeps
+// one of each that the voice says differently.
+JNIEXPORT jstring JNICALL Java_com_levigobin_classicvoices_Native_phonemeText(JNIEnv *env, jclass cls, jstring key,
+                                                                               jstring language, jbyteArray ipa) {
+    (void)cls;
+    char *k = dup_utf(env, key), *l = dup_utf(env, language), *i = bytes_utf(env, ipa);
+    char *p = k && i ? vx_phoneme_text(g_voices_root, g_downloads_root, k, l, i, 0) : NULL;
+    jstring r = p ? utf8_string(env, p) : NULL;
+    free(p); free(k); free(l); free(i);
+    return r;
+}
+
+// X-SAMPA -> IPA (UTF-8), or null when it isn't X-SAMPA.
+JNIEXPORT jstring JNICALL Java_com_levigobin_classicvoices_Native_xsampaToIpa(JNIEnv *env, jclass cls, jbyteArray xsampa) {
+    (void)cls;
+    char *x = bytes_utf(env, xsampa);
+    char *p = vx_xsampa_to_ipa(x, strlen(x), NULL);
+    jstring r = p ? utf8_string(env, p) : NULL;
+    free(p); free(x);
+    return r;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_levigobin_classicvoices_Native_ipaHasVowel(JNIEnv *env, jclass cls, jbyteArray ipa) {
+    (void)cls;
+    char *i = bytes_utf(env, ipa);
+    jboolean r = vx_ipa_has_vowel(i) ? JNI_TRUE : JNI_FALSE;
+    free(i);
+    return r;
+}
+
+// Convert to Phonemes: a stream of its own (the shared one may be speaking), made the first time.
+static pthread_mutex_t g_conv_mu = PTHREAD_MUTEX_INITIALIZER;
+static VxStream *g_conv;
+
+JNIEXPORT jstring JNICALL Java_com_levigobin_classicvoices_Native_textXsampa(JNIEnv *env, jclass cls, jstring key,
+                                                                              jstring language, jbyteArray word) {
+    (void)cls;
+    char *k = dup_utf(env, key), *l = dup_utf(env, language), *w = bytes_utf(env, word);
+    char *p = NULL;
+    pthread_mutex_lock(&g_conv_mu);
+    if (!g_conv && g_voices_root[0]) {
+        g_conv = vxs_create(g_voices_root);
+        if (g_conv) vxs_set_asset_root(g_conv, g_downloads_root);
+    }
+    if (g_conv && k) p = vxs_text_xsampa(g_conv, k, l, w);
+    pthread_mutex_unlock(&g_conv_mu);
+    jstring r = p ? utf8_string(env, p) : NULL;
+    free(p); free(k); free(l); free(w);
+    return r;
+}
+
+// Whether a dictionary entry's regular expression compiles (PCRE2, as the voices run it): "(?:pattern)|" matches
+// the empty text exactly when the pattern compiles.
+JNIEXPORT jboolean JNICALL Java_com_levigobin_classicvoices_Native_regexCompiles(JNIEnv *env, jclass cls,
+                                                                                  jbyteArray pattern) {
+    (void)cls;
+    if (!cv_rules_available()) return JNI_TRUE;  // can't tell: the voices skip it if it's bad
+    char *p = bytes_utf(env, pattern);
+    size_t n = strlen(p);
+    char *w = malloc(n + 8);
+    snprintf(w, n + 8, "(?:%s)|", p);
+    jboolean r = cv_regex_full_match(w, 0, "") ? JNI_TRUE : JNI_FALSE;
+    free(w); free(p);
+    return r;
 }
 
 // Up to buf.length bytes of 16-bit little-endian PCM at 22050 Hz. Waits up to

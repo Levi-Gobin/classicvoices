@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- custom TalkBack actions in the Dictionaries tab (DictionaryEditor) -->
+    <item type="id" name="dict_action_preview" />
+    <item type="id" name="dict_action_preview_earlier" />
+    <item type="id" name="dict_action_preview_all" />
+    <item type="id" name="dict_action_remove" />
+    <item type="id" name="dict_action_restore" />
+</resources>

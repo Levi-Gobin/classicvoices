@@ -40,6 +40,27 @@ final class Native {
     static native int begin(String key, String fallback, String language, byte[] text, boolean ssml, int rate, int pitch,
                             int volume, boolean ownRules, String dictDir, boolean community);
 
+    /**
+     * begin with the dictionary given as text (UTF-8 .dic lines; empty: none) instead of the files: the dictionary
+     * editor's previews.
+     */
+    static native int beginWithEntries(String key, String fallback, String language, byte[] text, boolean ssml, int rate,
+                                       int pitch, int volume, boolean ownRules, byte[] entries);
+
+    /** Engine text that says ipa (UTF-8) in the voice, or null when it can't. */
+    static native String phonemeText(String key, String language, byte[] ipa);
+
+    /** IPA for X-SAMPA (UTF-8), or null when it isn't X-SAMPA. */
+    static native String xsampaToIpa(byte[] xsampa);
+
+    static native boolean ipaHasVowel(byte[] ipa);
+
+    /** How the voice says a word, as X-SAMPA without stress marks, or null (Convert to Phonemes). */
+    static native String textXsampa(String key, String language, byte[] word);
+
+    /** Whether a regular expression (UTF-8) compiles as the voices run it. */
+    static native boolean regexCompiles(byte[] pattern);
+
     /** 16-bit PCM at 22050 Hz into buf: bytes written, 0 if none yet, -1 when done. */
     static native int read(byte[] buf);
 
