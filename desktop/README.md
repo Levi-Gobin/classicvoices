@@ -32,6 +32,17 @@ What the phone and Mac apps get built in, this app gets for you:
   newer pronunciation rules (Apple's later dictionary and rules, downloaded
   when turned on) and the compact voice for pitch changes, as on iOS. On Windows, re-registering the Windows voices; on
   Linux, the Speech Dispatcher module's status.
+- **Edit the pronunciation dictionaries** (Settings): the NVDA add-on's
+  editor, on the same code. Your own entries and changes to the community's,
+  tried with any voice you have of the file's language (alone, with the
+  entries before them, or with all of them), sounds picked from the voice's
+  own, and publishing: with git where it can push to the repository, else
+  through GitHub after signing in (a code you enter at github.com; the key is
+  kept encrypted for your Windows user, or on Linux in
+  `~/.config/classicvoices/github.dat`, readable only by you). Publishing
+  once a day by itself is a switch, off at first. While the editor is open,
+  every voice (the system's too) uses no dictionary, so you hear words as the
+  voices read them by themselves.
 
 ## Windows
 
