@@ -12,6 +12,14 @@
 // iPhone and Mac playback does (vxs_set_apple_tone). -S names the voice that
 // speaks when VOICE and its compact version won't open (vxs_set_safe_voice).
 // Without -o the WAV goes to stdout.
+//
+// For the app's dictionary editor: -E FILE uses only the entries in FILE (the
+// .dic format; an empty file: no dictionary) instead of <data>/Dictionaries;
+// -e says TEXT as engine text, as it is (a phoneme heard on its own). With -P
+// (X-SAMPA symbols) or -W (words) on stdin, one per line, nothing is said: -P
+// prints "IPA TAB has a vowel (0/1) TAB engine text alone TAB engine text
+// between two a's" for each symbol (fields empty when the voice can't say it),
+// -W the voice's X-SAMPA for each word (an empty line when it can't tell).
 // Data: $CLASSICVOICES_DATA, else $XDG_DATA_HOME/classicvoices
 // (~/.local/share/classicvoices).
 #include <ctype.h>
@@ -28,6 +36,7 @@
 #include "cv_dict.h"
 #include "cv_ssml.h"
 #include "vxlang.h"
+#include "vxphonemes.h"
 #include "vxstream.h"
 
 void cv_set_native_dir(const char *dir);
@@ -41,9 +50,10 @@ static double now_ms(void) {
 static void put32(unsigned char *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
 
 int main(int argc, char **argv) {
-    const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL, *safe = NULL;
+    const char *voice = NULL, *lang = NULL, *outp = NULL, *autofor = NULL, *safe = NULL, *entries = NULL;
     int rate = 100, pitch = 100, list = 0, quiet = 0, norules = 0, newer = 0, tone = 0, dicts = 0, lower = 0, opt;
-    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNDTcA:S:")) != -1) {
+    int raw = 0, info = 0;
+    while ((opt = getopt(argc, argv, "lv:L:r:p:o:qnNDTcA:S:E:ePW")) != -1) {
         switch (opt) {
         case 'l': list = 1; break;
         case 'v': voice = optarg; break;
@@ -59,9 +69,14 @@ int main(int argc, char **argv) {
         case 'c': lower = 1; break;
         case 'A': autofor = optarg; break;
         case 'S': safe = optarg; break;
+        case 'E': entries = optarg; break;
+        case 'e': raw = 1; break;
+        case 'P': info = 'P'; break;
+        case 'W': info = 'W'; break;
         default:
-            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] [-c: no \"capital\" when spelling] [-S SAFE_VOICE_KEY] TEXT...\n"
-                    "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n", argv[0], argv[0]);
+            fprintf(stderr, "usage: %s -l | [-v VOICE] [-L LANG] [-r RATE%%] [-p PITCH%%] [-o out.wav] [-n: no rules] [-N: newer rules] [-T: tone as on iPhone and Mac] [-c: no \"capital\" when spelling] [-S SAFE_VOICE_KEY] [-E ENTRIES_FILE] [-e: engine text] TEXT...\n"
+                    "       %s -A VOICE_KEY: for each language, the voice automatic language switching picks\n"
+                    "       %s -v VOICE -P | -W: X-SAMPA symbols' engine text / words' X-SAMPA, from stdin\n", argv[0], argv[0], argv[0]);
             return 2;
         }
     }
@@ -107,9 +122,42 @@ int main(int argc, char **argv) {
         free(langs);
         return 0;
     }
-    if (optind >= argc) { fprintf(stderr, "no text\n"); return 2; }
+    if (optind >= argc && !info) { fprintf(stderr, "no text\n"); return 2; }
     const CvVoice *v = voice ? cv_find_voice(voices, nv, voice) : cv_pick_voice(voices, nv, lang ? lang : "en-US");
     if (!v) { fprintf(stderr, "voice not found: %s (try -l)\n", voice ? voice : lang ? lang : "en-US"); return 1; }
+    if (info) {  // the dictionary editor's phoneme picker (-P) and Convert to Phonemes (-W)
+        cv_set_native_dir(paths.native);
+        VxStream *s = info == 'W' ? vxs_create(paths.voices) : NULL;
+        if (s) vxs_set_asset_root(s, paths.downloads);
+        char line[4096];
+        while (fgets(line, sizeof line, stdin)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (info == 'W') {
+                char *x = line[0] && s ? vxs_text_xsampa(s, v->key, v->language, line) : NULL;
+                printf("%s\n", x ? x : "");
+                free(x);
+            } else {
+                char *ipa = line[0] ? vx_xsampa_to_ipa(line, strlen(line), NULL) : NULL;
+                char *alone = ipa ? vx_phoneme_text(paths.voices, paths.downloads, v->key, v->language, ipa, 0) : NULL;
+                char *between = NULL;
+                if (ipa && alone) {
+                    char *aa = malloc(strlen(ipa) + 3);
+                    sprintf(aa, "a%sa", ipa);
+                    between = vx_phoneme_text(paths.voices, paths.downloads, v->key, v->language, aa, 0);
+                    free(aa);
+                }
+                printf("%s\t%d\t%s\t%s\n", ipa ? ipa : "", ipa ? vx_ipa_has_vowel(ipa) : 0, alone ? alone : "",
+                       between ? between : "");
+                free(ipa);
+                free(alone);
+                free(between);
+            }
+            fflush(stdout);
+        }
+        if (s) vxs_destroy(s);
+        cv_free_voices(voices);
+        return 0;
+    }
     size_t tl = 0;
     for (int i = optind; i < argc; i++) tl += strlen(argv[i]) + 1;
     char *text = calloc(tl + 1, 1);
@@ -128,13 +176,39 @@ int main(int argc, char **argv) {
     char dir[1300];
     snprintf(dir, sizeof dir, "%s/Dictionaries", paths.root);
     // the person's own entries always, the fetched ones with -D
-    const CvDict *dict = cv_dict_for_voice_ex(dir, v->key, v->language, dicts);
-    for (int i = 0; dicts && !dict && i < 300; i++) {  // a big one loads in the background: wait for it here
-        usleep(10000);
+    const CvDict *dict = NULL;
+    if (entries) {  // just these (the dictionary editor's previews); an empty file: none
+        long n = 0;
+        FILE *ef = fopen(entries, "rb");
+        char *et = NULL;
+        if (ef) {
+            fseek(ef, 0, SEEK_END);
+            n = ftell(ef);
+            fseek(ef, 0, SEEK_SET);
+            et = calloc((size_t)(n > 0 ? n : 0) + 1, 1);
+            if (n > 0 && fread(et, 1, (size_t)n, ef) != (size_t)n) n = 0;
+            fclose(ef);
+        }
+        if (et && n > 0) dict = cv_dict_from_text(et);
+        free(et);
+    } else if (!raw) {
         dict = cv_dict_for_voice_ex(dir, v->key, v->language, dicts);
+        for (int i = 0; dicts && !dict && i < 300; i++) {  // a big one loads in the background: wait for it here
+            usleep(10000);
+            dict = cv_dict_for_voice_ex(dir, v->key, v->language, dicts);
+        }
     }
-    cv_parse_ssml_dict(text, rate, pitch, -1, cv_rules_for_voice_pack(paths.voices, paths.downloads, v->key, v->language, !norules, pk),
-                       dict, cv_voice_phonemes, &pv, &u);
+    if (raw) {  // engine text, said as it is
+        memset(&u, 0, sizeof u);
+        u.n = 1;
+        u.seg = calloc(1, sizeof *u.seg);
+        u.seg[0].text = strdup(text);
+        u.seg[0].rate = rate;
+        u.seg[0].pitch = pitch;
+        u.seg[0].volume = 100;
+    } else
+        cv_parse_ssml_dict(text, rate, pitch, -1, cv_rules_for_voice_pack(paths.voices, paths.downloads, v->key, v->language, !norules, pk),
+                           dict, cv_voice_phonemes, &pv, &u);
 
     FILE *out = outp ? fopen(outp, "wb") : stdout;
     if (!out) { perror(outp); return 1; }

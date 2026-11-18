@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <time.h>
 
 // ------------------------------------------------------------------ dictionaries
 
@@ -487,8 +488,20 @@ const CvDict *cv_dict_for_voice(const char *dir, const char *voice_key, const ch
     return cv_dict_for_voice_ex(dir, voice_key, language, 1);
 }
 
+// While a dictionary editor is open (the Windows and Linux app's touches <dir>/editing every 15 seconds), the voices
+// use no dictionary, so words are heard as they read them by themselves. A flag older than 45 seconds was left
+// behind (the app quit or crashed) and doesn't count.
+static int editing(const char *dir) {
+    char p[1300];
+    struct stat st;
+    snprintf(p, sizeof p, "%s/editing", dir);
+    if (stat(p, &st) != 0) return 0;
+    double age = difftime(time(NULL), st.st_mtime);
+    return age > -45 && age < 45;
+}
+
 const CvDict *cv_dict_for_voice_ex(const char *dir, const char *voice_key, const char *language, int community) {
-    if (!dir || !*dir || !voice_key) return NULL;
+    if (!dir || !*dir || !voice_key || editing(dir)) return NULL;
     // the files' names, narrowest first
     char names[2][64];
     int nn = 0;

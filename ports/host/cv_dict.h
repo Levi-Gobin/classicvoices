@@ -16,6 +16,9 @@
 // before all of them and are used even with the community dictionaries off;
 // <dir>/Mine/<file>.removed lists the fetched entries they took out (pattern
 // TAB type, one per line).
+//
+// While <dir>/editing is fresh (touched in the last 45 seconds: a dictionary editor is open), every voice uses no
+// dictionary at all; cv_dict_from_text still works (the editor's previews).
 #pragma once
 #include "cv_rules.h"
 
