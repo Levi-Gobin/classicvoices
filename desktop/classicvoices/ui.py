@@ -646,6 +646,7 @@ class SettingsPanel(wx.ScrolledWindow):
                 lambda v: system.set_setting("SpellLowercase", v))
         p.check("Community pronunciation dictionaries", system.get_setting("CommunityDictionaries"),
                 self.set_dictionaries)
+        p.button("Edit the pronunciation dictionaries...", self.frame.edit_dictionaries)
         p.text("Apple’s rules are the text fixes each voice’s own iOS or Mac OS X release made "
                "before the engine read it (“iOS”, “OS X” …). The newer rules add Apple’s later "
                "pronunciation dictionary and rules to every voice; turning them on downloads them "
@@ -662,7 +663,9 @@ class SettingsPanel(wx.ScrolledWindow):
                "mark them its own way). "
                "Community pronunciation dictionaries are fixes written by Classic Voices users for every "
                "voice of a language (github.com/nicopn/classicvoices-dicts); turned on, the app fetches "
-               "them and checks for new ones every few hours while it runs.")
+               "them and checks for new ones every few hours while it runs. In Edit the pronunciation "
+               "dictionaries you add your own entries or change the community's (yours work even with the "
+               "community dictionaries off), try them with your voices, and publish them for everyone.")
         if system.IS_WIN:
             p.section("Windows programs")
             n = system.system_voice_count()
@@ -728,11 +731,38 @@ class Frame(wx.Frame):
         self.Bind(wx.EVT_TIMER, lambda e: self.refresh_dictionaries(), self.dict_timer)
         self.dict_timer.Start(6 * 3600 * 1000)
         self.refresh_dictionaries()
+        self.last_voice = None  # (key, language) of the voice last heard: the dictionary editor starts with it
+        # the person's dictionary changes, published once a day when they turned that on: checked hourly, the
+        # first time a few minutes after the app opens
+        self.publish_timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, lambda e: self.publish_dictionaries(), self.publish_timer)
+        self.publish_timer.StartOnce(3 * 60 * 1000)
 
     def refresh_dictionaries(self, force=False):
         if system.get_setting("CommunityDictionaries"):
             from _classicvoices import dicts as cv_dicts
             cv_dicts.refresh_all(system.data_root(), force=force)
+
+    def publish_dictionaries(self):
+        try:
+            if system.get_setting("PublishDictionaries"):
+                from . import dicteditor
+                dicteditor.publish_if_due(system.data_root())
+        finally:
+            self.publish_timer.StartOnce(3600 * 1000)
+
+    def edit_dictionaries(self):
+        from . import dicteditor
+        dicteditor.open_editor(self)
+
+    def try_out(self, key, language, text, entries=None, engine=False):
+        """The dictionary editor's previews: text with just entries (.dic text), or engine text as it is."""
+        try:
+            if self.player is None:
+                self.player = system.make_player()
+            self.player.speak(key, text, self.rate, language, entries=entries, engine=engine)
+        except Exception as e:
+            wx.MessageBox("Classic Voices can't play the voice here: %s" % e, APP, wx.OK | wx.ICON_ERROR, self)
 
     def on_key(self, e):
         """Ctrl+Tab / Ctrl+Shift+Tab change tabs everywhere (GTK's own keys
@@ -813,6 +843,7 @@ class Frame(wx.Frame):
         try:
             if self.player is None:
                 self.player = system.make_player()
+            self.last_voice = (item.id, item.language)
             self.player.speak(item.id, text, rate, item.language)
         except Exception as e:
             wx.MessageBox("Classic Voices can't play the voice here: %s" % e, APP, wx.OK | wx.ICON_ERROR, self)

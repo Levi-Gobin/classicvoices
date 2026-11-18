@@ -165,8 +165,11 @@ def open_folder(path):
 # SpellLowercase spells capitals without "capital" before them (vxs_set_spell_lowercase).
 # CommunityDictionaries applies the community pronunciation dictionaries in
 # <data>/Dictionaries (opt in; the app fetches them, cv_dict.h reads them).
+# PublishDictionaries publishes the person's dictionary changes once a day
+# while the app runs (opt in, as on the Mac; Publish now always works).
 SETTINGS = {"PronunciationRules": True, "PitchFallback": True, "NewerPronunciation": False, "FastCodeAuto": True,
-            "AppleTone": True, "SteadyPauses": True, "SpellingPauses": False, "SpellLowercase": False, "CommunityDictionaries": False}
+            "AppleTone": True, "SteadyPauses": True, "SpellingPauses": False, "SpellLowercase": False, "CommunityDictionaries": False,
+            "PublishDictionaries": False}
 
 if IS_WIN:
     def get_setting(name):
@@ -254,9 +257,12 @@ def auto_voices(current_key):
 
 
 class Player:
-    """Speaks a sample with a voice, through the same engine as everything else."""
+    """Speaks a sample with a voice, through the same engine as everything else: the dictionaries applied as for
+    the system's voices (the person's own entries always, the community's when that's on; none while the
+    dictionary editor is open); with entries (.dic text), just those (the editor's previews; "" for none); with
+    engine, text is engine text, said as it is (a phoneme on its own)."""
 
-    def speak(self, key, text, rate=100, language=""):
+    def speak(self, key, text, rate=100, language="", entries=None, engine=False):
         raise NotImplementedError
 
     def stop(self):
@@ -281,14 +287,18 @@ class WinPlayer(Player):
             self._lib.vxs_set_asset_root(self._s, downloads_root().encode("utf-8"))
         return self._s
 
-    def speak(self, key, text, rate=100, language=""):
+    def speak(self, key, text, rate=100, language="", entries=None, engine=False):
         self.stop()
         pack = None
         if get_setting("NewerPronunciation") and not key.startswith("mt"):
             from _classicvoices import pronunciation
             pack = pronunciation.pack_dir(data_root(), language)
-        text = self._lib_mod.rules_text(voices_root(), downloads_root(), key, language, text,
-                                        own=get_setting("PronunciationRules"), pack=pack)
+        if not engine:
+            from _classicvoices import dicts as cv_dicts
+            text = self._lib_mod.speech_text(voices_root(), downloads_root(), key, language, text,
+                                             own=get_setting("PronunciationRules"), pack=pack,
+                                             dicts=None if cv_dicts.EDITING else dictionaries_dir(),
+                                             community=get_setting("CommunityDictionaries"), entries=entries)
         with self._lock:
             self._gen += 1
             gen = self._gen
@@ -361,14 +371,20 @@ def log_notices(lib, stream):
         crashlog.write("Voice: " + buf.value.decode("utf-8", "replace"))
 
 
-def _log_errors(pipe):
-    """classicvoices-say's errors (the engine's, such as a voice that wouldn't open), into the app's log."""
+def _log_errors(pipe, tmp=None):
+    """classicvoices-say's errors (the engine's, such as a voice that wouldn't open), into the app's log; then the
+    preview's entries file, if any, goes."""
     from . import crashlog
     for line in iter(pipe.readline, b""):
         line = line.decode("utf-8", "replace").rstrip()
         if line:
             crashlog.write("Voice: " + line)
     pipe.close()
+    if tmp:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 class CliPlayer(Player):
@@ -397,7 +413,7 @@ class CliPlayer(Player):
     def available(self):
         return bool(self._say() and self._sink())
 
-    def speak(self, key, text, rate=100, language=""):
+    def speak(self, key, text, rate=100, language="", entries=None, engine=False):
         self.stop()
         say, sink = self._say(), self._sink()
         if not say or not sink:
@@ -409,8 +425,19 @@ class CliPlayer(Player):
             args.append("-N")
         if get_setting("AppleTone"):
             args.append("-T")
+        tmp = None
+        if engine:
+            args.append("-e")
+        elif entries is not None:  # just these (a file: a whole dictionary is too long for a command line)
+            import tempfile
+            fd, tmp = tempfile.mkstemp(prefix="classicvoices-preview-", suffix=".dic")
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(entries + "\n" if entries else "")
+            args += ["-E", tmp]
+        elif get_setting("CommunityDictionaries"):
+            args.append("-D")
         p1 = subprocess.Popen(args + ["-q", "--", text], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        threading.Thread(target=_log_errors, args=(p1.stderr,), daemon=True).start()
+        threading.Thread(target=_log_errors, args=(p1.stderr, tmp), daemon=True).start()
         p2 = subprocess.Popen(sink, stdin=p1.stdout, stderr=subprocess.DEVNULL)
         p1.stdout.close()
         self._procs = [p1, p2]
@@ -424,6 +451,91 @@ class CliPlayer(Player):
 
 def make_player():
     return WinPlayer() if IS_WIN else CliPlayer()
+
+# ---------------------------------------------------------------- pronunciation dictionaries (the editor)
+
+
+def dictionaries_dir():
+    return os.path.join(data_root(), "Dictionaries")
+
+
+def token_dir():
+    """Where the GitHub sign-in is kept (ghpublish.TOKEN_DIR; None: the data folder). Windows: the data folder,
+    encrypted for the Windows user (DPAPI), the file the NVDA add-on uses too when it uses the app's voices.
+    Linux: the config folder ($XDG_CONFIG_HOME/classicvoices), in a file only you can read."""
+    if IS_WIN:
+        return None
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "classicvoices")
+
+
+def hold_editing():
+    """The dictionary editor is open: <data>/Dictionaries/editing, touched now (and every 15 seconds by the
+    editor), makes the voices use no dictionary (cv_dict.c: the system's voices too; stale after 45 seconds)."""
+    p = os.path.join(dictionaries_dir(), "editing")
+    try:
+        os.makedirs(dictionaries_dir(), exist_ok=True)
+        with open(p, "a"):
+            pass
+        os.utime(p, None)
+    except OSError:
+        pass
+
+
+def release_editing():
+    try:
+        os.remove(os.path.join(dictionaries_dir(), "editing"))
+    except OSError:
+        pass
+
+
+class Phonetics:
+    """What the dictionary editor asks a voice (the same engine code as the NVDA add-on's: core/vxphonemes.c):
+    sounds(symbols) gives, for each X-SAMPA symbol, (IPA, has a vowel, engine text of the sound alone, engine text
+    of it between two a's), None for what isn't X-SAMPA and None texts for a sound the voice can't say;
+    words(words) gives how the voice says each word, as X-SAMPA (None when it can't tell)."""
+
+    def __init__(self, key, language):
+        self.key, self.language = key, language or ""
+
+    def sounds(self, symbols):
+        out = []
+        if IS_WIN:
+            from _classicvoices import lib
+            vr, dr = voices_root(), downloads_root()
+            for x in symbols:
+                ipa = lib.xsampa_to_ipa(x) if x else None
+                alone = lib.phoneme_text(vr, dr, self.key, self.language, ipa, False) if ipa else None
+                between = lib.phoneme_text(vr, dr, self.key, self.language, "a" + ipa + "a", False) if alone else None
+                out.append((ipa, bool(ipa) and lib.ipa_has_vowel(ipa), alone, between))
+            return out
+        lines = self._run("-P", symbols)
+        for i, x in enumerate(symbols):
+            f = (lines[i] if i < len(lines) else "").split("\t")
+            f += [""] * (4 - len(f))
+            out.append((f[0] or None, f[1] == "1", f[2] or None, f[3] or None))
+        return out
+
+    def words(self, words):
+        if IS_WIN:
+            from _classicvoices import lib
+            return [lib.text_xsampa(voices_root(), downloads_root(), self.key, self.language, w) if w else None
+                    for w in words]
+        lines = self._run("-W", words)
+        return [(lines[i] if i < len(lines) else "") or None for i in range(len(words))]
+
+    def _run(self, flag, items):
+        """classicvoices-say -P / -W over the items, one per line: its output lines."""
+        say = CliPlayer._say()
+        if not say or not items:
+            return []
+        clean = [i.replace("\n", " ").replace("\r", " ") for i in items]
+        try:
+            r = subprocess.run([say, "-v", self.key, flag], input="\n".join(clean) + "\n", capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return r.stdout.split("\n")
 
 # ---------------------------------------------------------------- the system's own speech
 

@@ -1,7 +1,7 @@
 """Publishing the person's dictionary changes through GitHub's own API, where git isn't installed (gitsync.py is
 used where it is). The person signs in once with GitHub's device flow (a code typed at github.com/login/device;
 the Classic Voices GitHub App, no password here); the key is kept in <data root>/github.dat, encrypted for this
-Windows user (DPAPI).
+Windows user (DPAPI); elsewhere (the Linux app) in a file only this user can read, in TOKEN_DIR when it's set.
 
 Publishing makes the same commits as gitsync.py, one per changed file with the same message, each on the
 repository's latest copy of the file (contents API: read it, make the person's changes in it, write it back
@@ -117,8 +117,12 @@ def _request(method, url, token=None, json_body=None, form=None, timeout=30):
 
 # ---------------------------------------------------------------- the key, kept for this Windows user
 
+# Where the key goes, if not the data root: the Linux app keeps it in its config folder (~/.config/classicvoices)
+TOKEN_DIR = None
+
+
 def _token_path(data_root):
-    return os.path.join(data_root, "github.dat")
+    return os.path.join(TOKEN_DIR or data_root, "github.dat")
 
 
 if os.name == "nt":
@@ -149,7 +153,7 @@ if os.name == "nt":
         if not b.startswith(b"CVD1"):
             raise ValueError("not ours")
         return _dpapi(b[4:], False)
-else:  # tests on a Mac or Linux: a file only this user can read
+else:  # Linux (and tests on a Mac): a file only this user can read
     def _protect(b):
         return b"CVP1" + b
 
@@ -169,9 +173,11 @@ def _load(data_root):
 
 def _save(data_root, tok):
     p = _token_path(data_root)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
+    os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
     raw = _protect(json.dumps(tok).encode("utf-8"))
     fd = os.open(p + ".part", os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+    if os.name != "nt":
+        os.fchmod(fd, 0o600)  # a .part left over from before keeps its mode otherwise
     with os.fdopen(fd, "wb") as f:
         f.write(raw)
     os.replace(p + ".part", p)

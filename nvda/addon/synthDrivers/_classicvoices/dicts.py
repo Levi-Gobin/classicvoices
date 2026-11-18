@@ -533,6 +533,26 @@ def apply_changes(lines, added, changed, removed):
     return out
 
 
+def preview_entries(data_root, name, entry, replacing=None, community=False, scope="alone"):
+    """The entries a preview of entry runs, as .dic text: the entry alone ("alone"), with the entries before it
+    ("earlier") or with the whole file ("all"), in the order the voice applies them (rows(): the fetched entries in
+    order, the person's changes in place, removed ones left out, their additions last). The entry takes the place
+    of the one it replaces (replacing, or its own key); a new one goes last. The fetched entries count only when
+    community is on, as for the voice. (DictionaryStore.previewEntries on iPhone and Mac.)"""
+    if scope == "alone":
+        return entry.line()
+    entries = [r.entry for r in rows(data_root, name)
+               if r.origin != "removed" and (community or r.origin != "community")]
+    keys = {k for k in (replacing, entry.key) if k}
+    at = next((i for i, e in enumerate(entries) if e.key in keys), None)
+    if at is None:
+        entries.append(entry)
+        at = len(entries) - 1
+    else:
+        entries = entries[:at] + [entry] + [e for e in entries[at + 1:] if e.key not in keys]
+    return "\n".join(e.line() for e in (entries[:at + 1] if scope == "earlier" else entries))
+
+
 def file_names(data_root):
     """Every dictionary file there is, fetched or the person's."""
     out = set()
