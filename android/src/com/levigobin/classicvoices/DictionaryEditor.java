@@ -230,16 +230,25 @@ final class DictionaryEditor {
             @Override
             public void onTextChanged(CharSequence s, int x, int y, int z) {}
 
+            // the list follows the search once typing pauses (a dictionary can have hundreds of entries)
+            final Runnable update = new Runnable() {
+                @Override
+                public void run() {
+                    list.removeAllViews();
+                    a.into(list, new Runnable() {
+                        @Override
+                        public void run() {
+                            entries(f);
+                        }
+                    });
+                }
+            };
+
             @Override
             public void afterTextChanged(Editable s) {
                 query = s.toString();
-                list.removeAllViews();
-                a.into(list, new Runnable() {
-                    @Override
-                    public void run() {
-                        entries(f);
-                    }
-                });
+                list.removeCallbacks(update);
+                list.postDelayed(update, 300);
             }
         });
         a.into(list, new Runnable() {
