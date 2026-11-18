@@ -2639,4 +2639,27 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   on the entry list's rows and on the entry page's Preview button. Preview buttons have the startsMediaSession
   trait, so VoiceOver doesn't speak or click when they start; actions-menu items can't be silenced that way (no
   traits on custom actions).
+- Dictionary editor in the Windows and Linux app (2026-11-17): desktop/classicvoices/dicteditor.py, Settings >
+  Edit the pronunciation dictionaries..., the NVDA dialog on the same shared code (dicts.py, gitsync.py,
+  ghpublish.py); a "Voice for previews" choice (your voices of the file's language; Frame.last_voice first);
+  entries in a list box (wx's ListCtrl on GTK is the generic one, which Orca can't read): "pattern: replacement;
+  type[, case sensitive]; whose", Enter edits, Delete removes, the Applications key has
+  Edit/Remove/Restore/Preview/Preview with earlier entries/Preview with all entries (dicts.preview_entries =
+  DictionaryStore.previewEntries); the entry dialog has the three previews. No ui.message in wx: results are
+  message boxes or focus moving to what changed; the sign-in code has its own read-only field. While the dialog
+  is open, dicts.EDITING plus <data>/Dictionaries/editing, touched every 15 s; ports/host/cv_dict.c returns no
+  dictionary while that file is under 45 s old, so SAPI, Speech Dispatcher, cvsay and the NVDA add-on sharing the
+  app's data read uncorrected text too. Publishing: git only when gitsync.can_push says yes (checked when the
+  dialog opens, cached per repository), else the GitHub API (NVDA uses git whenever it's installed; Linux nearly
+  always has git but rarely the right to push); Sign in to GitHub always shown; daily publishing is a switch, off
+  by default (PublishDictionaries; HKCU or settings.conf), checked hourly. Key: Windows <data>/github.dat with
+  DPAPI (the file NVDA uses when it shares the app's data; a second Windows user signing in replaces it), Linux
+  ghpublish.TOKEN_DIR = $XDG_CONFIG_HOME/classicvoices (file 0600, folder 0700, CVP1 marker; no Secret Service).
+  The app's own samples now apply the dictionaries (own entries always, community with the switch).
+  classicvoices-say: -E FILE (only these entries; empty file means none), -e (engine text), -P / -W (X-SAMPA
+  symbols' engine text / words' X-SAMPA, from stdin) for the Linux app's previews, phoneme list and Convert to
+  phonemes. The Windows build adds ctypes.wintypes (ghpublish's DPAPI) to PyInstaller's hidden imports. Tests:
+  tests/desktop_dicts_test.py (wxPython; a stand-in GitHub on 127.0.0.1 and a local bare repository through git's
+  insteadOf: sign-in dialog, fork, own repository, closing question, git, daily; 35 checks); cvsay built on the
+  Mac for the flag and the new options. Not yet run on real Windows or Linux, or against the real GitHub App.
 
