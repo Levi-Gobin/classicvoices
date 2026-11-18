@@ -12,7 +12,6 @@ messages or as focus moving to what changed. While the dialog is open, the voice
 dictionary at all (Dictionaries/editing, touched every 15 seconds: the system's voices, SAPI
 and Speech Dispatcher, read it too), so the patterns are heard as the voices read them by
 themselves; the edits are used from the moment it closes."""
-import os
 import threading
 import webbrowser
 
@@ -254,13 +253,11 @@ class EntryDialog(wx.Dialog):
                 said = {}
         text, done, left = cv_dicts.to_phonemes(self.replacement.GetValue(), regex, lambda w: said.get(w))
         self.replacement.SetValue(text)
-        if done and not left:
-            # focus going back to the field reads its new text
-            pass
-        elif done:
+        # all converted: focus going back to the field reads its new text
+        if done and left:
             wx.MessageBox("Converted {done} words; {left} stayed as they were.".format(done=done, left=left),
                           APP, wx.OK | wx.ICON_INFORMATION, self)
-        else:
+        elif not done:
             wx.MessageBox("Nothing to convert.", APP, wx.OK | wx.ICON_INFORMATION, self)
         self.replacement.SetFocus()
 
