@@ -102,7 +102,9 @@ final class DictionaryEditor {
     private String file() {
         List<String> files = files();
         String chosen = Data.prefs(a).getString("dictionaries.file", "");
-        return files.contains(chosen) ? chosen : files.get(0);
+        if (files.contains(chosen)) return chosen;
+        String own = Locale.getDefault().getLanguage() + ".dic";  // until one is chosen: the phone's language
+        return files.contains(own) ? own : files.get(0);
     }
 
     static String fileLanguage(String file) {
@@ -131,7 +133,8 @@ final class DictionaryEditor {
         // the system's choice for the language first, then by name
         String[] lc = fileLanguage(file).split("-");
         final VoiceInfo first = out.isEmpty() || file.equals("macintalk.dic") ? null
-                : Data.defaultFor(a, lc[0], lc.length > 1 ? lc[1] : "");
+                : Data.defaultFor(a, lc[0], lc.length > 1 ? lc[1]
+                        : lc[0].equals(Locale.getDefault().getLanguage()) ? Locale.getDefault().getCountry() : "");
         Collections.sort(out, new java.util.Comparator<VoiceInfo>() {
             @Override
             public int compare(VoiceInfo x, VoiceInfo y) {

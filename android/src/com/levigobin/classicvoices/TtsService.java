@@ -160,9 +160,12 @@ public class TtsService extends TextToSpeechService {
         if (text == null) text = "";
         // test builds log what they're asked to say (adb logcat -s CVSPEAK), to check TalkBack's wording
         if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) Log.d("CVSPEAK", text);
-        // the dictionary editor's previews (DictionaryEditor.preview): the entries to try, as .dic text
+        // the dictionary editor's previews (MainActivity.speakPreview): the entries to try, as .dic text
         android.os.Bundle params = request.getParams();
         String entries = params != null ? params.getString(PREVIEW_ENTRIES) : null;
+        if (entries != null && (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            Log.d("CVSPEAK", "preview entries: " + entries.replace("\n", " | "));
+        }
         speak(this, v, text, cs instanceof Spanned ? (Spanned) cs : null, request.getSpeechRate(), request.getPitch(),
                 entries, cb);
     }

@@ -247,8 +247,8 @@ final class Dictionaries {
             //noinspection ResultOfMethodCallIgnored
             new File(d, "phonemes").mkdirs();
             String[] src = source(c);
-            String contents = "https://api.github.com/repos/" + src[0] + "/contents/";
-            String raw = "https://raw.githubusercontent.com/" + src[0] + "/" + src[1] + "/";
+            String contents = GitHub.api(c) + "/repos/" + src[0] + "/contents/";
+            String raw = GitHub.raw(c) + "/" + src[0] + "/" + src[1] + "/";
             String ref = "?ref=" + java.net.URLEncoder.encode(src[1], "UTF-8");
             Set<String> names = new HashSet<>();
             names.addAll(listing(contents + ref, "", ".dic"));
@@ -344,7 +344,7 @@ final class Dictionaries {
     private static byte[] get(String url, String etag, String[] etagOut) throws IOException {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setRequestProperty("User-Agent", Source.UA);
-        c.setRequestProperty("Accept", url.startsWith("https://api.github.com/") ? "application/vnd.github+json" : "*/*");
+        c.setRequestProperty("Accept", url.contains("/contents/") ? "application/vnd.github+json" : "*/*");
         if (etag != null) c.setRequestProperty("If-None-Match", etag);
         c.setConnectTimeout(30000);
         c.setReadTimeout(60000);

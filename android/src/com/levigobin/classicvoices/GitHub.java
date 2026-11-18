@@ -88,6 +88,12 @@ final class GitHub {
         return o.isEmpty() ? "https://github.com" : trimSlash(o);
     }
 
+    /** Where the files themselves come from (raw.githubusercontent.com; a mock's /raw in tests). */
+    static String raw(Context c) {
+        String o = debuggable(c) ? state(c).getString("test_api", "") : "";
+        return o.isEmpty() ? "https://raw.githubusercontent.com" : trimSlash(o) + "/raw";
+    }
+
     private static String trimSlash(String s) {
         while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
         return s;
