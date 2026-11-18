@@ -1292,6 +1292,9 @@ public class MainActivity extends Activity implements ImportService.Listener {
             if (type == AccessibilityEvent.TYPE_VIEW_ACCESSIBILITY_FOCUSED && host.getTag() instanceof String) {
                 focusedTag = (String) host.getTag();
             }
+            // a choice reports its selection when a page is built ("All versions" read out on opening a tab);
+            // only a change made on it is worth saying
+            if (type == AccessibilityEvent.TYPE_VIEW_SELECTED && host instanceof Spinner && !host.isAccessibilityFocused()) return;
             super.sendAccessibilityEvent(host, type);
         }
 
@@ -1398,6 +1401,9 @@ public class MainActivity extends Activity implements ImportService.Listener {
         }
         AccessibilityNodeInfo n = v.createAccessibilityNodeInfo();
         CharSequence d = n.getContentDescription() != null ? n.getContentDescription() : n.getText();
+        if (act != null && act.startsWith("focus|") && d != null && d.toString().contains(act.substring(6))) {
+            v.performAccessibilityAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null);
+        }
         StringBuilder acts = new StringBuilder();
         for (AccessibilityNodeInfo.AccessibilityAction x : n.getActionList()) {
             if (x.getLabel() == null) continue;
