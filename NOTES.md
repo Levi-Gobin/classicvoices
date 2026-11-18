@@ -2662,4 +2662,36 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   tests/desktop_dicts_test.py (wxPython; a stand-in GitHub on 127.0.0.1 and a local bare repository through git's
   insteadOf: sign-in dialog, fork, own repository, closing question, git, daily; 35 checks); cvsay built on the
   Mac for the flag and the new options. Not yet run on real Windows or Linux, or against the real GitHub App.
+- Android dictionary editor and publishing (2026-11-17/18; Nico's iPhone design; 390337b..9ec63a9): a
+  Dictionaries tab (shown iOS, macOS, Dictionaries, Settings; internal tab 3, so stored tab numbers keep their
+  meaning) in DictionaryEditor.java, drawn with MainActivity's page helpers (Back and where-you-are, drill-down
+  pages: entry, phonemes, source, publishing, signin). List: Dictionary choice (the phone's language file until
+  one is chosen), Add entry, search (updates 300 ms after typing pauses; en.dic's 536 lines take about 180 ms to
+  build on cv33), rows "pattern, replaced by …, whose" that edit when activated; Preview / with earlier / with
+  all, Remove, Restore the community's as TalkBack custom actions (res/values/ids.xml) and a long-press menu;
+  More: Download the latest dictionaries (switch or not; Updated / Up to date alert), Source
+  (Dictionaries/source.json as on iOS/NVDA), Publishing. Entry page in the NVDA order, with Insert phoneme
+  (phonemes/<lang>.txt or the generic list, kept to the sounds vx_phoneme_text gives the voice, a Preview action
+  each) and Convert to phonemes (vxs_text_xsampa on a stream of its own); Save checks pattern, unclosed ~~, and
+  the regex through PCRE2 (Native.regexCompiles), and asks before an empty replacement. DictionaryStore.java
+  ports DictionaryStore.swift and DictionaryChanges (Mine/, .removed, put keeps place, tidy, previewEntries,
+  message, Summary); Dictionaries.java fetches phonemes/*.txt too and tidies after a fetch; while the tab is on
+  screen and the app is in front the voices use no dictionary (Dictionaries.editing, the same process as
+  TtsService). Previews go through the app's own TextToSpeech with the request parameter
+  com.levigobin.classicvoices.previewEntries (TtsService -> Native.beginWithEntries -> cv_dict_from_text), so
+  they queue behind TalkBack's speech. GitHub.java = GitHubPublishing.swift (device flow riding out dropped
+  connections and 5xx, refresh 5 min early, 401 renews once, contents API PUT with sha, 409 or 422-sha tried
+  again on the new copy, NEEDS_FORK -> "Publish to your own copy?" -> POST forks, polled, remembered per source
+  and login in the "publishing" prefs, forgotten on sign-out; NEEDS_INSTALL -> "Allow Classic Voices on GitHub");
+  tokens in files/github.dat as "CVK1" + IV + AES-GCM with an AndroidKeyStore key, so publishing needs Android
+  6+. Publish with no sign-in opens the sign-in, then publishes; leaving the tab (or Back at its root) with
+  unpublished changes and no sign-in asks Yes / No / Don't show again; "Publish automatically once a day" (off by
+  default) runs when the app comes to the front. Test builds: --es github_api/github_web <mock> (also used for
+  fetching: <api>/raw/<repo>/<branch>/), --ei tab 3, --ez a11ylog / --es a11yact "Action|description" (logcat
+  CVA11Y), CVSPEAK shows "[preview: …]" and "[no dictionaries]"; DEBUG=1 build.sh allows plain http in its own
+  manifest copy (the release manifest has neither cleartext nor debuggable). Also: MainActivity's Delegate drops
+  a Spinner's TYPE_VIEW_SELECTED unless it has TalkBack's focus (pages no longer read out "All versions" when
+  built). Tested on cv33 with real TalkBack against a Python mock GitHub (sign-in with a dropped poll, fork path,
+  409 retry, 401 refresh, tidy after publishing); not tested against the real GitHub, with TalkBack's gesture
+  actions menu, the daily publish, Android 5, 32-bit ABIs at run time, or by ear (the emulator has no audio).
 
