@@ -180,6 +180,17 @@ public class MainActivity extends Activity implements ImportService.Listener {
         String api = getIntent().getStringExtra("github_api");
         if (api != null) GitHub.setTestAddresses(this, api, getIntent().getStringExtra("github_web"));
         if (getIntent().hasExtra("tab")) Data.prefs(this).edit().putInt("tab", getIntent().getIntExtra("tab", 0)).apply();
+        // what TalkBack is given: each control's description and custom actions (adb logcat -s CVA11Y); --es
+        // a11yact "<action>|<description part>" also runs that action as TalkBack would
+        if (getIntent().getBooleanExtra("a11ylog", false) || getIntent().hasExtra("a11yact")) {
+            final String act = getIntent().getStringExtra("a11yact");
+            body.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    a11yWalk(body, act);
+                }
+            }, 2500);
+        }
         String imports = getIntent().getStringExtra("import");
         if (imports != null) {
             for (String k : imports.split(",")) {
@@ -1378,6 +1389,28 @@ public class MainActivity extends Activity implements ImportService.Listener {
             public void onNothingSelected(AdapterView<?> p) {}
         });
         add(s, tag);
+    }
+
+    private void a11yWalk(View v, String act) {
+        if (v instanceof ViewGroup) {
+            for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) a11yWalk(((ViewGroup) v).getChildAt(i), act);
+            return;
+        }
+        AccessibilityNodeInfo n = v.createAccessibilityNodeInfo();
+        CharSequence d = n.getContentDescription() != null ? n.getContentDescription() : n.getText();
+        StringBuilder acts = new StringBuilder();
+        for (AccessibilityNodeInfo.AccessibilityAction x : n.getActionList()) {
+            if (x.getLabel() == null) continue;
+            acts.append(" [").append(x.getLabel()).append(']');
+            if (act != null && d != null && act.equals(x.getLabel() + "|" + act.substring(act.indexOf('|') + 1))
+                    && d.toString().contains(act.substring(act.indexOf('|') + 1))
+                    && act.startsWith(x.getLabel() + "|")) {
+                android.util.Log.d("CVA11Y", "performing " + x.getLabel() + " on " + d);
+                v.performAccessibilityAction(x.getId(), null);
+                act = null;
+            }
+        }
+        android.util.Log.d("CVA11Y", n.getClassName() + ": " + d + (n.isEnabled() ? "" : " (dimmed)") + acts);
     }
 
     // ---------------------------------------------------------------- for the Dictionaries tab (DictionaryEditor)
