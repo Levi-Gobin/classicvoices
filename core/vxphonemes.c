@@ -1116,7 +1116,7 @@ static int symbol_ipa(const char *y, int english, Str *o) {
     static const struct { const char *y; uint32_t ipa; } kPrefer[] = {
         {"$", 0x259}, {"E0", 0x25C}, {"A", 0x251}, {"O", 0x254}, {"^", 0x28C}, {"@", 0xE6}, {"U", 0x28A}, {"I", 0x26A},
         {"E", 0x25B}, {"R+", 0x279}, {"r6", 0x27E}, {"nK", 0x14B}, {"J", 0x272}, {"S", 0x283}, {"Z", 0x292},
-        {"T", 0x3B8}, {"D", 0xF0}, {"x", 'x'}, {"?", 0x294},
+        {"T", 0x3B8}, {"D", 0xF0}, {"x", 'x'}, {"?", 0x294}, {"l", 'l'},
     };
     for (size_t i = 0; i < sizeof kPrefer / sizeof *kPrefer; i++)
         if (!strcmp(y, kPrefer[i].y)) {

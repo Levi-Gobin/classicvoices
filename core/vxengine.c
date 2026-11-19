@@ -45,6 +45,7 @@ typedef struct {
     uint32_t fn_resourceload;  // stripped builds: found by matching iOS 5's _vauto_ttsResourceLoad
     int rate_khz;
     int split_broker;  // iOS 3: common/broker.hdr + per-language broker.hdr, language from pipeline string
+    uint32_t mark_size;  // sizeof(VE_MARKINFO) when it isn't MARK_SIZE: 36 on iOS 3 and 4
 } Build;
 
 static const Build kBuilds[] = {
@@ -54,16 +55,16 @@ static const Build kBuilds[] = {
     {"iOS 6.1.6 (10B500)", 0x206A54, 0x208B08, 0x208B18, 0x208B28, 0, 0, 0, 0, 0, 0, 22, 0},
     {"iOS 5.1.1 (9B206)", 0x202A7C, 0x204A34, 0x204A44, 0x204A60, 0, 0, 0, 0, 0, 0, 22, 0},
     {"iOS 3.1.3 (7E18)", 0x18FAB0, 0x190C54, 0x190C44, 0x190C28,
-     0xC0510, 0xBF914, 0xBECE0, 0xBDBB0, 0xBF61C, 0xBE438, 16, 1},
+     0xC0510, 0xBF914, 0xBECE0, 0xBDBB0, 0xBF61C, 0xBE438, 16, 1, 36},
     {"iOS 4.3.5 (8L1)", 0x1C2A70, 0x1C4968, 0x1C4958, 0x1C493C,
-     0xC9618, 0xC90F0, 0xCA98C, 0xC83B0, 0xCA738, 0xCA85C, 16, 1},
+     0xC9618, 0xC90F0, 0xCA98C, 0xC83B0, 0xCA738, 0xCA85C, 16, 1, 36},
 };
 
 #define VE_MSG_OUTBUFREQ  0x8u
 #define VE_MSG_OUTBUFDONE 0x10u
 #define VE_USER_STOP      0x80000200u
 #define MARK_SLOTS 0x500u  // markers the engine may write per output buffer
-#define MARK_SIZE 40u      // sizeof(VE_MARKINFO) in these engines (it was allotted 32: too small)
+#define MARK_SIZE 40u      // sizeof(VE_MARKINFO) from iOS 5 on (it was allotted 32: too small); Build.mark_size
 
 typedef void (*Hle)(Vx *vx);
 
@@ -1361,9 +1362,10 @@ static void outnotify(Vx *vx) {
         uint32_t mc = g32(&vx->cpu.k, param + 12), mp = g32(&vx->cpu.k, param + 16);
         if ((vx->word_cb || vx->phon_cb) && mp && !vx->cancelled) {
             if (mc > MARK_SLOTS) mc = MARK_SLOTS;
-            check_range(vx, mp, mc * MARK_SIZE);
+            uint32_t size = vx->build->mark_size ? vx->build->mark_size : MARK_SIZE;
+            check_range(vx, mp, mc * size);
             for (uint32_t i = 0; i < mc; i++) {
-                uint32_t q = mp + i * MARK_SIZE;
+                uint32_t q = mp + i * size;
                 uint32_t type = g32(&vx->cpu.k, q + 4);
                 if (vx->word_cb && (type == VX_MARK_SENTENCE || type == VX_MARK_WORD || type == VX_MARK_BOOKMARK))
                     vx->word_cb(vx->word_ctx, type, g32(&vx->cpu.k, q + 8) / 2, g32(&vx->cpu.k, q + 12) / 2,

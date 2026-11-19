@@ -2615,6 +2615,18 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   vx_lhp_to_xsampa maps them back: each symbol to the sound whose first spelling it is (a few preferred for
   ambiguous ones; English E0 is ɝ), & pairs split, suffixes as modifiers (English aspiration left out), then
   IPA to X-SAMPA. No stress marks (the engine doesn't report stress). NVDA engine interface 10.
+- Convert to Phonemes fixes (Levi, 2026-11-19: "search" gave no phonemes): three bugs, found with cvsay -W on
+  every voice. (1) iOS 3 and 4 write VE_MARKINFO 36 bytes apart, not 40 (Build.mark_size): every marker after the
+  first in an output buffer was read at the wrong place, so the first phonemes of a word were lost (search ->
+  3`tS) and those engines' word marks and bookmarks were garbled (made-up types 0/38/320, words missing), which
+  also fed NVDA's and SAPI's word positions. (2) load_symbols read only the voice's own clc_<lang>_<voice>_cfg;
+  iOS 6 Karen's has no t&S or d&Z, so any word with them (search, church, judge) had no phonemes. The language's
+  clc_<lang>_cfg now fills codes the voice's leaves out (priority +1000, so the voice's own symbols still win),
+  and of several symbols for one code the one spelled as the code's own letter wins (Czech 109: m over its
+  allophone M, which converted mama to FaFa). (3) The reverse converter took L&H+ l as the first sound spelled l
+  in kBase, which is ɬ, so every l came out as X-SAMPA K (hello -> hEKoU); l is now in kPrefer. Checked: 138
+  voices with radio/mama/chocolate/kilometer/taxi/hello, every change an improvement; speech audio byte-identical
+  before and after on five voices.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound
@@ -2694,4 +2706,3 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   built). Tested on cv33 with real TalkBack against a Python mock GitHub (sign-in with a dropped poll, fork path,
   409 retry, 401 refresh, tidy after publishing); not tested against the real GitHub, with TalkBack's gesture
   actions menu, the daily publish, Android 5, 32-bit ABIs at run time, or by ear (the emulator has no audio).
-

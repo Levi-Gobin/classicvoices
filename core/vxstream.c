@@ -877,7 +877,10 @@ static void load_symbols(EngineSlot *e) {
     struct dirent *de;
     while ((de = readdir(dir))) {
         const char *n = de->d_name;
-        if (strncmp(n, "phonmap_", 8) && (strncmp(n, "clc_", 4) || !strstr(n + 4, "_cfg") || strstr(n, "_cfg") == n + 7)) continue;
+        // the voice's own clc_<lang>_<voice>_cfg; the language's clc_<lang>_cfg only for codes the voice's leaves out
+        // (iOS 6 Karen's has no t&S or d&Z, so "search" had no phonemes)
+        int general = !strncmp(n, "clc_", 4) && strstr(n, "_cfg") == n + 7;
+        if (strncmp(n, "phonmap_", 8) && (strncmp(n, "clc_", 4) || !strstr(n + 4, "_cfg"))) continue;
         char path[1400];
         snprintf(path, sizeof path, "%s/%s", e->ldir, n);
         FILE *f = fopen(path, "rb");
@@ -912,7 +915,8 @@ static void load_symbols(EngineSlot *e) {
                     ks++;
                     kl--;
                 }
-                int p = (quote ? 0 : 100) + (int)kl;
+                // of symbols for one code, the one spelled as the code's own letter (Czech m over M, its allophone)
+                int p = (general ? 1000 : 0) + (quote ? 0 : 100) + (int)kl * 2 - (kl == 1 && (unsigned char)ks[0] == val[0]);
                 if (e->sym[val[0]] && pri[val[0]] <= p) continue;
                 free(e->sym[val[0]]);
                 e->sym[val[0]] = strndup(ks, kl);
