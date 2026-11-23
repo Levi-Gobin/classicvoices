@@ -1004,7 +1004,8 @@ static int plain_phonemes(EngineSlot *e, Vx *vx, const char *text, char *out, si
 }
 
 // How this voice ends `word` past its first `stem` bytes, in L&H+ ("boosted", 5 -> "I d"): its phonemes for the
-// whole word less as many as it says for the stem alone. NULL if that can't be told. (A community dictionary's
+// whole word less as many as it says for the stem alone. NULL if that can't be told, "" if the ending
+// is silent (rewrit|e). (A community dictionary's
 // phonetic span followed by letters: cv_dict.h.)
 static const char *spliced_suffix(VxStream *s, Vx *vx, const char *word, size_t stem) {
     EngineSlot *e = NULL;
@@ -1020,10 +1021,12 @@ static const char *spliced_suffix(VxStream *s, Vx *vx, const char *word, size_t 
     snprintf(stem_text, sizeof stem_text, "%.*s", (int)stem, word);
     char *lhp = NULL;
     if (plain_phonemes(e, vx, word, whole, sizeof whole, &nw) && plain_phonemes(e, vx, stem_text, part, sizeof part, &ns) &&
-        ns > 0 && nw > ns) {
+        ns > 0 && nw >= ns) {
         const char *q = whole;
         for (int i = 0; i < ns && q; i++) { q = strchr(q, ' '); if (q) q++; }
-        if (q && *q) lhp = strdup(q);
+        // as many sounds as the stem: the ending is silent (rewrit|e, Levi: "rewrite e")
+        if (nw == ns) lhp = strdup("");
+        else if (q && *q) lhp = strdup(q);
     }
     int slot = e->nspliced++ % 32;
     if (e->nspliced > 32) free(e->spliced[slot].lhp);
@@ -1359,7 +1362,8 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
             if (!suffix) continue;
             EngineSlot *slot = NULL;
             for (int i = 0; i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) slot = &s->engines[i];
-            char *joined = slot ? spliced_word(slot, x, (size_t)(xe - x), suffix) : NULL;
+            // a silent ending: the phonemes as written, the letters left out
+            char *joined = !*suffix ? strndup(x, (size_t)(xe - x)) : slot ? spliced_word(slot, x, (size_t)(xe - x), suffix) : NULL;
             SEG_PUT(kLhpIn, sizeof kLhpIn - 1, pending_pre ? pending_at : (size_t)(p - text));
             PUT_PENDING_PREFIX(joined ? joined : x);
             if (joined) {
