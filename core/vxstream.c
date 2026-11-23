@@ -1803,8 +1803,98 @@ void vxs_set_spelling_pauses(VxStream *s, int on) { atomic_store(&s->spelling_pa
 
 void vxs_set_spell_lowercase(VxStream *s, int on) { atomic_store(&s->spell_lowercase, on ? 1 : 0); }
 
+// Community dictionaries are for every voice of a language, so Convert to Phonemes writes what a dialect merges
+// as the dialect that keeps it apart says it (Nico's conventions): where a US voice says A or a flap and a British
+// voice says Q, t or d, the British sound is written. Each voice here turns the written sound back into its own
+// (Samantha flaps a written t, Monica says T as s, Amelie says t before y as ts, Xander says G as x), checked
+// 2026-11-23. Brazilian Portuguese doesn't (a written t before i stays t, l stays l), so it isn't here.
+static const struct { const char *lang, *ref, *from, *to; } kDialect[] = {
+    {"en-US", "en-GB", "A", "Q"}, {"en-US", "en-GB", "4", "t d"},
+    {"es", "es-ES", "s", "T"},  // every Spanish but Spain's
+    {"fr-CA", "fr-FR", "ts", "t"}, {"fr-CA", "fr-FR", "dz", "d"},
+    {"fr-CA", "fr-FR", "I", "i"}, {"fr-CA", "fr-FR", "Y", "y"}, {"fr-CA", "fr-FR", "U", "u"},
+    {"fr-FR", "fr-CA", "a", "A"},  // patte, pâte
+    {"nl-NL", "nl-BE", "x", "G"},
+};
+
+// Whether a language tag is lang ("en-US", "en_us"); a bare "es" stands for every es-* but the reference's.
+static int dialect_is(const char *language, const char *lang, const char *ref) {
+    size_t n = strlen(lang);
+    for (size_t i = 0; i < n; i++) {
+        char a = language[i] == '_' ? '-' : (char)tolower((unsigned char)language[i]), b = (char)tolower((unsigned char)lang[i]);
+        if (a != b) return 0;
+    }
+    if (language[n] && language[n] != '-' && language[n] != '_') return 0;
+    return n > 2 || !language[n] || !dialect_is(language, ref, "");  // "es": not es-ES itself
+}
+
+// One voice's phonemes for a text as X-SAMPA, a sound per token (`max` at most); -1 if it can't say them.
+static int xsampa_tokens(VxStream *s, const char *key, const char *language, const char *text, int evict,
+                         const char *keep, char tok[][16], int max) {
+    Vx *vx = engine_for_opt(s, key, "", evict, keep);
+    EngineSlot *e = NULL;
+    for (int i = 0; vx && i < MAX_ENGINES; i++) if (s->engines[i].vx == vx) e = &s->engines[i];
+    char sym[512];
+    int n = 0, k = 0;
+    if (!e) return -1;
+    if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
+    if (!plain_phonemes(e, vx, text, sym, sizeof sym, &n)) return -1;
+    for (const char *p = sym; *p && k < max;) {
+        size_t l = strcspn(p, " ");
+        char one[16];
+        snprintf(one, sizeof one, "%.*s", (int)(l < sizeof one ? l : sizeof one - 1), p);
+        p += l + (p[l] == ' ');
+        char *x = vx_lhp_to_xsampa(one, language);
+        if (!x) return -1;
+        if (*x && strlen(x) < 16) strcpy(tok[k++], x);
+        free(x);
+    }
+    return k;
+}
+
+static int is_vowel_token(const char *x) {
+    char *ipa = vx_xsampa_to_ipa(x, strlen(x), NULL);
+    int v = ipa && vx_ipa_has_vowel(ipa);
+    free(ipa);
+    return v;
+}
+
+// The rule taking a's sound to b's for this language, or -1.
+static int dialect_rule(const char *language, const char *ref, const char *a, const char *b) {
+    for (size_t i = 0; i < sizeof kDialect / sizeof *kDialect; i++) {
+        if (strcmp(kDialect[i].ref, ref) || strcmp(kDialect[i].from, a) || !dialect_is(language, kDialect[i].lang, ref)) continue;
+        for (const char *t = kDialect[i].to; *t;) {
+            size_t l = strcspn(t, " ");
+            if (l == strlen(b) && !strncmp(t, b, l)) return (int)i;
+            t += l + (t[l] == ' ');
+        }
+    }
+    return -1;
+}
+
+// The reference dialect's voice: the same release's first, then iOS 6, 5, 4 and 3's (every platform has those).
+static int reference_tokens(VxStream *s, const char *voice_key, const char *ref, const char *text, char tok[][16], int max) {
+    const char *slash = strchr(voice_key, '/');
+    size_t bl = slash ? (size_t)(slash - voice_key) : 0;
+    if (bl && voice_key[bl - 1] == 'e') bl--;  // an enhanced voice: its release's compact
+    char key[64];
+    const char *builds[] = {"", "ios6", "ios5", "ios4", "ios3"};
+    for (size_t i = 0; i < sizeof builds / sizeof *builds; i++) {
+        if (i == 0 && (!bl || !strncmp(voice_key, "mac", 3) || !strncmp(voice_key, "siri", 4))) continue;
+        if (i == 0) snprintf(key, sizeof key, "%.*s/%s", (int)bl, voice_key, ref);
+        else snprintf(key, sizeof key, "%s/%s", builds[i], ref);
+        if (i > 0 && bl == strlen(builds[i]) && !strncmp(voice_key, builds[i], bl)) continue;  // tried first
+        int n = xsampa_tokens(s, key, ref, text, 0, voice_key, tok, max);
+        if (n >= 0) return n;
+    }
+    return -1;
+}
+
 char *vxs_text_xsampa(VxStream *s, const char *voice_key, const char *language, const char *text) {
     if (!s || !voice_key || !text || !*text || is_mt_key(voice_key) || strlen(text) > 100) return NULL;
+    const char *ref = NULL;
+    for (size_t i = 0; language && i < sizeof kDialect / sizeof *kDialect && !ref; i++)
+        if (dialect_is(language, kDialect[i].lang, kDialect[i].ref)) ref = kDialect[i].ref;
     pthread_mutex_lock(&s->mu);
     Vx *vx = engine_for(s, voice_key, "");
     EngineSlot *e = NULL;
@@ -1815,8 +1905,49 @@ char *vxs_text_xsampa(VxStream *s, const char *voice_key, const char *language, 
         if (!e->sym_read) { load_symbols(e); e->sym_read = 1; }
         ok = plain_phonemes(e, vx, text, sym, sizeof sym, &n);
     }
+    char a[64][16], b[64][16];
+    int na = -1, nb = -1;
+    if (ok && n && ref) {
+        na = xsampa_tokens(s, voice_key, language, text, 1, NULL, a, 64);
+        if (na > 0) nb = reference_tokens(s, voice_key, ref, text, b, 64);
+    }
     pthread_mutex_unlock(&s->mu);
-    return ok && n ? vx_lhp_to_xsampa(sym, language) : NULL;
+    if (!ok || !n) return NULL;
+    if (na <= 0 || nb <= 0) return vx_lhp_to_xsampa(sym, language);
+    // Line the two up sound by sound (fewest changes: a vowel for a vowel and a consonant for a consonant are
+    // cheaper than across, and a rule's pair cheapest), then take the reference's sound where a rule says so.
+    static const int kGap = 4;
+    int d[65][65];
+    unsigned char va[64], vb[64];
+    for (int i = 0; i < na; i++) va[i] = (unsigned char)is_vowel_token(a[i]);
+    for (int j = 0; j < nb; j++) vb[j] = (unsigned char)is_vowel_token(b[j]);
+    for (int i = 0; i <= na; i++) d[i][0] = i * kGap;
+    for (int j = 0; j <= nb; j++) d[0][j] = j * kGap;
+    for (int i = 1; i <= na; i++)
+        for (int j = 1; j <= nb; j++) {
+            int c = !strcmp(a[i - 1], b[j - 1]) ? 0 : dialect_rule(language, ref, a[i - 1], b[j - 1]) >= 0 ? 1
+                    : va[i - 1] == vb[j - 1] ? 3 : 6;
+            int m = d[i - 1][j - 1] + c;
+            if (d[i - 1][j] + kGap < m) m = d[i - 1][j] + kGap;
+            if (d[i][j - 1] + kGap < m) m = d[i][j - 1] + kGap;
+            d[i][j] = m;
+        }
+    for (int i = na, j = nb; i > 0 && j > 0;) {
+        int same = !strcmp(a[i - 1], b[j - 1]), rule = same ? -1 : dialect_rule(language, ref, a[i - 1], b[j - 1]);
+        int c = same ? 0 : rule >= 0 ? 1 : va[i - 1] == vb[j - 1] ? 3 : 6;
+        if (d[i][j] == d[i - 1][j - 1] + c) {
+            if (rule >= 0) strcpy(a[i - 1], b[j - 1]);
+            i--, j--;
+        } else if (d[i][j] == d[i - 1][j] + kGap) i--;
+        else j--;
+    }
+    size_t len = 1;
+    for (int i = 0; i < na; i++) len += strlen(a[i]);
+    char *o = malloc(len);
+    if (!o) return NULL;
+    o[0] = 0;
+    for (int i = 0; i < na; i++) strcat(o, a[i]);
+    return o;
 }
 
 void vxs_cancel(VxStream *s) {

@@ -2627,6 +2627,16 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   in kBase, which is ɬ, so every l came out as X-SAMPA K (hello -> hEKoU); l is now in kPrefer. Checked: 138
   voices with radio/mama/chocolate/kilometer/taxi/hello, every change an improvement; speech audio byte-identical
   before and after on five voices.
+- Dialect conventions (Nico, 2026-11-23): Convert to Phonemes writes what a dialect merges as the dialect that
+  keeps it apart says it, since a community dictionary is for every voice of its language: US English takes Q
+  and t/d from a British voice where it says A or a flap; Latin American Spanish takes T from Spain's; Canadian
+  French takes t, d, i, y, u from France's for its ts, dz, I, Y, U, and French French takes Canada's A (pâte);
+  Netherlands Dutch takes Belgium's G (kDialect in vxstream.c). The two are lined up sound by sound (fewest
+  changes). The reference voice is the same release's compact, else iOS 6, 5, 4, 3; without one, nothing
+  changes. Each voice turns the written sound back into its own (Samantha flaps a written t, Monica says T as s,
+  Amelie t before y as ts, Xander G as x); Brazilian Portuguese doesn't (t before i stays t), so it's left out.
+  A voice without ɒ (Samantha) now says Q as A, not O ("lot" was "lawt"). Insert Phoneme's Hear: a period
+  before the example word, and a consonant between two a's with the second stressed.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound

@@ -357,7 +357,7 @@ static const struct { uint32_t ipa; const char *lhp; int vowel; } kBase[] = {
     {0x153, "E+|e+|E|e", 1}, {0x25C, "E0|$|E|e", 1}, {0x25E, "E0|$", 1},
     {0x28C, "^|$|a|A|o", 1}, {0x254, "O|o", 1}, {0xE6, "@|E|a|e", 1},
     {0x250, "a0|$|^|a", 1}, {'a', "a|A|@|a0|^", 1}, {0x276, "E+|a", 1},
-    {0x251, "A|a|A+|@", 1}, {0x252, "A+|O|A|o", 1},
+    {0x251, "A|a|A+|@", 1}, {0x252, "A+|A|O|o", 1},
     {0x25A, "$ R+|$%r|$", 1}, {0x25D, "E0 R+|E0", 1},
     // plosives (a voice without voiced ones, Danish's, says them as its plain p t k)
     {'p', "p", 0}, {'b', "b|p", 0}, {'t', "t", 0}, {'d', "d|t", 0}, {0x288, "t+|t", 0},

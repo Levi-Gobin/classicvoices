@@ -141,8 +141,8 @@ int main(int argc, char **argv) {
                 char *alone = ipa ? vx_phoneme_text(paths.voices, paths.downloads, v->key, v->language, ipa, 0) : NULL;
                 char *between = NULL;
                 if (ipa && alone) {
-                    char *aa = malloc(strlen(ipa) + 3);
-                    sprintf(aa, "a%sa", ipa);
+                    char *aa = malloc(strlen(ipa) + 5);
+                    sprintf(aa, "a%s\xcb\x88" "a", ipa);
                     between = vx_phoneme_text(paths.voices, paths.downloads, v->key, v->language, aa, 0);
                     free(aa);
                 }
