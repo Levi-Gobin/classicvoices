@@ -506,7 +506,7 @@ class Phonetics:
             for x in symbols:
                 ipa = lib.xsampa_to_ipa(x) if x else None
                 alone = lib.phoneme_text(vr, dr, self.key, self.language, ipa, False) if ipa else None
-                between = lib.phoneme_text(vr, dr, self.key, self.language, "a" + ipa + "a", False) if alone else None
+                between = lib.phoneme_text(vr, dr, self.key, self.language, "a" + ipa + "\u02c8a", False) if alone else None
                 out.append((ipa, bool(ipa) and lib.ipa_has_vowel(ipa), alone, between))
             return out
         lines = self._run("-P", symbols)

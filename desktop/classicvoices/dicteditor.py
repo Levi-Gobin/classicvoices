@@ -127,7 +127,7 @@ class PhonemeDialog(wx.Dialog):
             if not ipa or not own or own in seen:
                 continue  # the voice hasn't got it (or says it as one already in the list)
             seen.add(own)
-            # a consonant is heard between two a's: alone, some voices say nothing
+            # a consonant is heard between two a's, the second stressed: alone, some voices say nothing
             out.append((x, ex, own if vowel else (between or own)))
         return out
 
@@ -137,7 +137,7 @@ class PhonemeDialog(wx.Dialog):
             return
         _x, ex, heard = self.items[i]
         example = ex.replace("\x1b", "")
-        self.voice.say(heard + ("  " + example if example else ""), engine=True)
+        self.voice.say(heard + (". " + example if example else ""), engine=True)
 
     def onKey(self, evt):
         if evt.GetKeyCode() == wx.WXK_SPACE:

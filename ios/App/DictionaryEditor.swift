@@ -518,8 +518,8 @@ struct PhonemePage: View {
             guard let ipa = VoiceEngine.ipa(xsampa: x),
                   let own = VoiceEngine.phonemeText(key: key, language: lang, ipa: ipa), !seen.contains(own) else { continue }
             seen.insert(own)  // the voice says it as one already in the list
-            // a consonant is heard between two a's: alone, some voices say nothing
-            let heard = VoiceEngine.hasVowel(ipa: ipa) ? own : (VoiceEngine.phonemeText(key: key, language: lang, ipa: "a" + ipa + "a") ?? own)
+            // a consonant is heard between two a's, the second stressed: alone, some voices say nothing
+            let heard = VoiceEngine.hasVowel(ipa: ipa) ? own : (VoiceEngine.phonemeText(key: key, language: lang, ipa: "a" + ipa + "ˈa") ?? own)
             out.append((x, ex, heard))
         }
         return out
@@ -533,7 +533,7 @@ struct PhonemePage: View {
     static func hear(_ item: (xsampa: String, example: String, heard: String), voiceKey: String, library: VoiceLibrary) {
         guard let v = library.items.first(where: { $0.entry?.key == voiceKey }) else { return }
         let word = item.example.replacingOccurrences(of: "\u{1b}", with: " ")
-        DirectPlayer.shared.tryOut("", engineText: item.heard + (word.isEmpty ? "" : "  " + word), voiceKey: voiceKey,
+        DirectPlayer.shared.tryOut("", engineText: item.heard + (word.isEmpty ? "" : ". " + word), voiceKey: voiceKey,
                                    language: v.language, rules: nil, rulesPack: nil, settings: library.settings)
     }
 }

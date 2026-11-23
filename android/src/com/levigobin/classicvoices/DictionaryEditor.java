@@ -758,8 +758,8 @@ final class DictionaryEditor {
             if (ipa == null) continue;
             String own = Native.phonemeText(v.key, v.language, ipa.getBytes(UTF8));
             if (own == null || !seen.add(own)) continue;  // the voice says it as one already in the list
-            // a consonant is heard between two a's: alone, some voices say nothing
-            String heard = Native.ipaHasVowel(ipa.getBytes(UTF8)) ? l[0] : "a" + l[0] + "a";
+            // a consonant is heard between two a's, the second stressed: alone, some voices say nothing
+            String heard = Native.ipaHasVowel(ipa.getBytes(UTF8)) ? l[0] : "a" + l[0] + "\"a";
             out.add(new String[] {l[0], l[1], heard});
         }
         soundsFor = v.key;
@@ -790,7 +790,7 @@ final class DictionaryEditor {
                 public void run() {
                     // the sound, then its example word: a made-up word the entry turns into the sound
                     String word = it[1].replace('\u001b', ' ');
-                    a.speakPreview(v, "cvsoundcv" + (word.isEmpty() ? "" : ", " + word), "cvsoundcv\t~~" + it[2] + "~~\t1\t2");
+                    a.speakPreview(v, "cvsoundcv" + (word.isEmpty() ? "" : ". " + word), "cvsoundcv\t~~" + it[2] + "~~\t1\t2");
                 }
             };
             attach(b, label, new Actions(Collections.singletonList(R.id.dict_action_preview),
