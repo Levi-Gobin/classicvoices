@@ -2637,6 +2637,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   Amelie t before y as ts, Xander G as x); Brazilian Portuguese doesn't (t before i stays t), so it's left out.
   A voice without ɒ (Samantha) now says Q as A, not O ("lot" was "lawt"). Insert Phoneme's Hear: a period
   before the example word, and a consonant between two a's with the second stressed.
+- Stale dictionary after an edit (Nico, 2026-11-23): cv_dict knew a set of files by path, size and mtime in
+  seconds, so an edit that kept the length within the same second (or anywhere the time isn't reliable) read
+  the old copy. Files up to SYNC_BYTES now add an FNV-1a hash of their contents to the key (microseconds). The
+  Apple apps' loader keeps sub-second times and wasn't affected.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound

@@ -500,6 +500,24 @@ static int editing(const char *dir) {
     return age > -45 && age < 45;
 }
 
+// A file as the dictionary cache knows it: its path, size and time, and for a small one its contents too (an edit
+// that keeps the length within the same second, or wherever the time isn't kept to the second, is still a change;
+// Nico: an edited replacement was heard as before). Small files cost microseconds to read.
+static void stamp(char *out, size_t cap, const char *prefix, const char *path, const struct stat *st) {
+    uint32_t h = 2166136261u;
+    if (st->st_size <= SYNC_BYTES) {
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            unsigned char buf[4096];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+                for (size_t i = 0; i < n; i++) h = (h ^ buf[i]) * 16777619u;
+            fclose(f);
+        }
+    }
+    snprintf(out, cap, "%s%s:%lld:%lld:%08x|", prefix, path, (long long)st->st_size, (long long)st->st_mtime, h);
+}
+
 const CvDict *cv_dict_for_voice_ex(const char *dir, const char *voice_key, const char *language, int community) {
     if (!dir || !*dir || !voice_key || editing(dir)) return NULL;
     // the files' names, narrowest first
@@ -528,19 +546,19 @@ const CvDict *cv_dict_for_voice_ex(const char *dir, const char *voice_key, const
         char part[3000] = "";
         snprintf(f->mine, sizeof f->mine, "%s/Mine/%s", dir, names[i]);
         if (file_exists(f->mine, &st)) {
-            snprintf(part, sizeof part, "%s:%lld:%lld|", f->mine, (long long)st.st_size, (long long)st.st_mtime);
+            stamp(part, sizeof part, "", f->mine, &st);
             total += (long long)st.st_size;
         } else f->mine[0] = 0;
         if (community) {
             snprintf(f->path, sizeof f->path, "%s/%s", dir, names[i]);
             if (file_exists(f->path, &st)) {
                 size_t pl = strlen(part);
-                snprintf(part + pl, sizeof part - pl, "%s:%lld:%lld|", f->path, (long long)st.st_size, (long long)st.st_mtime);
+                stamp(part + pl, sizeof part - pl, "", f->path, &st);
                 total += (long long)st.st_size;
                 snprintf(f->removed, sizeof f->removed, "%s/Mine/%s.removed", dir, names[i]);
                 if (file_exists(f->removed, &st)) {
                     pl = strlen(part);
-                    snprintf(part + pl, sizeof part - pl, "-%lld:%lld|", (long long)st.st_size, (long long)st.st_mtime);
+                    stamp(part + pl, sizeof part - pl, "-", f->removed, &st);
                 } else f->removed[0] = 0;
             } else f->path[0] = 0;
         }
