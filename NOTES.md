@@ -2755,4 +2755,21 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   ^\s*[,;:.!?]+\s+(?=\S)  -- each platform applies the dictionaries to plain text pieces (no commands in them)
   and never to spelled text, so ^ is the start of the text and spelled marks are left alone. With it (cvsay
   -E): ", test", "! test", "... test" as long as "test"; ",", "?", ".5 test" and a comma mid-text as before.
+- One entry listed three times (Levi, 2026-11-27, psst; Mac and iPhone): a tab in a field (the .dic line pasted
+  into Pattern) was written into the line, which then read back as another entry under another key, so the Mac
+  editor's autosave (600 ms after each change, keyed on the entry it last wrote) added instead of replacing:
+  his Mine/en.dic got the entry three times (one as "anywhere", one with the pattern and replacement run
+  together), all published to nicopn/classicvoices-dicts in ab23a19; rows with the same key made SwiftUI's list
+  misbehave (Remove showing two, one with Restore). Now: Entry.line writes tabs and line breaks as spaces and
+  DictionaryStore.put stores the entry as it reads back (Swift, Java DictionaryStore, Python dicts.py; their keys
+  likewise), a whole .dic line pasted into Pattern goes into the fields it names (Mac and iPhone editors), and
+  the lists show an entry once even when a file has it twice (Swift and Python; Java already did). Checked with a
+  harness on DictionaryStore.swift (CommunityDictionary stubbed). The stray "anywhere" line is still in Nico's
+  en.dic (9a9043d removed the other two): removing it in the editor and publishing takes it out.
+- Mac entry list (Levi, 2026-11-27: the English file's 540 entries made the page slow, a VStack of bordered
+  SwiftUI buttons in a ScrollView): an AppKit NSTableView (ios/App/EntryTable.swift) that makes only the rows it
+  shows. Selecting a row (arrows, VoiceOver moving) never opens it; Return, a double-click or VO-Space (the row's
+  AXPress) does; the row's custom actions are the three previews. A filter field narrows it by pattern or
+  replacement; coming back from an entry selects and focuses the row opened (under its new key if it changed).
+  iPhone keeps its List (lazy already).
 

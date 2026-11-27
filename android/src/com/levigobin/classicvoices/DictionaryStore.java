@@ -53,9 +53,13 @@ final class DictionaryStore {
             return new Entry(f[0], f[1], cs, type);
         }
 
-        String key() { return type + "\t" + pattern; }
+        String key() { return type + "\t" + field(pattern); }
 
-        String line() { return pattern + "\t" + replacement + "\t" + (caseSensitive ? 1 : 0) + "\t" + type; }
+        // a tab or line break in a field would split the line (read back as another entry, so a later save added
+        // rather than replaced it): written as spaces
+        String line() { return field(pattern) + "\t" + field(replacement) + "\t" + (caseSensitive ? 1 : 0) + "\t" + type; }
+
+        static String field(String s) { return s.replaceAll("\r\n|[\t\r\n]", " "); }
 
         @Override
         public boolean equals(Object o) {

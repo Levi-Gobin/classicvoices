@@ -29,8 +29,20 @@ final class EntryDraft {
     var picking = false                     // on the sound list: the draft stays as it is
 
     var entry: DictionaryStore.Entry {
-        DictionaryStore.Entry(pattern: pattern, replacement: replacement.replacingOccurrences(of: "\t", with: " "),
-                              caseSensitive: caseSensitive, type: type)
+        DictionaryStore.Entry(pattern: pattern, replacement: replacement, caseSensitive: caseSensitive, type: type).written
+    }
+
+    /// A whole .dic line pasted into the pattern (pattern TAB replacement TAB case TAB type): its fields, or nil.
+    static func pastedLine(_ pattern: String) -> DictionaryStore.Entry? {
+        guard pattern.contains("\t"), let e = DictionaryStore.Entry(line: pattern.trimmingCharacters(in: .newlines)),
+              !e.replacement.isEmpty || pattern.filter({ $0 == "\t" }).count >= 3 else { return nil }
+        return e
+    }
+
+    /// The pattern field took a pasted .dic line: it goes into the fields it names.
+    func splitPastedLine() {
+        guard let e = Self.pastedLine(pattern) else { return }
+        pattern = e.pattern; replacement = e.replacement; caseSensitive = e.caseSensitive; type = e.type
     }
 
     func load(_ e: DictionaryStore.Entry?, for route: DictRoute) {
@@ -120,6 +132,8 @@ struct DictionariesTab: View {
     @State private var path: [DictRoute] = []
     @State private var draft = EntryDraft()
     @State private var refresh = 0  // bumped after a change, so the pages read the files again
+    @State private var filter = ""  // the Mac's entry list: only entries with this in their pattern or replacement
+    @State private var lastOpened: String?  // the entry opened last, selected again on coming back to the list
     @Environment(\.scenePhase) private var phase
 
     private func open(_ r: DictRoute) { path.append(r) }
@@ -212,7 +226,7 @@ struct DictionariesTab: View {
         case nil: rootPage
         case .file(let f)?: filePage(f)
         case .entry(let f, let key)?: EntryPage(file: f, key: key, draft: draft, voices: voices(for: f), open: open,
-                                               done: { refresh += 1; back() })
+                                               done: { lastOpened = draft.savedKey ?? lastOpened; refresh += 1; back() })
         case .phonemes?: PhonemePage(draft: draft, done: back)
         case .source?: SourcePage(done: { refresh += 1; back() })
         }
@@ -254,7 +268,10 @@ struct DictionariesTab: View {
                     let rows = DictionaryStore.rows(f)
                     let yours = rows.filter { $0.origin != .community }.count
                     OpenButton(title: Self.fileTitle(f),
-                               detail: "\(rows.count) entries" + (yours > 0 ? ", \(yours) changed by you" : "")) { open(.file(f)) }
+                               detail: "\(rows.count) entries" + (yours > 0 ? ", \(yours) changed by you" : "")) {
+                        filter = ""; lastOpened = nil
+                        open(.file(f))
+                    }
                 }
             }
         }
@@ -276,6 +293,41 @@ struct DictionariesTab: View {
         return existing + out.filter { !existing.contains($0) }
     }
 
+    #if os(macOS)
+    /// The Mac's list: an AppKit table (EntryTable), filtered as typed.
+    private func filePage(_ file: String) -> some View {
+        let rows = DictionaryStore.rows(file)
+        let canPlay = !voices(for: file).isEmpty
+        let f = filter.trimmingCharacters(in: .whitespaces)
+        let shown = f.isEmpty ? rows : rows.filter {
+            $0.entry.pattern.localizedCaseInsensitiveContains(f) || $0.entry.replacement.localizedCaseInsensitiveContains(f)
+        }
+        let items = shown.map { row in
+            EntryTable.Item(key: row.entry.key, title: row.entry.pattern,
+                            detail: "\(row.entry.replacement) · \(Self.typeName(row.entry.type))\(row.entry.caseSensitive ? ", case sensitive" : "") · \(Self.whose(row.origin))",
+                            canPreview: canPlay && row.entry.type != 1 && row.origin != .removed)
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                OpenButton(title: "Add an entry") { lastOpened = nil; open(.entry(file, nil)) }
+                TextField("Filter entries", text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 260)
+            }
+            Text(rows.isEmpty ? "No entries yet"
+                 : f.isEmpty ? "\(rows.count) entries" : "\(shown.count) of \(rows.count) entries")
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+            EntryTable(items: items, selectKey: lastOpened,
+                       open: { k in lastOpened = k; open(.entry(file, k)) },
+                       preview: { k, scope in
+                           if let row = rows.first(where: { $0.entry.key == k }) { previewRow(file, row.entry, scope) }
+                       })
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(16)
+    }
+    #else
     private func filePage(_ file: String) -> some View {
         let rows = DictionaryStore.rows(file)
         return Page {
@@ -300,6 +352,7 @@ struct DictionariesTab: View {
             }
         }
     }
+    #endif
 
     /// An entry of the list said with its pattern as the test text (alone, with the entries before it, or with all).
     private func previewRow(_ file: String, _ e: DictionaryStore.Entry, _ scope: DictionaryStore.PreviewScope) {
@@ -408,6 +461,7 @@ private struct EntryPage: View {
                 }
             }
         }
+        .onChange(of: draft.pattern) { _, _ in draft.splitPastedLine() }
         .onChange(of: draft.entry) { _, _ in
             pendingSave?.cancel()
             pendingSave = Task {

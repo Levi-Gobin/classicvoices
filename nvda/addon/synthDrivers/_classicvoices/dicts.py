@@ -13,6 +13,7 @@ EDITING is set while the dictionary dialog is open: the voices then use none (th
 uncorrected)."""
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -318,6 +319,12 @@ def refresh_all(data_root, ua="ClassicVoices", force=False, done=None):
 
 # ---------------------------------------------------------------- entries (the dictionary dialog)
 
+def _field(s):
+    """A field as it's written: a tab or line break would split the line (read back as another entry, so a later
+    save added rather than replaced it), so they're spaces."""
+    return re.sub(r"\r\n|[\t\r\n]", " ", s)
+
+
 class Entry:
     """One line: pattern, replacement, case sensitive, type (0 anywhere, 1 regular expression, 2 whole word)."""
     __slots__ = ("pattern", "replacement", "case", "type")
@@ -327,10 +334,10 @@ class Entry:
 
     @property
     def key(self):
-        return (self.pattern, self.type)
+        return (_field(self.pattern), self.type)
 
     def line(self):
-        return "%s\t%s\t%d\t%d" % (self.pattern, self.replacement, 1 if self.case else 0, self.type)
+        return "%s\t%s\t%d\t%d" % (_field(self.pattern), _field(self.replacement), 1 if self.case else 0, self.type)
 
     def same(self, other):
         return other is not None and self.line() == other.line()
@@ -425,7 +432,10 @@ def rows(data_root, name):
             out.append(Row(c, "removed", c))
         else:
             out.append(Row(c, "community", c))
-    out += [Row(m, "added") for m in mine if m.key not in shown]
+    for m in mine:  # each once, even if the file has it twice
+        if m.key not in shown:
+            shown.add(m.key)
+            out.append(Row(m, "added"))
     return out
 
 

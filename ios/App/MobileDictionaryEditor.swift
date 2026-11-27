@@ -186,8 +186,7 @@ private struct MobileEntrySheet: View {
     }
 
     private var entry: DictionaryStore.Entry {
-        DictionaryStore.Entry(pattern: pattern, replacement: replacement.replacingOccurrences(of: "\t", with: " "),
-                              caseSensitive: caseSensitive, type: type)
+        DictionaryStore.Entry(pattern: pattern, replacement: replacement, caseSensitive: caseSensitive, type: type).written
     }
 
     private var voice: VoiceItem? { voices.first { $0.entry?.key == voiceKey } ?? voices.first }
@@ -198,6 +197,11 @@ private struct MobileEntrySheet: View {
                 Section {
                     TextField("Pattern", text: $pattern)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .onChange(of: pattern) { _, p in  // a whole .dic line pasted: into the fields it names
+                            if let e = EntryDraft.pastedLine(p) {
+                                pattern = e.pattern; replacement = e.replacement; caseSensitive = e.caseSensitive; type = e.type
+                            }
+                        }
                     TextField("Replacement", text: $replacement)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Insert Phoneme…") { showPhonemes = true }.disabled(voices.isEmpty)

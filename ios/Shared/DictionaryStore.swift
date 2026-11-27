@@ -14,7 +14,18 @@ enum DictionaryStore {
 
         var id: String { key }
         var key: String { "\(type)\t\(pattern)" }
-        var line: String { "\(pattern)\t\(replacement)\t\(caseSensitive ? 1 : 0)\t\(type)" }
+        /// A tab or line break in a field would split the line (read back as another entry, under another key, so
+        /// a later save added rather than replaced it: Levi's psst entry, its .dic line pasted into Pattern, three
+        /// times): they're written as spaces.
+        var line: String { "\(Self.field(pattern))\t\(Self.field(replacement))\t\(caseSensitive ? 1 : 0)\t\(type)" }
+
+        static func field(_ s: String) -> String {
+            s.contains(where: { $0 == "\t" || $0.isNewline })
+                ? String(s.map { $0 == "\t" || $0.isNewline ? " " : $0 }) : s
+        }
+
+        /// The entry as it reads back from its line (`line`'s spaces for tabs and line breaks).
+        var written: Entry { Entry(line: line) ?? self }
 
         init(pattern: String, replacement: String, caseSensitive: Bool = false, type: Int = 2) {
             self.pattern = pattern; self.replacement = replacement; self.caseSensitive = caseSensitive; self.type = type
@@ -90,12 +101,16 @@ enum DictionaryStore {
             else if gone.contains(c.key) { out.append(Row(entry: c, origin: .removed)) }
             else { out.append(Row(entry: c, origin: .community)) }
         }
-        out += mineEntries.filter { !shown.contains($0.key) }.map { Row(entry: $0, origin: .added) }
+        for m in mineEntries where !shown.contains(m.key) {  // each once, even if the file has it twice
+            shown.insert(m.key)
+            out.append(Row(entry: m, origin: .added))
+        }
         return out
     }
 
     /// Adds or changes an entry (`oldKey`: the one it replaces, when its pattern or type changed).
     static func put(_ name: String, _ entry: Entry, oldKey: String? = nil) {
+        let entry = entry.written  // under the key it will read back with
         let all = entries(mineURL(name))
         // a changed entry keeps its place: entries apply in order, and a regular expression can depend on the one before
         let at = all.firstIndex { $0.key == entry.key || $0.key == oldKey }
