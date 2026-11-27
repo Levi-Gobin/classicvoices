@@ -32,20 +32,22 @@ targetTemplates:
       - path: ../build/gen
         # LLVM's SLP vectorizer and classic GVN crawl through these huge
         # functions (290 s on one iOS 7.1.2 file) and the vectorizer slowed
-        # the code: without it iOS 6 sentences are 17% faster, same output
-        compilerFlags: &fastflags ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
+        # the code: without it iOS 6 sentences are 17% faster, same output.
+        # Each engine's speed profile (tools/pgo: clang's profile-guided
+        # optimization, the same output, faster), unpacked by the script below
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios6.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen3
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios3.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen4
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios4.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen5
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios5.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen7
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios7.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen70
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios70.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       - path: ../build/gen10
-        compilerFlags: *fastflags
+        compilerFlags: ["-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-fprofile-instr-use=$(SRCROOT)/../build/pgo/ios10.profdata", "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
       # recompiled MacinTalk (tools/build_mt_native.sh); only the generations
       # whose engines the build had
       - path: ../build/mtgen104
@@ -66,6 +68,10 @@ targetTemplates:
         excludes: ["mtcli.c", "mtimports.c", "mtsay.c", "mtswitch.c"]
       - path: ../third_party/glint
         includes: ["aac_decoder.cpp"]
+    preBuildScripts:
+      - name: Speed profiles
+        basedOnDependencyAnalysis: false
+        script: sh "$SRCROOT/../tools/pgo/prepare.sh" "$SRCROOT/../build/pgo"
     settings:
       base:
         PRODUCT_NAME: EngineCode
@@ -292,6 +298,9 @@ targets:
           cp "$SRCROOT/../core/mt/mt_native.h" "$D/core/mt/"
           cp "$SRCROOT/../nvda/src/native_glue.c" "$SRCROOT/../ports/apple/mt_native_glue.c" "$D/"
           cp "$SRCROOT/../tools/profiles/"*.txt "$D/profiles/"
+          # each engine's speed profile (tools/pgo; FastCodeBuilder unpacks it for Zig's clang)
+          mkdir -p "$D/pgo"
+          cp "$SRCROOT/../tools/pgo/"*.profdata.gz "$D/pgo/"
         basedOnDependencyAnalysis: false
       - name: Build commit
         # the commit this is built from, for the dev update channel (App/UpdateCheck.swift)

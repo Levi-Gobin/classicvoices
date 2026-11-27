@@ -63,8 +63,11 @@ def _check(cmd, **kw):
 # without it), and its classic GVN 85% of an iOS 6 file's time (NewGVN: a
 # sixth). Same output either way. -g0: Zig adds debug info otherwise.
 FAST_FLAGS = ["-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn"]
-# Bumped when the compiler flags change what's built (f2: FAST_FLAGS).
-FLAGS_VERSION = "f2"
+# Bumped when the compiler flags change what's built (f2: FAST_FLAGS; f3: speed profiles).
+FLAGS_VERSION = "f3"
+# Each engine's speed profile (recompiler/pgo/<build>.profdata.gz, from tools/pgo): clang's profile-guided
+# optimization, the same output, faster (first sound 13-21% sooner). Used when this compiler reads it.
+PGO_WARNINGS = ["-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
 # Windows: since 0.5.3 the 32-bit file is built for the same 1.06 GB guest as
 # the 64-bit one (0.5.2's had 512 MB, too little for the largest premium
 # voices). The stamp is unchanged, so 64-bit and Arm users rebuild nothing;
@@ -296,6 +299,8 @@ def stamp(candidates=()):
         files = [("recomp.py", os.path.join(tools, "recomp.py")), ("native_glue.c", glue)]
         files += [(n, os.path.join(core, n)) for n in SEMANTICS]
         files += [("profiles/%s.txt" % b, os.path.join(profiles, b + ".txt")) for b in BUILDS]
+        files += [("pgo/%s.profdata.gz" % b, os.path.join(tools, "pgo", b + ".profdata.gz")) for b in BUILDS
+                  if os.path.isfile(os.path.join(tools, "pgo", b + ".profdata.gz"))]
         for name, path in files:
             with open(path, "rb") as f:
                 h.update(name.encode() + b"\0" + f.read().replace(b"\r\n", b"\n") + b"\0")
@@ -380,6 +385,29 @@ def native_targets(cc):
     return [("cvnative_%s.so", cc + ["-fPIC"], None)]
 
 
+def _pgo_flags(tools, build, work, cmd):
+    """The flags compiling build's fast code with its speed profile, unpacked into work; [] when there's none
+    or this compiler can't read it (an older one), tried on a small file first."""
+    gz = os.path.join(tools, "pgo", build + ".profdata.gz")
+    if not os.path.isfile(gz):
+        return []
+    path = os.path.join(work, build + ".profdata")
+    try:
+        if not os.path.isfile(path):
+            import gzip
+            with gzip.open(gz, "rb") as f, open(path, "wb") as o:
+                shutil.copyfileobj(f, o)
+        flags = ["-fprofile-instr-use=" + path] + PGO_WARNINGS
+        probe = os.path.join(work, "pgo_probe.c")
+        with open(probe, "w") as f:
+            f.write("int cv_pgo_probe(int x) { return x + 1; }\n")
+        _check(cmd + ["-O2"] + flags + ["-c", probe, "-o", probe + ".o"], stdout=subprocess.DEVNULL,
+               stderr=subprocess.PIPE)
+        return flags
+    except Exception:
+        return []
+
+
 def build(build, voices_root, native_dir, cc, progress, candidates=(), python=None):
     """Recompile one imported engine and compile it into this system's
     fast-code files in native_dir. progress(message, fraction) may raise to
@@ -405,6 +433,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
             objdir = os.path.join(work, "obj%d" % n)
             os.makedirs(objdir)
             objs, running, finished = [], [], 0
+            pgo = _pgo_flags(tools, build, work, cmd)
             progress(("Compiling the %s engine for %s" % (build, what)) if what else
                      ("Compiling the %s engine" % build), 0.0)
             for src in sources + [None]:
@@ -415,7 +444,7 @@ def build(build, voices_root, native_dir, cc, progress, candidates=(), python=No
                     break
                 o = os.path.join(objdir, os.path.basename(src) + ".o")
                 objs.append(o)
-                running.append(_run(cmd + ["-O2"] + FAST_FLAGS + ["-std=gnu11", "-ffp-contract=off", "-w",
+                running.append(_run(cmd + ["-O2"] + FAST_FLAGS + pgo + ["-std=gnu11", "-ffp-contract=off", "-w",
                                                      "-I", core, "-DCV_BUILD=" + build, "-c", src, "-o", o],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE))
             out = os.path.join(native_dir, pattern % build)

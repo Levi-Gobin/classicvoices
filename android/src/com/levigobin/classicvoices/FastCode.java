@@ -21,6 +21,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
 
 /**
  * Builds the fast engine code on the phone, from the firmware imported here,
@@ -197,6 +198,18 @@ final class FastCode {
                         return Long.compare(y.length(), x.length());
                     }
                 });
+                // the engine's speed profile (tools/pgo): profile-guided optimization, the same output, faster
+                List<String> pgo = new ArrayList<>();
+                File prof = new File(work, b.key + ".profdata");
+                try (InputStream in = new GZIPInputStream(c.getAssets().open("fastcode/pgo/" + b.key + ".profdata.gz"));
+                     OutputStream o = new FileOutputStream(prof)) {
+                    byte[] buf = new byte[1 << 16];
+                    for (int k; (k = in.read(buf)) > 0; ) o.write(buf, 0, k);
+                    Collections.addAll(pgo, "-fprofile-instr-use=" + prof.getPath(), "-Wno-profile-instr-unprofiled",
+                            "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing");
+                } catch (IOException e) {
+                    // none in this build: compiled as before
+                }
                 File objDir = new File(work, "obj_" + b.key);
                 //noinspection ResultOfMethodCallIgnored
                 objDir.mkdirs();
@@ -207,9 +220,13 @@ final class FastCode {
                         while (running.size() >= jobs) doneBytes += reap(running, p, doneBytes, totalBytes);
                         File o = new File(objDir, src.getName() + ".o");
                         objs.add(o.getPath());
-                        running.add(new Running(src.length(), z.start("cc", "-target", z.target, "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-std=gnu11",
-                                "-ffp-contract=off", "-fPIC", "-w", "-I", core.getPath(), "-DCV_BUILD=" + b.key,
-                                "-c", src.getPath(), "-o", o.getPath())));
+                        List<String> cmd = new ArrayList<>();
+                        Collections.addAll(cmd, "cc", "-target", z.target, "-O2", "-g0", "-fno-slp-vectorize", "-mllvm",
+                                "-enable-newgvn", "-std=gnu11", "-ffp-contract=off", "-fPIC", "-w", "-I", core.getPath(),
+                                "-DCV_BUILD=" + b.key);
+                        cmd.addAll(pgo);
+                        Collections.addAll(cmd, "-c", src.getPath(), "-o", o.getPath());
+                        running.add(new Running(src.length(), z.start(cmd.toArray(new String[0]))));
                     }
                     while (!running.isEmpty()) doneBytes += reap(running, p, doneBytes, totalBytes);
                 } finally {

@@ -482,9 +482,17 @@ enum Benchmark {
                 sem.wait()
             }
             let assets = VoiceCatalog.enhancedRoot?.path
+            // `-bench-repeat N`: each case N times, the fastest kept (one run is noisy on a device)
+            let repeats = CommandLine.arguments.firstIndex(of: "-bench-repeat").flatMap {
+                $0 + 1 < CommandLine.arguments.count ? Int(CommandLine.arguments[$0 + 1]) : nil } ?? 1
             for (lang, text, rate) in cases {
                 var open = 0.0, first = 0.0, total = 0.0, audio = 0.0
-                let rc = vxs_benchmark(root.path, assets, lang, text, Int32(rate), &open, &first, &total, &audio)
+                var rc: Int32 = 0
+                for i in 0..<max(1, repeats) {
+                    var o = 0.0, f = 0.0, t = 0.0, a = 0.0
+                    rc = vxs_benchmark(root.path, assets, lang, text, Int32(rate), &o, &f, &t, &a)
+                    if i == 0 || t < total { open = o; first = f; total = t; audio = a }
+                }
                 print(String(format: "BENCH %@ rate=%d rc=%d open=%.0fms first=%.0fms total=%.0fms audio=%.0fms speed=%.1fx",
                              lang, rate, rc, open, first, total, audio, audio / max(total, 1)))
             }

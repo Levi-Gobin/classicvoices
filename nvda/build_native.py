@@ -122,6 +122,29 @@ def _compile_parallel(cmds):
                 sys.exit("compile failed:\n%s" % (res.stderr or res.stdout))
 
 
+def pgo_flags(build, clang, target):
+    """The engine's speed profile (tools/pgo: clang's profile-guided optimization, the same output, faster), when
+    this clang reads it (tried on a small file); [] otherwise."""
+    import gzip
+    gz = os.path.join(ROOT, "tools", "pgo", build + ".profdata.gz")
+    if not os.path.isfile(gz):
+        return []
+    path = os.path.join(WORK, build + ".profdata")
+    try:
+        with gzip.open(gz, "rb") as f, open(path, "wb") as o:
+            shutil.copyfileobj(f, o)
+        flags = ["-fprofile-instr-use=" + path, "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date",
+                 "-Wno-profile-instr-missing"]
+        probe = os.path.join(WORK, "pgo_probe.c")
+        with open(probe, "w") as f:
+            f.write("int cv_pgo_probe(int x) { return x + 1; }\n")
+        subprocess.check_call([clang, "--target=" + target, "-O2"] + flags + ["-c", probe, "-o", probe + ".o"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return flags
+    except (OSError, subprocess.CalledProcessError):
+        return []
+
+
 def compile_dll(build, bits, gen_dir, out_dll):
     sources = sorted(os.path.join(gen_dir, f) for f in os.listdir(gen_dir) if f.endswith(".c"))
     glue = os.path.join(SRC, "native_glue.c")
@@ -132,11 +155,12 @@ def compile_dll(build, bits, gen_dir, out_dll):
     if clang:
         target = "x86_64-w64-windows-gnu" if bits == 64 else "i686-w64-windows-gnu"
         objs, cmds = [], []
+        pgo = pgo_flags(build, clang, target)
         for s in sources + [glue]:
             o = os.path.join(obj_dir, os.path.basename(s) + ".o")
             cmds.append([clang, "--target=" + target, "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn", "-std=gnu11",
                          "-ffp-contract=off", "-w", "-I", os.path.join(ROOT, "core"),
-                         "-DCV_BUILD=" + build, "-c", s, "-o", o])
+                         "-DCV_BUILD=" + build] + pgo + ["-c", s, "-o", o])
             objs.append(o)
         _compile_parallel(cmds)
         subprocess.check_call([clang, "--target=" + target, "-shared", "-static",

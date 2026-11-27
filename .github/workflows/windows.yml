@@ -5,7 +5,7 @@ on:
   push:
     branches-ignore: [dev]
     paths: ["windows/**", "desktop/**", "nvda/**", "core/**", "ports/host/**", "tools/pcre2_build.py",
-            "tools/recomp.py", ".github/workflows/windows.yml"]
+            "tools/recomp.py", "tools/pgo/**", ".github/workflows/windows.yml"]
 
 jobs:
   dlls:

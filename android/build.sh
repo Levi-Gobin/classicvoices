@@ -88,6 +88,9 @@ cp nvda/addon/synthDrivers/_classicvoices/EnhancedCatalog.json nvda/addon/synthD
 cp tools/profiles/ios3.txt tools/profiles/ios4.txt tools/profiles/ios5.txt tools/profiles/ios6.txt \
     tools/profiles/ios7.txt tools/profiles/ios70.txt tools/profiles/ios10.txt "$OUT/assets/fastcode/profiles/"
 cp core/thumb.h core/thumb_ops.h core/recomp_rt.h nvda/src/native_glue.c "$OUT/assets/fastcode/"
+# each engine's speed profile (FastCode.java: profile-guided optimization, the same output, faster)
+mkdir -p "$OUT/assets/fastcode/pgo"
+cp tools/pgo/*.profdata.gz "$OUT/assets/fastcode/pgo/" 2>/dev/null || true
 # fast code with another stamp was built by another version: the phone builds it again
 # (FastCode.current). fastcode.py's stamp: Recompiler.java mirrors recomp.py
 python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); from _classicvoices import fastcode; \

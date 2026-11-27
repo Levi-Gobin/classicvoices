@@ -156,6 +156,9 @@ def package():
             z.write(os.path.join(ROOT, "tools", "recomp.py"), rc + "recomp.py")
             for b in ("ios3", "ios4", "ios5", "ios6", "ios70", "ios7", "ios10"):
                 z.write(os.path.join(ROOT, "tools", "profiles", b + ".txt"), rc + "profiles/%s.txt" % b)
+                pgo = os.path.join(ROOT, "tools", "pgo", b + ".profdata.gz")  # its speed profile (counts only)
+                if os.path.isfile(pgo):
+                    z.write(pgo, rc + "pgo/%s.profdata.gz" % b)
             for h in ("thumb.h", "thumb_ops.h", "recomp_rt.h"):
                 z.write(os.path.join(ROOT, "core", h), rc + h)
             z.write(os.path.join(NVDA, "src", "native_glue.c"), rc + "native_glue.c")

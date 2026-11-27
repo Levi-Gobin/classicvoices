@@ -10,7 +10,7 @@ on:
   push:
     branches-ignore: [dev]
     paths: ["linux/**", "desktop/**", "core/**", "ports/**", "nvda/addon/**", "nvda/src/**",
-            "tools/recomp.py", "tools/profiles/**", ".github/workflows/linux.yml"]
+            "tools/recomp.py", "tools/profiles/**", "tools/pgo/**", ".github/workflows/linux.yml"]
 
 jobs:
   linux:

@@ -54,8 +54,8 @@ enum FastCodeBuilder {
     }()
 
     /// Bumped when the compiler flags or the recompilers (RecompARM/RecompX86)
-    /// change what's built (f2: no SLP vectorizer, NewGVN).
-    static let flagsVersion = "f2"
+    /// change what's built (f2: no SLP vectorizer, NewGVN; f3: speed profiles).
+    static let flagsVersion = "f3"
 
     /// Compiles running now, stopped when the app quits (they would go on
     /// writing into a folder the next launch deletes).
@@ -179,9 +179,27 @@ enum FastCodeBuilder {
         try fm.createDirectory(at: objects, withIntermediateDirectories: true)
         // As ios/project.yml compiles it (fastflags): no SLP vectorizer, NewGVN. -g0:
         // Zig adds debug info otherwise.
-        let flags = ["cc", "-target", "\(arch)-macos", "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn",
+        var flags = ["cc", "-target", "\(arch)-macos", "-O2", "-g0", "-fno-slp-vectorize", "-mllvm", "-enable-newgvn",
                      "-std=gnu11", "-ffp-contract=off", "-w", "-fPIC",
                      "-I", src.appendingPathComponent("core").path, "-DCV_BUILD=\(build)"]
+        // the engine's speed profile (tools/pgo): profile-guided optimization, the same output, faster;
+        // unpacked here (gunzip), none if that fails
+        let gz = src.appendingPathComponent("pgo/\(build).profdata.gz")
+        let pgo = work.appendingPathComponent("\(build).profdata")
+        if fm.fileExists(atPath: gz.path) {
+            fm.createFile(atPath: pgo.path, contents: nil)
+            let unzip = Process()
+            unzip.executableURL = URL(fileURLWithPath: "/usr/bin/gunzip")
+            unzip.arguments = ["-c", gz.path]
+            unzip.standardOutput = try? FileHandle(forWritingTo: pgo)
+            if (try? unzip.run()) != nil {
+                unzip.waitUntilExit()
+                if unzip.terminationStatus == 0 {
+                    flags += ["-fprofile-instr-use=\(pgo.path)", "-Wno-profile-instr-unprofiled",
+                              "-Wno-profile-instr-out-of-date", "-Wno-profile-instr-missing"]
+                }
+            }
+        }
         progress("Compiling the \(name) engine", 0)
         // Every core, but at utility priority (still the performance cores):
         // the compiler gives way only when something else needs the CPU, so

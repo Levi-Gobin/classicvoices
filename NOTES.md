@@ -2816,4 +2816,31 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   ~5% (iOS 7.0 Samantha), these cost nothing measurable. The long text now speaks on the 16 MB thread and on
   an 8 MB main thread, bit-identical to the interpreter; iOS 7.0's 59 test utterances bit-identical to before.
   recomp.py, Recompiler.java and RecompARM.swift: byte-identical output for all seven engines (diff -r).
+- Speed profiles for the fast code (Levi, 2026-11-27: "make the engine code even faster ... all platforms and
+  builds for all languages"): clang's profile-guided optimization. tools/pgo/train.sh compiles build/gen*/ with
+  counters, has every voice of a data folder with all engines (280: iOS 3-7 compacts of every language,
+  enhanced iOS 5/6/7.0, Lion/Mountain Lion/Mavericks, Siri Aaron and Helena, Allison) say its language's
+  sample sentence, a numbers line and tools/corpus.txt through a cvsay linked with them, and writes
+  tools/pgo/<build>.profdata.gz per engine (sparse, indexed v12; 160-330 KB). The output is bit-identical (every
+  engine's test lines, checksummed); the speed, Mac, fast code, warm, against the same compile without:
+  first sound iOS 6 -29%, iOS 6 enhanced -21%, iOS 7.0 -20% (German -20%, untrained languages gain too),
+  iOS 5 -17%, iOS 7.0 enhanced Samantha -14%, Siri Aaron -12%, Allison -9%, iOS 4 -4%; whole sentences 3-10%
+  faster. iOS 3 gained nothing (total +1.5%), so it has no profile. Every builder uses them: ios/project.yml
+  (each build/gen* folder its engine's, unpacked by tools/pgo/prepare.sh, which writes an empty profile when
+  this Xcode's llvm-profdata can't read one: never a failed build), the Mac app (FastCode/pgo, gunzipped by
+  FastCodeBuilder; flagsVersion f3), Android (assets/fastcode/pgo, FastCode.java), fastcode.py (NVDA, the
+  Windows and Linux apps: tried on a small file first, so a compiler that can't read it builds without),
+  linux/classicvoices-data and nvda/build_native.py the same way. The stamps include them, so fast code is
+  built again with them. Zig 0.17 (clang 22) reads Xcode's profiles. Train again after recomp.py's output
+  changes (a changed function just compiles as without a profile). Also measured: -O3 adds nothing; the SLP
+  vectorizer costs 16% (as noted before); today's Apple clang 21 and Zig make the same speed (Nov 2's objects,
+  from an older clang, were ~5% faster still). On a device: the iPad Air 3 (A12), Xcode builds with and without
+  (CV_NO_PGO=1 in a derived data of its own; -benchmark -bench-only ios6/ -bench-repeat 7, alternated twice):
+  iOS 6 only 1-2% faster (the app's benchmark text, short sentences: 235 -> 232 ms for 11.7 s of speech; first
+  sound 5 ms either way), so the A12 gains much less than the Mac's cores. Android emulator (cv33), its old
+  October fast code rebuilt with today's recompiler and the profiles, the same audio (checksums): iOS 6 first
+  sound 36 -> 20 ms, sentence done 647 -> 111 ms; iOS 7.0 enhanced 56 -> 29, 260 -> 71; Siri Aaron 310 -> 45,
+  566 -> 121 (most of it the fuller coverage of today's recompiler: 7.0's 23,493 -> 37,257 functions).
+  Xcode doesn't see a changed profile file: after train.sh, delete the EngineCode intermediates (or build clean)
+  for local builds; CI builds clean.
 

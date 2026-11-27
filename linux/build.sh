@@ -35,6 +35,7 @@ rm -rf "$L/_classicvoices/__pycache__" "$L/_classicvoices"/*.dll
 mkdir -p "$L/tools/profiles" "$L/core"
 cp tools/recomp.py "$L/tools/"
 cp tools/profiles/*.txt "$L/tools/profiles/"
+mkdir -p "$L/tools/pgo"; cp tools/pgo/*.profdata.gz "$L/tools/pgo/" 2>/dev/null || true  # speed profiles
 cp core/thumb.h core/thumb_ops.h core/recomp_rt.h "$L/core/"
 cp nvda/src/native_glue.c "$L/"
 # the app (the voice browser, as on the Mac and iPhone): wxPython, from the distribution

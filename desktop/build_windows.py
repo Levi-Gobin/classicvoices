@@ -54,6 +54,9 @@ def main():
     shutil.copy(os.path.join(ROOT, "tools", "recomp.py"), os.path.join(stage, "tools"))
     shutil.copytree(os.path.join(ROOT, "tools", "profiles"), os.path.join(stage, "tools", "profiles"),
                     ignore=shutil.ignore_patterns("mt*"))
+    # each engine's speed profile (fastcode.py: profile-guided optimization when the compiler reads it)
+    shutil.copytree(os.path.join(ROOT, "tools", "pgo"), os.path.join(stage, "tools", "pgo"),
+                    ignore=shutil.ignore_patterns("*.sh", "*.md"))
     os.makedirs(os.path.join(stage, "core"))
     for f in os.listdir(os.path.join(ROOT, "core")):
         if f.endswith(".h"):
