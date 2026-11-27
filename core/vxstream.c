@@ -2133,48 +2133,9 @@ void vxs_start(VxStream *s, const char *lang, const char *utf8_text, int rate, i
     vxs_start_with_fallback(s, lang, NULL, utf8_text, rate, pitch, volume, trailing_pause_ms);
 }
 
-// Punctuation an utterance starts with (", test"): Vocalizer reads it out ("comma test"), where a person reads past
-// it (Levi, 2026-11-27). Dropped when a space and something to say follow it, after any leading commands (not
-// after \tn=...\: spelled, it's said); a mark on its own (a screen reader reading the character), ".5", ",5",
-// ".net" stay as written. NULL if there's nothing to drop.
-static char *without_leading_punctuation(const char *t) {
-    const char *p = t;
-    for (;;) {
-        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
-        if (p[0] != 0x1b || p[1] != '\\') break;
-        if (!strncmp(p + 2, "tn=", 3)) return NULL;
-        const char *e = strchr(p + 2, '\\');
-        if (!e) return NULL;
-        p = e + 1;
-    }
-    const char *q = p;
-    while (*q && strchr(",;:.!?", *q)) q++;
-    if (q == p || (*q != ' ' && *q != '\t' && *q != '\n' && *q != '\r')) return NULL;
-    const char *r = q;
-    for (;;) {  // something to say after it, not only spaces and commands
-        while (*r == ' ' || *r == '\t' || *r == '\n' || *r == '\r') r++;
-        if (r[0] == 0x1b && r[1] == '\\') {
-            const char *e = strchr(r + 2, '\\');
-            if (!e) return NULL;
-            r = e + 1;
-            continue;
-        }
-        break;
-    }
-    if (!*r) return NULL;
-    size_t head = (size_t)(p - t), n = strlen(q);
-    char *o = malloc(head + n + 1);
-    if (!o) return NULL;
-    memcpy(o, t, head);
-    memcpy(o + head, q, n + 1);
-    return o;
-}
-
 void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback_key, const char *utf8_text,
                              int rate, int pitch, int volume, int trailing_pause_ms) {
     vxs_cancel(s);
-    char *trimmed = is_mt_key(lang) ? NULL : without_leading_punctuation(utf8_text);
-    if (trimmed) utf8_text = trimmed;
     pthread_mutex_lock(&s->mu);
     snprintf(s->job_lang, sizeof s->job_lang, "%s", lang);
     snprintf(s->job_fallback, sizeof s->job_fallback, "%s", fallback_key && !is_mt_key(lang) ? fallback_key : "");
@@ -2217,7 +2178,6 @@ void vxs_start_with_fallback(VxStream *s, const char *lang, const char *fallback
     atomic_fetch_add(&s->generation, 1);
     pthread_cond_broadcast(&s->cv);
     pthread_mutex_unlock(&s->mu);
-    free(trimmed);
 }
 
 void vxs_set_rules_pack(VxStream *s, const char *dir) {
