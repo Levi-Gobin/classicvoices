@@ -2655,6 +2655,11 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   (API 33, 1.8x real time, first audio ~200 ms): every track starts with its 4096 frames full and underruns
   only after its last frame. The audio itself is the same everywhere (same gaps). Not reproduced; whatever it
   is happens past the mixer on the real phone, or with something the emulator doesn't have.
+  With TalkBack itself too (built from github.com/google/talkback 16.2: NDK pinned to 27, Kotlin JVM-target check
+  set to warning; build/talkback-16.2-debug.apk, ignored by git), Classic Voices the default engine, on cv33:
+  Samantha (English) and Helena (system language de-DE, default_de-DE set), with and without fast code, Settings
+  and Home in turn every 4 s and every 0.4 s (each utterance cutting off the last): every TalkBack utterance got
+  its own track, which started with its 4096 frames full and had no underrun before its last frame.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound
