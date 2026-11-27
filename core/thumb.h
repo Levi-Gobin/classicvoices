@@ -40,6 +40,11 @@ struct Cpu {
     // long sentence's parse ends early. Last, so fast code built before it
     // never looks.
     volatile int interrupt;
+    // Below this host stack address fast code hands back to the interpreter at a function's start
+    // (recomp_rt.h RT_STACK_CHECK), which runs guest calls without growing the C stack: each recompiled call
+    // is a C call, and iOS 4's engine recursed past a 16 MB thread stack on a long sentence (Levi's iPhone and
+    // every platform: a crash). 0: no check. Set by cpu_call for the thread running it. Last, as above.
+    uintptr_t stack_low;
 };
 
 void cpu_init(Cpu *cpu, uint8_t *mem);

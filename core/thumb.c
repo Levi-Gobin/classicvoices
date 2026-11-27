@@ -1,5 +1,10 @@
 // Interpreter run loop and dispatcher. Instruction semantics live in thumb_ops.h.
 #include "thumb.h"
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <pthread.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,6 +90,9 @@ static int run(Cpu *c, uint32_t stop) {
             if (f) {
                 int before = c->budget_on && c->budget >= 0;
                 f(c, pc);
+                // handed back where it started (its stack check: the stack nearly used up): the interpreter
+                // runs the code from here, asking again for fast code after the next jump
+                if (k->r[15] == pc) { check_native = 0; continue; }
                 if (before && c->budget < 0) {  // debug: dump state where native code handed back
                     fprintf(stderr, "handback pc=%x thumb=%u it=%x nzcv=%u%u%u%u", k->r[15], k->thumb, k->it, k->n, k->z, k->c, k->v);
                     for (int i = 0; i < 15; i++) fprintf(stderr, " r%d=%x", i, k->r[i]);
@@ -144,9 +152,46 @@ int rt_icall(Cpu *c, uint32_t ret) {
     return run(c, ret & ~1u);
 }
 
+// The lowest address this thread's stack may use before fast code hands back to the interpreter
+// (Cpu.stack_low): a quarter of the stack (at least 1 MB) kept for the frames in flight, the interpreter's and
+// the engine's imports. 0 where the bounds can't be told (no check).
+static uintptr_t host_stack_low(void) {
+    static _Thread_local uintptr_t low;
+    static _Thread_local int known;
+    if (known) return low;
+    known = 1;
+    uintptr_t base = 0, size = 0;
+#if defined(_WIN32)
+    // Windows 8 and later (looked up, so the library still loads on Windows 7, without the check)
+    typedef VOID (WINAPI *Limits)(PULONG_PTR, PULONG_PTR);
+    HMODULE k32 = GetModuleHandleA("kernel32.dll");
+    Limits get = k32 ? (Limits)(void *)GetProcAddress(k32, "GetCurrentThreadStackLimits") : NULL;
+    if (get) {
+        ULONG_PTR lo = 0, hi = 0;
+        get(&lo, &hi);
+        base = (uintptr_t)lo; size = (uintptr_t)(hi - lo);
+    }
+#elif defined(__APPLE__)
+    size = (uintptr_t)pthread_get_stacksize_np(pthread_self());
+    base = (uintptr_t)pthread_get_stackaddr_np(pthread_self()) - size;
+#elif defined(__linux__)
+    pthread_attr_t a;
+    if (pthread_getattr_np(pthread_self(), &a) == 0) {
+        void *addr; size_t sz;
+        if (pthread_attr_getstack(&a, &addr, &sz) == 0) { base = (uintptr_t)addr; size = sz; }
+        pthread_attr_destroy(&a);
+    }
+#endif
+    if (!base || !size) return low = 0;
+    uintptr_t keep = size / 4 < (1u << 20) ? (1u << 20) : size / 4;
+    low = keep < size ? base + keep : 0;
+    return low;
+}
+
 uint32_t cpu_call(Cpu *c, uint32_t fn, const uint32_t *args, int nargs, uint32_t *hi) {
     Cpu *prev_tls = tls_cpu;
     tls_cpu = c;
+    c->stack_low = host_stack_low();
     Core saved = c->k;
     uint32_t sp = c->k.r[13] - 0x40;
     int nstack = nargs > 4 ? nargs - 4 : 0;

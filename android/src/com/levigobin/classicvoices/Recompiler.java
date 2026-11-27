@@ -12,6 +12,7 @@ import java.io.Writer;
 import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -573,9 +574,81 @@ final class Recompiler {
         return indent + "{ " + store + " c->k.r[15] = " + hx(t) + "; c->k.thumb = 1; return 1; }";
     }
 
+    /** recomp.py recursive_functions: the names of the functions in a cycle of C calls between recompiled
+     *  functions (direct calls, tail exits, fallthroughs into another's entry); only these check the stack. */
+    static Set<String> recursiveFunctions(Collection<Function> funcs, Map<Long, String> entriesOf,
+                                          Map<Long, String> hostAt, Map<Long, String> leafOf, String prefix) {
+        Map<String, java.util.TreeSet<String>> edges = new java.util.TreeMap<>();
+        for (Function f : funcs) {
+            java.util.TreeSet<String> out = new java.util.TreeSet<>();
+            for (Insn ins : f.insns.values()) {
+                Long t = ins.target;
+                if (ins.kind.equals("bl") && t != null && !hostAt.containsKey(t) && !leafOf.containsKey(t)
+                        && entriesOf.containsKey(t)) out.add(entriesOf.get(t));
+                if ((ins.kind.equals("b") || ins.kind.equals("bcond")) && t != null && !f.insns.containsKey(t)
+                        && entriesOf.containsKey(t)) out.add(entriesOf.get(t));
+                boolean terminator = (ins.kind.equals("b") || ins.kind.equals("ijump") || ins.kind.equals("tb")
+                        || ins.kind.equals("stop")) && (ins.cond == null || ins.cond == 14);
+                long nxt = ins.addr + ins.size;
+                if (!terminator && !f.insns.containsKey(nxt) && entriesOf.containsKey(nxt)) out.add(entriesOf.get(nxt));
+            }
+            edges.put(fname(prefix, f.start), out);
+        }
+        // Tarjan's strongly connected components, without recursion
+        Map<String, Integer> index = new HashMap<>(), low = new HashMap<>();
+        Set<String> on = new HashSet<>();
+        List<String> stack = new ArrayList<>();
+        List<List<String>> comps = new ArrayList<>();
+        int counter = 0;
+        for (String root : edges.keySet()) {
+            if (index.containsKey(root)) continue;
+            List<Object[]> work = new ArrayList<>();
+            work.add(new Object[] {root, edges.get(root).iterator()});
+            index.put(root, counter); low.put(root, counter); counter++;
+            stack.add(root); on.add(root);
+            while (!work.isEmpty()) {
+                Object[] top = work.get(work.size() - 1);
+                String v = (String) top[0];
+                @SuppressWarnings("unchecked") java.util.Iterator<String> it = (java.util.Iterator<String>) top[1];
+                if (it.hasNext()) {
+                    String x = it.next();
+                    if (!edges.containsKey(x)) continue;
+                    if (!index.containsKey(x)) {
+                        index.put(x, counter); low.put(x, counter); counter++;
+                        stack.add(x); on.add(x);
+                        work.add(new Object[] {x, edges.get(x).iterator()});
+                    } else if (on.contains(x)) {
+                        low.put(v, Math.min(low.get(v), index.get(x)));
+                    }
+                    continue;
+                }
+                work.remove(work.size() - 1);
+                if (!work.isEmpty()) {
+                    String u = (String) work.get(work.size() - 1)[0];
+                    low.put(u, Math.min(low.get(u), low.get(v)));
+                }
+                if (low.get(v).equals(index.get(v))) {
+                    List<String> comp = new ArrayList<>();
+                    while (true) {
+                        String x = stack.remove(stack.size() - 1);
+                        on.remove(x);
+                        comp.add(x);
+                        if (x.equals(v)) break;
+                    }
+                    comps.add(comp);
+                }
+            }
+        }
+        Set<String> out = new HashSet<>();
+        for (List<String> comp : comps)
+            if (comp.size() > 1 || edges.get(comp.get(0)).contains(comp.get(0))) out.addAll(comp);
+        return out;
+    }
+
     static List<Long> emitFunction(Function fn, Map<Long, String> entriesOf, List<String> w, String prefix,
                                    Map<Long, String> hostAt, Map<Long, String> leafOf,
-                                   Map<Long, String[]> interruptAt, Set<Long> copyFuncs, Set<Long> nocopyFuncs) {
+                                   Map<Long, String[]> interruptAt, Set<Long> copyFuncs, Set<Long> nocopyFuncs,
+                                   Set<String> stackCheck) {
         String name = fname(prefix, fn.start);
         boolean copyHere = copyFuncs.contains(fn.start);
         boolean icallCopy = ICALL_COPY_BUILDS.contains(prefix) && !nocopyFuncs.contains(fn.start);
@@ -593,6 +666,7 @@ final class Recompiler {
         for (Insn ins : fn.insns.values()) if (usesVfp(ins)) { vfp = true; break; }
         String load = vfp ? "K = c->k;" : "RT_IN(K, c);", store = vfp ? "c->k = K;" : "RT_OUT(c, K);";
         w.add("int " + name + "(Cpu *c, uint32_t start) {");
+        if (stackCheck.contains(name)) w.add("    RT_STACK_CHECK(c, start);");  // the host stack nearly used up: the interpreter runs it (recomp_rt.h)
         w.add(vfp ? "    Core K = c->k;" : "    Core K; RT_IN(K, c);");
         w.add("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];");
         w.add("    int rc;");
@@ -947,6 +1021,7 @@ final class Recompiler {
             }
         }
 
+        Set<String> stackCheck = recursiveFunctions(funcs.values(), entriesOf, hostAt, leafOf, prefix);
         //noinspection ResultOfMethodCallIgnored
         outdir.mkdirs();
         List<Function> order = new ArrayList<>(funcs.values());
@@ -992,7 +1067,8 @@ final class Recompiler {
         int curN = 0;
         int emitted = 0;
         for (Function f : order) {
-            List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf, interruptAt, copyFuncs, nocopyFuncs);
+            List<Long> resume = emitFunction(f, entriesOf, cur, prefix, hostAt, leafOf, interruptAt, copyFuncs, nocopyFuncs,
+                    stackCheck);
             tell(p, 0.4 + 0.6 * ++emitted / order.size(), told);
             for (long r : resume) {
                 table.add(new long[] {r, tableNames.size()});

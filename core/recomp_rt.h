@@ -21,6 +21,18 @@ int rt_icall(Cpu *c, uint32_t ret);
 // A recompiled leaf (tools/recomp.py emit_leaf), run on the caller's registers.
 typedef int (*LeafFn)(Core *);
 
+// First thing in every recompiled function: with the host stack nearly used up, run it in the interpreter
+// instead (thumb.h Cpu.stack_low), from its start, as for an address it has no entry for.
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#define RT_FRAME_ADDRESS() ((uintptr_t)_AddressOfReturnAddress())
+#else
+#define RT_FRAME_ADDRESS() ((uintptr_t)__builtin_frame_address(0))
+#endif
+#define RT_STACK_CHECK(c, start) do { \
+        if (__builtin_expect(RT_FRAME_ADDRESS() < (c)->stack_low, 0)) { (c)->k.r[15] = (start); return 1; } \
+    } while (0)
+
 // Same results as the __divsi3/__modsi3 HLE (division by 0 or -1 is defined).
 RT_INLINE uint32_t rt_sdiv(uint32_t a, uint32_t b) {
     int32_t x = (int32_t)a, y = (int32_t)b;

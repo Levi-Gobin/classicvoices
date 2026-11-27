@@ -2802,4 +2802,18 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   the extension's first request since it started, and (iOS) the memory os_proc_available_memory() said was left
   at the request: under pressure the enhanced voice's mapped data can be dropped and read again mid-sentence.
   Levi: it comes at random and only with iOS 7 enhanced Samantha.
+- iOS 4 voices crashed on a long utterance (found 2026-11-27 while training speed profiles; every platform, the
+  iPhone extension included): fast code makes each guest call a C call, and iOS 4.3.5's engine recursed deep
+  enough on 1.4 KB of text (the corpus with its lines run together) to pass the speech thread's 16 MB stack
+  (bus error; it needed 16-64 MB, 32-48 MB for twice the text; iOS 3, 5, 6 and 7.0 stayed within 16 MB). The
+  interpreter runs guest calls without the C stack. Now each recompiled function in a cycle of C calls between
+  recompiled functions (recomp.py recursive_functions: direct calls, tail exits, fallthroughs into another's
+  entry; Tarjan's SCCs) starts with RT_STACK_CHECK (recomp_rt.h): below Cpu.stack_low it hands back to the
+  interpreter at its start; thumb.c run() then interprets from there instead of asking for the same fast code
+  again. cpu_call sets stack_low per thread from the OS's stack bounds (pthread_get_stackaddr_np / getattr_np /
+  GetCurrentThreadStackLimits, looked up for Windows 7), keeping a quarter (at least 1 MB). 15-189 functions
+  per engine get the check (iOS 6 41 of 631, iOS 4 79 of 584, 7.0 175 of 1,349); a check in all of them cost
+  ~5% (iOS 7.0 Samantha), these cost nothing measurable. The long text now speaks on the 16 MB thread and on
+  an 8 MB main thread, bit-identical to the interpreter; iOS 7.0's 59 test utterances bit-identical to before.
+  recomp.py, Recompiler.java and RecompARM.swift: byte-identical output for all seven engines (diff -r).
 

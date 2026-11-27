@@ -65,6 +65,7 @@ INTERRUPT_FUNCS = {
 }
 interrupt_at = {}  # guest address -> host code while a stop is pending
 host_at = {}  # guest address -> host code, for the build being translated
+stack_check_funcs = set()  # names of the functions in a cycle of direct calls (recursive_functions)
 leaf_of = {}  # guest address -> its leaf function's name (emit_leaf)
 
 
@@ -316,6 +317,65 @@ def uses_vfp(ins):
     return (ins.hw1 & 0xEC00) == 0xEC00 or (ins.hw1 & 0xFF10) == 0xF900
 
 
+def recursive_functions(funcs, entries_of, prefix):
+    """Names of the functions that can call themselves through C calls of recompiled code (a cycle of direct
+    calls, tail exits and fallthroughs into another function's entry): only these check the host stack
+    (RT_STACK_CHECK), as any unbounded recursion goes through one of them; a call through the interpreter or
+    a pointer is checked at run time (thumb.c run, rt_icall). Every other function's stack use is bounded,
+    and a check in each cost ~5% (iOS 7.0 Samantha)."""
+    names = {f.start: f"nf_{prefix}_{f.start:06x}" for f in funcs}
+    edges = {}
+    for f in funcs:
+        out = set()
+        for ins in f.insns.values():
+            t = ins.target
+            if ins.kind == "bl" and t is not None and t not in host_at and t not in leaf_of and t in entries_of:
+                out.add(entries_of[t])
+            if ins.kind in ("b", "bcond") and t is not None and t not in f.insns and t in entries_of:
+                out.add(entries_of[t])
+            terminator = ins.kind in ("b", "ijump", "tb", "stop") and (ins.cond is None or ins.cond == 14)
+            nxt = ins.addr + ins.size
+            if not terminator and nxt not in f.insns and nxt in entries_of:
+                out.add(entries_of[nxt])
+        edges[names[f.start]] = out
+    # Tarjan's strongly connected components, without recursion
+    index, low, on, stack, comps, counter = {}, {}, set(), [], [], [0]
+    for root in sorted(edges):
+        if root in index:
+            continue
+        work = [(root, iter(sorted(edges[root])))]
+        index[root] = low[root] = counter[0]; counter[0] += 1
+        stack.append(root); on.add(root)
+        while work:
+            v, it = work[-1]
+            w = next(it, None)
+            if w is not None:
+                if w not in edges:
+                    continue
+                if w not in index:
+                    index[w] = low[w] = counter[0]; counter[0] += 1
+                    stack.append(w); on.add(w)
+                    work.append((w, iter(sorted(edges[w]))))
+                elif w in on:
+                    low[v] = min(low[v], index[w])
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[v])
+            if low[v] == index[v]:
+                comp = []
+                while True:
+                    x = stack.pop(); on.discard(x); comp.append(x)
+                    if x == v:
+                        break
+                comps.append(comp)
+    out = set()
+    for comp in comps:
+        if len(comp) > 1 or comp[0] in edges[comp[0]]:
+            out.update(comp)
+    return out
+
+
 def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budget=False):
     name = f"nf_{prefix}_{fn.start:06x}"
     copy_here = fn.start in copy_funcs
@@ -329,6 +389,8 @@ def emit_function(mo, fn, entries_of, out, prefix, debug_calls=False, debug_budg
     vfp = any(uses_vfp(ins) for ins in fn.insns.values())
     load, store = ("K = c->k;", "c->k = K;") if vfp else ("RT_IN(K, c);", "RT_OUT(c, K);")
     w(f"int {name}(Cpu *c, uint32_t start) {{")
+    if name in stack_check_funcs:  # the host stack nearly used up: the interpreter runs it (recomp_rt.h)
+        w("    RT_STACK_CHECK(c, start);")
     w("    Core K = c->k;" if vfp else "    Core K; RT_IN(K, c);")
     w("    const uint32_t entry_lr = K.r[14] & ~1u, entry_sp = K.r[13];")
     w("    int rc;")
@@ -822,6 +884,9 @@ def main(argv=None):
                     leaf_of[e] = f"{'lfi' if len(region) <= TINY_LEAF else 'lf'}_{a.prefix}_{e:06x}"
                     leaves.append((f, e, region))
 
+    stack_check_funcs.clear()
+    if not (a.debug_calls or a.debug_budget):
+        stack_check_funcs.update(recursive_functions(list(funcs.values()), entries_of, a.prefix))
     os.makedirs(a.outdir, exist_ok=True)
     order = sorted(funcs.values(), key=lambda f: f.start)
     header = [
