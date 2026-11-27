@@ -2787,4 +2787,13 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   628 -> 442, 558 -> 457 ms; iOS 6 261 -> 155 and the like; the pauses within 10 ms of the engine's, the
   length within 50 ms. CV_NO_CLAUSE_SPLIT=1 turns it off. fbstress (ASan, 400 iterations): clean. Samples for
   Levi's ears in ~/Downloads/clause-split-samples (before/after).
+- Choppiness on the iPhone (Levi, 2026-11-27: iOS 7 enhanced Samantha choppy once when a notification came, once
+  when music started, once after a cold start): not reproduced on the emulator (enhanced Samantha makes speech
+  13x real time even with the page cache dropped, 19x warm; first audio +150 ms cold). The render block waits up
+  to 500 ms for samples, then fills the rest with silence, which the system queues as a break; the synthesis
+  thread is already QOS_CLASS_USER_INTERACTIVE. Now recorded: per request, the render block keeps (lock- and
+  file-free) the time to first audio, the longest wait once speech began, waits over 20 ms and the silence filled
+  in mid-speech; at the next request SpeechLog (ios/Shared/SpeechLog.swift) appends a line to Logs/speech.txt in
+  the App Group (last 40), and the Diagnostics report lists them. Next time it chops, that report tells whether
+  the engine fell behind (and by how much) or the break came from elsewhere.
 

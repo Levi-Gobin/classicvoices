@@ -58,6 +58,11 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
     private let renderLog = UnsafeMutablePointer<(UInt64, Int32, Int32)>.allocate(capacity: 8)  // (time, frames asked, frames given)
     private let renderCount = UnsafeMutablePointer<Int32>.allocate(capacity: 1)
 
+    /// How a request's speech went (SpeechRenderStats): kept by the render block, written out when the next
+    /// request comes (SpeechLog).
+    private let stats = UnsafeMutablePointer<SpeechRenderStats>.allocate(capacity: 1)
+    private var statsKey = ""
+
     /// Logs how the previous request's first renders went (given its start
     /// time and render count, taken before the new request reset them).
     private func dumpRenderLog(start: UInt64, count n: Int, renders: [(UInt64, Int32, Int32)]) {
@@ -73,7 +78,9 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         // Speech starts first; logging the previous request's renders can wait.
         let previous = (requestStart.pointee, Int(renderCount.pointee),
                         (0..<min(Int(renderCount.pointee), 8)).map { renderLog[$0] })
+        let previousStats = stats.pointee, previousKey = statsKey
         renderCount.pointee = 0
+        stats.pointee = SpeechRenderStats()
         requestStart.pointee = mach_absolute_time()
         let entry = VoiceCatalog.entry(forIdentifier: request.voice.identifier)
         let key = entry?.key ?? "ios6/" + (request.voice.primaryLanguages.first ?? "en-US")
@@ -97,6 +104,8 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                                  steadyPauses: settings.steadyPauses, spellingPauses: settings.spellingPauses,
                                  spellLowercase: settings.spellLowercase)
         dumpRenderLog(start: previous.0, count: previous.1, renders: previous.2)
+        if !previousKey.isEmpty { SpeechLog.add(key: previousKey, start: previous.0, stats: previousStats) }
+        statsKey = key
         log.notice("CLASSICVOICES request \(key, privacy: .public) fallback=\(fallback ?? "-", privacy: .public) newer=\(pack != nil) rate=\(job.rate) pitch=\(job.pitch) pause=\(job.trailingPauseMs) text=[\(job.text.replacingOccurrences(of: "\u{1b}", with: "<ESC>"), privacy: .public)] ssml=\(request.ssmlRepresentation, privacy: .public)")
         if UserDefaults.standard.string(forKey: "lastVoiceKey") != key {
             UserDefaults.standard.set(key, forKey: "lastVoiceKey")
@@ -112,6 +121,7 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let stream = VoiceEngine.shared.stream
         let renderLog = self.renderLog, renderCount = self.renderCount
         let marks = self.marks
+        let stats = self.stats
         return { [weak self] actionFlags, _, frameCount, _, outputData, _, _ in
             let buffers = UnsafeMutableAudioBufferListPointer(outputData)
             guard let raw = buffers[0].mData else { return noErr }
@@ -119,6 +129,7 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
             let frames = Int(frameCount)
             var done: Int32 = 1
             var n = 0
+            let entered = mach_absolute_time()
             if let stream {
                 // The system pulls speech faster than real time, so silence we
                 // hand back is queued ahead of the voice. Wait (briefly) for real
@@ -149,6 +160,16 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
                     }
                 }
             }
+            let left = mach_absolute_time()
+            if stats.pointee.firstAudio != 0 {  // speech had begun: how long this one waited, what it filled
+                let waited = left - entered
+                if waited > stats.pointee.longestWait { stats.pointee.longestWait = waited }
+                if waited > 480_000 { stats.pointee.waits += 1 }  // 20 ms (24 MHz timebase)
+                if n < frames && done == 0 { stats.pointee.padded += frames - n }
+            } else if n > 0 {
+                stats.pointee.firstAudio = left
+            }
+            stats.pointee.frames += n
             let i = Int(renderCount.pointee)
             if i < 8 { renderLog[i] = (mach_absolute_time(), Int32(frames), Int32(n)); renderCount.pointee += 1 }
             if n < frames { (out + n).update(repeating: 0, count: frames - n) }

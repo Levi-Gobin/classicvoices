@@ -55,6 +55,10 @@ enum Diagnostics {
         out.append("Downloaded voices: \(downloaded.count)" + (downloaded.isEmpty ? "" : " (\(downloaded.joined(separator: ", ")))"))
         out.append(errors.isEmpty ? "Download errors: none"
                                   : "Download errors:\n" + errors.sorted { $0.key < $1.key }.map { "  \($0.key): \($0.value)" }.joined(separator: "\n"))
+        // how the speech extension's last utterances went (written by it, a line each, oldest first)
+        let speech = SpeechLog.recent()
+        out.append(speech.isEmpty ? "Recent speech: none logged yet"
+                                  : "Recent speech (oldest first):\n" + speech.map { "  " + $0 }.joined(separator: "\n"))
         return out.joined(separator: "\n")
     }
 
