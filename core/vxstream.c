@@ -908,9 +908,12 @@ static void load_symbols(EngineSlot *e) {
             if (!hash) continue;
             for (unsigned j = 0; j < count; j++) {
                 const unsigned char *key = t + 8 + (size_t)j * (k + v), *val = key + k;
-                if (!val[0] || (v > 1 && val[1])) continue;
                 const char *ks = (const char *)key;
                 size_t kl = strnlen(ks, k);
+                if (kl && (!val[0] || (v > 1 && val[1]))) continue;
+                // iOS 7.0's Tessa (and Kyoko, zh-CN, Kanya): 4 stray bytes after m shift the rest of this table, so
+                // its later names read empty or as bits of codes (":67" for u); the code table beside it names them
+                if (!kl) break;
                 if (!quote && kl >= 2 && ks[0] >= 'a' && ks[0] <= 'z' && ((ks[1] >= 'a' && ks[1] <= 'z') || strchr("$@^", ks[1]))) {
                     ks++;
                     kl--;

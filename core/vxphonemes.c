@@ -146,8 +146,14 @@ static Inventory *read_inventory(const char *path) {
             if (!has_key(in, ik, iv, ic, sym)) missing++;
         }
         int phoneme_set = missing * 2 > total;
+        // iOS 7.0's Tessa and Kyoko (and its zh-CN and Kanya): 4 stray bytes in this table shift its later rows,
+        // whose names then read empty or as bits of codes (Tessa's stop at m, then ":67"); the voice still says
+        // them, and its phoneme set has them all, so they come from there
+        unsigned blank = 0, good = ic;  // the rows before the first empty one (those after it are shifted)
+        for (unsigned j = 0; j < ic; j++)
+            if (!in[(size_t)j * (ik + iv)] && !blank++) good = j;
         inv = calloc(1, sizeof *inv);
-        for (unsigned j = 0; j < ic; j++) {
+        for (unsigned j = 0; j < good; j++) {
             const unsigned char *key = in + (size_t)j * (ik + iv);
             int mark = 1;
             for (unsigned q = 0; q < ik && key[q]; q++)
@@ -155,8 +161,14 @@ static Inventory *read_inventory(const char *path) {
                     key[q] >= 0x80) mark = 0;
             if (!phoneme_set || mark) inv_add(inv, key, ik);
         }
-        for (unsigned j = 0; phoneme_set && j < pc; j++) inv_add(inv, ph + (size_t)j * (pk + pv), pk);
+        for (unsigned j = 0; (phoneme_set || blank) && j < pc; j++) inv_add(inv, ph + (size_t)j * (pk + pv), pk);
         qsort(inv->sym, inv->n, sizeof *inv->sym, cmp_str);
+        size_t w = 0;  // each once
+        for (size_t j = 0; j < inv->n; j++) {
+            if (w && !strcmp(inv->sym[w - 1], inv->sym[j])) { free(inv->sym[j]); continue; }
+            inv->sym[w++] = inv->sym[j];
+        }
+        inv->n = w;
     }
     free(d);
     return inv;

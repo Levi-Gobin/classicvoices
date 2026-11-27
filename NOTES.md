@@ -2734,3 +2734,13 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   built). Tested on cv33 with real TalkBack against a Python mock GitHub (sign-in with a dropped poll, fork path,
   409 retry, 401 refresh, tidy after publishing); not tested against the real GitHub, with TalkBack's gesture
   actions menu, the daily publish, Android 5, 32-bit ABIs at run time, or by ear (the emulator has no audio).
+- iOS 7 Tessa ignored dictionary phonemes (Levi, 2026-11-27: "Nico" said as nothing): in iOS 7.0's
+  clc_enz_tessa_cfg1.dat (and clc_enz_cfg1, Kyoko's, zh-CN's, Kanya's) the symbol table with ' and # has 4 stray
+  bytes after m's row, so every later row is shifted: names read empty or as pieces of codes (":67" for u). The
+  voice said n, p, s, t... as usual, but the inventory (vxphonemes.c) had none of them, so 'ni.ko&U had no
+  spelling and the span was dropped, and Convert to Phonemes (load_symbols) named those codes "" or ":67"
+  ("nico" -> IkoU, "music" failed). Both now stop at a table's first empty row (no intact table has one) and
+  take the rest from the voice's other tables (the phoneme set, the code table). Convert across every iOS 6 and
+  7.0 voice: only Tessa 7 (now identical to iOS 6's), Kyoko 7 and Kanya changed. Kanya's Thai words still
+  convert to nothing (her tone codes were only named in the shifted rows; Narisa's aren't shifted).
+
