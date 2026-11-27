@@ -2743,4 +2743,10 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   take the rest from the voice's other tables (the phoneme set, the code table). Convert across every iOS 6 and
   7.0 voice: only Tessa 7 (now identical to iOS 6's), Kyoko 7 and Kanya changed. Kanya's Thai words still
   convert to nothing (her tone codes were only named in the shifted rows; Narisa's aren't shifted).
+- Leading punctuation (Levi, 2026-11-27: ", test" read as "comma test"): every Vocalizer voice reads an
+  utterance's first punctuation out (", test" 812 ms vs 467 for "test"; "! test" 1549). vxs_start_with_fallback
+  now drops a run of , ; : . ! ? at the start (after spaces and leading commands, never after \tn=...\) when a
+  space and something to say follow: ", test", "... test", "! test" now last exactly as long as "test" (ios6/en-US,
+  ios70/en-GB). Kept: a mark on its own ("," "?" are still read out, as a screen reader moving by character wants),
+  ".5", ",5", ".net", ",test" (no space), and anything spelled. Not for MacinTalk.
 
