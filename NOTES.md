@@ -2648,6 +2648,13 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   enhanced, Aaron (Siri 7) and Lion Daniel, and the head start cost ~1 ms of first audio. Every voice's first
   sound is 5-6 ms in (PREROLL_FRAMES). SelfTest --ez play true now speaks through the speaker; while it plays,
   adb shell dumpsys media.audio_flinger lists each track's Underruns.
+  Again after the reporter's reply (German iOS 7 Siri, "a millisecond, then a short cut, then it goes on"):
+  Helena compact on API 33 and on Android 17 with 16 KB pages (android-37.1 google_apis_ps16k; our ELFs are
+  16 KB aligned, Zig builds and the fast code loads there, Helena ~46x real time, first audio 9-16 ms), on the
+  media and the accessibility stream (SelfTest --ez a11y true, as TalkBack plays), and without fast code
+  (API 33, 1.8x real time, first audio ~200 ms): every track starts with its 4096 frames full and underruns
+  only after its last frame. The audio itself is the same everywhere (same gaps). Not reproduced; whatever it
+  is happens past the mixer on the real phone, or with something the emulator doesn't have.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound

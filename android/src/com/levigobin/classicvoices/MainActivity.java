@@ -213,7 +213,7 @@ public class MainActivity extends Activity implements ImportService.Listener {
         if (self != null) {
             String text = getIntent().getStringExtra("text");
             SelfTest.run(this, self, text != null ? text : "Hello from Android. This is a test of the Classic Voices engine.",
-                    getIntent().getBooleanExtra("play", false));
+                    getIntent().getBooleanExtra("play", false), getIntent().getBooleanExtra("a11y", false));
         }
     }
 

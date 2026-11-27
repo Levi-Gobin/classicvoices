@@ -49,7 +49,7 @@ final class SelfTest {
         }, c.getPackageName());
     }
 
-    static void run(final Context c, final String keys, final String text, final boolean play) {
+    static void run(final Context c, final String keys, final String text, final boolean play, final boolean a11y) {
         final List<String> want = new ArrayList<>();
         for (String k : keys.split(",")) if (!k.trim().isEmpty()) want.add(k.trim());
         final TextToSpeech[] holder = new TextToSpeech[1];
@@ -61,6 +61,11 @@ final class SelfTest {
                     return;
                 }
                 final TextToSpeech tts = holder[0];
+                // a11y: played as TalkBack plays it (the accessibility stream, which can be routed differently)
+                if (a11y && Build.VERSION.SDK_INT >= 21)
+                    tts.setAudioAttributes(new android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build());
                 final long[] started = new long[want.size()];
                 final long[] first = new long[want.size()];
                 tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
