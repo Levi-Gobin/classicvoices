@@ -2772,4 +2772,19 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   AXPress) does; the row's custom actions are the three previews. A filter field narrows it by pattern or
   replacement; coming back from an entry selects and focuses the row opened (under its new key if it changed).
   iPhone keeps its List (lazy already).
+- Long first sentences start sooner (Levi, 2026-11-27: "longer utterances take longer to start in iOS 7 and
+  Mavericks"). Measured on the cv33 emulator with fast code, warm: the engine works sentence by sentence and its
+  first audio waits for the whole first sentence, not the whole text (1,019 characters of short sentences start
+  as fast as 254), and grows with that sentence: one of 20 words 26 ms (iOS 6), 49 (iOS 7 enhanced Samantha),
+  55 (Mavericks Allison), 233 (Siri Aaron); 55 words without punctuation 45, 118, 112, 684. The iOS 7.0 engine
+  (iOS 7 and Mavericks Vocalizer voices) takes about twice iOS 6's time. Not the dictionaries: all 540 entries
+  and Apple's rules take 0.5 ms on 2,000 characters in C, 2 ms in the Swift path (which grows faster than the
+  text: 23 ms at 8,000; worth fixing some day). speak_segmented now says a long first sentence's first clause on
+  its own (clause_split_here: after , ; or : with 40 bytes before it in the piece and 40 more before the
+  sentence ends; not in phonemes, not while spelling, only before the utterance's first audio), the rest
+  following as a piece of the same sentence with 200 ms of silence between (the engine's own comma pause there
+  is 189-225 ms). First audio on the Mac interpreter: iOS 7 enhanced Samantha 734 -> 484, 506 -> 350,
+  628 -> 442, 558 -> 457 ms; iOS 6 261 -> 155 and the like; the pauses within 10 ms of the engine's, the
+  length within 50 ms. CV_NO_CLAUSE_SPLIT=1 turns it off. fbstress (ASan, 400 iterations): clean. Samples for
+  Levi's ears in ~/Downloads/clause-split-samples (before/after).
 
