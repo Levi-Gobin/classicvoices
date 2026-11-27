@@ -81,6 +81,7 @@ public final class ClassicVoicesAudioUnit: AVSpeechSynthesisProviderAudioUnit {
         let previousStats = stats.pointee, previousKey = statsKey
         renderCount.pointee = 0
         stats.pointee = SpeechRenderStats()
+        SpeechLog.begin(&stats.pointee)
         requestStart.pointee = mach_absolute_time()
         let entry = VoiceCatalog.entry(forIdentifier: request.voice.identifier)
         let key = entry?.key ?? "ios6/" + (request.voice.primaryLanguages.first ?? "en-US")

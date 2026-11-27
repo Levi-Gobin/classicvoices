@@ -2779,14 +2779,17 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   55 (Mavericks Allison), 233 (Siri Aaron); 55 words without punctuation 45, 118, 112, 684. The iOS 7.0 engine
   (iOS 7 and Mavericks Vocalizer voices) takes about twice iOS 6's time. Not the dictionaries: all 540 entries
   and Apple's rules take 0.5 ms on 2,000 characters in C, 2 ms in the Swift path (which grows faster than the
-  text: 23 ms at 8,000; worth fixing some day). speak_segmented now says a long first sentence's first clause on
+  text: 23 ms at 8,000; worth fixing some day); not Apple's newer pack either (Levi's iPhone: 4,751 rules, 2.2 ms
+  on 2,000 characters; its 1.1 MB engine dictionary at most +10% first audio). Tried and taken out the same day
+  (24e303f, reverted): speak_segmented said a long first sentence's first clause on
   its own (clause_split_here: after , ; or : with 40 bytes before it in the piece and 40 more before the
   sentence ends; not in phonemes, not while spelling, only before the utterance's first audio), the rest
   following as a piece of the same sentence with 200 ms of silence between (the engine's own comma pause there
   is 189-225 ms). First audio on the Mac interpreter: iOS 7 enhanced Samantha 734 -> 484, 506 -> 350,
   628 -> 442, 558 -> 457 ms; iOS 6 261 -> 155 and the like; the pauses within 10 ms of the engine's, the
   length within 50 ms. CV_NO_CLAUSE_SPLIT=1 turns it off. fbstress (ASan, 400 iterations): clean. Samples for
-  Levi's ears in ~/Downloads/clause-split-samples (before/after).
+  Levi's ears in ~/Downloads/clause-split-samples (before/after). Levi couldn't hear much difference but wants
+  the voices as close to the real ones as can be, so it's out.
 - Choppiness on the iPhone (Levi, 2026-11-27: iOS 7 enhanced Samantha choppy once when a notification came, once
   when music started, once after a cold start): not reproduced on the emulator (enhanced Samantha makes speech
   13x real time even with the page cache dropped, 19x warm; first audio +150 ms cold). The render block waits up
@@ -2795,5 +2798,8 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   file-free) the time to first audio, the longest wait once speech began, waits over 20 ms and the silence filled
   in mid-speech; at the next request SpeechLog (ios/Shared/SpeechLog.swift) appends a line to Logs/speech.txt in
   the App Group (last 40), and the Diagnostics report lists them. Next time it chops, that report tells whether
-  the engine fell behind (and by how much) or the break came from elsewhere.
+  the engine fell behind (and by how much) or the break came from elsewhere. Each line also says whether it was
+  the extension's first request since it started, and (iOS) the memory os_proc_available_memory() said was left
+  at the request: under pressure the enhanced voice's mapped data can be dropped and read again mid-sentence.
+  Levi: it comes at random and only with iOS 7 enhanced Samantha.
 

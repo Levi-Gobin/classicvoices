@@ -1176,39 +1176,6 @@ static size_t utf8_char_len(const char *c) {
     return n;
 }
 
-// Where a long first sentence may be split for the engine (Levi, 2026-11-27: long utterances started late; the
-// engine works sentence by sentence, its first audio waiting for all of the first sentence: 49 ms for 20 words,
-// 118 for 55 on iOS 7 Samantha, 684 on Siri's Aaron). After a clause's , ; or : with at least CLAUSE_MIN bytes
-// before it in the piece and CLAUSE_MIN more before the sentence ends, the clause is said on its own and the rest
-// follows it as a piece of the same sentence. Only before an utterance's first audio: later sentences are made
-// while earlier ones play. CV_NO_CLAUSE_SPLIT in the environment turns it off (to compare).
-#define CLAUSE_MIN 40
-#define CLAUSE_PAUSE_MS 200  // the silence kept after the split clause (measured: see NOTES)
-static int clause_split_here(const char *p, const char *seg, size_t m) {
-    if (m < CLAUSE_MIN || *p != ' ' || !m || !strchr(",;:", seg[m - 1])) return 0;
-    if (m >= 2 && isdigit((unsigned char)seg[m - 2]) && isdigit((unsigned char)p[1])) return 0;  // 1, 2
-    // not inside phonemes: the piece's last ESC\toi=lhp\ closed again
-    const char *in = NULL, *out = NULL;
-    for (const char *q = seg; q < seg + m; q++) {
-        if (!strncmp(q, "\x1b\\toi=lhp\\", 10)) in = q;
-        else if (!strncmp(q, "\x1b\\toi=orth\\", 11)) out = q;
-    }
-    if (in && (!out || out < in)) return 0;
-    size_t rest = 0;  // what's said before the sentence ends
-    for (const char *q = p; *q; q++) {
-        if (q[0] == 0x1b && q[1] == '\\') {
-            if (!strncmp(q, "\x1b\\eos=", 6) || !strncmp(q, "\x1b\\tn=", 5)) break;
-            const char *e = strchr(q + 2, '\\');
-            if (!e) break;
-            q = e;
-            continue;
-        }
-        if (strchr(".?!", *q) && (q[1] == ' ' || !q[1])) break;
-        if (++rest >= CLAUSE_MIN) return 1;
-    }
-    return 0;
-}
-
 static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const char *fallback_key, int rate, int volume,
                            Sink *k, const char *text, int pitch, int inline_pitch, int percent_pitch, int inline_prosody) {
     static const char kEos[] = "\x1b\\eos=1\\", kPitch[] = "\x1b\\pitch=";
@@ -1244,8 +1211,6 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
     } while (0)
     int inline_spell = inline_prosody && !(fallback_key && pitch != 50) && strstr(text, kSpellOn) &&
                        plain_text_beyond_spelling(text);
-    // a long first sentence's first clause on its own (clause_split_here); not while spelling
-    int may_split = !k->got_first && !getenv("CV_NO_CLAUSE_SPLIT");
 #define SEG_PUT(str, len, from) do { \
         if (m + (size_t)(len) + 1 > cap) { \
             cap = (m + (size_t)(len) + 1) * 2; \
@@ -1264,8 +1229,7 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
         for (int i = 0; i < NSTICKY && !at_end; i++)
             if (strncmp(p, kSticky[i], strlen(kSticky[i])) == 0) sticky_kind = i;
         int is_prosody = !inline_prosody && (sticky_kind == STICKY_RATE || sticky_kind == STICKY_VOL);
-        int is_clause = may_split && !at_end && !sticky[STICKY_TN][0] && clause_split_here(p, seg, m);
-        if (at_end || is_eos || is_pitch || is_prosody || is_clause) {
+        if (at_end || is_eos || is_pitch || is_prosody) {
             seg[m] = 0;
             int has_text = 0;  // anything but spaces and commands
             for (size_t i = 0; i < m; i++) {
@@ -1314,9 +1278,8 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
                 free(map);
                 if (rc) break;
                 // between utterances keep the engine's natural silence; inside a
-                // sentence (a pitch, rate or volume change only) join tightly; after a split clause, a comma's pause
-                k->cap_quiet = is_pitch || is_prosody ? (size_t)k->rate / 10 : is_clause ? (size_t)k->rate * CLAUSE_PAUSE_MS / 1000 : 0;
-                may_split = 0;
+                // sentence (a pitch, rate or volume change only) join tightly
+                k->cap_quiet = is_pitch || is_prosody ? (size_t)k->rate / 10 : 0;
             } else {  // nothing to say: its bookmarks are reached where the audio is now
                 marks_find(k, seg, src, m);
                 marks_reach(k, INT32_MAX, UINT32_MAX);
@@ -1325,7 +1288,6 @@ static int speak_segmented(VxStream *s, Vx *vx, const char *primary_key, const c
             m = 0;
             if (at_end) break;
             if (is_eos) p += sizeof kEos - 1;
-            else if (is_clause) {}  // the space starts the next piece
             else {
                 const char *num = p + (is_pitch ? sizeof kPitch - 1 : strlen(kSticky[sticky_kind]));
                 int v = atoi(num);
