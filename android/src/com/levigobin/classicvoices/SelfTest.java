@@ -49,7 +49,7 @@ final class SelfTest {
         }, c.getPackageName());
     }
 
-    static void run(final Context c, final String keys, final String text) {
+    static void run(final Context c, final String keys, final String text, final boolean play) {
         final List<String> want = new ArrayList<>();
         for (String k : keys.split(",")) if (!k.trim().isEmpty()) want.add(k.trim());
         final TextToSpeech[] holder = new TextToSpeech[1];
@@ -105,7 +105,10 @@ final class SelfTest {
                     }
                     if (Build.VERSION.SDK_INT >= 21) {
                         for (Voice x : tts.getVoices()) if (x.getName().equals(v.androidName())) tts.setVoice(x);
-                        tts.synthesizeToFile(text, new Bundle(), new File(c.getCacheDir(), "selftest-" + i + ".wav"),
+                        // play: through the speaker, as TalkBack hears it (adb shell dumpsys media.audio_flinger
+                        // counts the frames that ran out); otherwise to a file
+                        if (play) tts.speak(text, TextToSpeech.QUEUE_ADD, new Bundle(), String.valueOf(i));
+                        else tts.synthesizeToFile(text, new Bundle(), new File(c.getCacheDir(), "selftest-" + i + ".wav"),
                                 String.valueOf(i));
                     }
                 }

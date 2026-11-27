@@ -33,11 +33,6 @@ static char g_voices_root[1024], g_downloads_root[1024], g_native_dir[1024];
 static CvUtterance g_utt;
 static size_t g_seg;          // next segment to start
 static int g_seg_running;     // a segment is being drained
-// Android plays from the first audio it's given; the engine's first piece is ~8 ms, then 20 ms every ~8 ms, so
-// a voice slower to start than that ran out right away and its first word stuttered or was cut (issue 4). The
-// first audio of an utterance waits for this much of a head start (or the utterance's end).
-#define HEAD_START_FRAMES (22050 * 60 / 1000)
-static size_t g_head;         // frames still wanted before the utterance's first audio goes out
 static char g_key[96], g_fallback[96];
 static char g_pack[1024];     // Apple's later pronunciation pack for the next utterance, or ""
 static int g_tone = 1;        // the top of the band rolled off as iPhone and Mac playback does
@@ -207,7 +202,6 @@ static jint begin(JNIEnv *env, jstring key, jstring fallback, jstring language, 
     snprintf(g_fallback, sizeof g_fallback, "%s", f ? f : "");
     g_seg = 0;
     g_seg_running = 0;
-    g_head = HEAD_START_FRAMES;
     atomic_store(&g_cancel, 0);
     jint n = (jint)g_utt.n;
     pthread_mutex_unlock(&g_mu);
@@ -310,38 +304,32 @@ JNIEXPORT jint JNICALL Java_com_levigobin_classicvoices_Native_read(JNIEnv *env,
     if (cap > 4096) cap = 4096;
     float f[4096];
     int16_t pcm[4096];
-    size_t have = 0;
     for (int waited = 0; waited < 50; waited++) {
         if (atomic_load(&g_cancel)) return -1;
         pthread_mutex_lock(&g_mu);
         if (!g_seg_running) {
             while (g_seg < g_utt.n && !g_utt.seg[g_seg].text[0] && !g_utt.seg[g_seg].trailing_pause_ms) g_seg++;
-            if (g_seg >= g_utt.n) {
-                pthread_mutex_unlock(&g_mu);
-                if (have) break;
-                return -1;
-            }
+            if (g_seg >= g_utt.n) { pthread_mutex_unlock(&g_mu); return -1; }
             CvSegment *s = &g_utt.seg[g_seg++];
             vxs_start_with_fallback(g_stream, g_key, g_fallback[0] ? g_fallback : NULL, s->text, s->rate, s->pitch,
                                     s->volume, s->trailing_pause_ms);
             g_seg_running = 1;
         }
         int done = 0;
-        size_t n = vxs_read(g_stream, f + have, (size_t)cap - have, &done);
+        size_t n = vxs_read(g_stream, f, (size_t)cap, &done);
         if (done && !n) g_seg_running = 0;
         pthread_mutex_unlock(&g_mu);
-        for (size_t i = 0; i < n; i++) {
-            float x = f[have + i] * 32767.0f;
-            pcm[have + i] = (int16_t)(x > 32767 ? 32767 : x < -32768 ? -32768 : x);
+        if (n) {
+            for (size_t i = 0; i < n; i++) {
+                float x = f[i] * 32767.0f;
+                pcm[i] = (int16_t)(x > 32767 ? 32767 : x < -32768 ? -32768 : x);
+            }
+            (*env)->SetByteArrayRegion(env, buf, 0, (jsize)(n * 2), (const jbyte *)pcm);
+            return (jint)(n * 2);
         }
-        have += n;
-        if (have && (have >= g_head || have >= (size_t)cap || (done && !n))) break;
-        if (!n && !done) vxs_wait(g_stream, 2000);  // back as soon as audio comes
+        if (!done) vxs_wait(g_stream, 2000);  // back as soon as audio comes
     }
-    if (!have) return 0;
-    g_head = 0;
-    (*env)->SetByteArrayRegion(env, buf, 0, (jsize)(have * 2), (const jbyte *)pcm);
-    return (jint)(have * 2);
+    return 0;
 }
 
 JNIEXPORT void JNICALL Java_com_levigobin_classicvoices_Native_cancel(JNIEnv *env, jclass cls) {

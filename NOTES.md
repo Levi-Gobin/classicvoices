@@ -2641,6 +2641,13 @@ there, and 0.4.0's still load (ABI 1), so an update kept the old, slower code
   seconds, so an edit that kept the length within the same second (or anywhere the time isn't reliable) read
   the old copy. Files up to SYNC_BYTES now add an FNV-1a hash of their contents to the key (microseconds). The
   Apple apps' loader keeps sub-second times and wasn't affected.
+- Android playback start (issue 4, 2026-11-27): a 60 ms head start before an utterance's first audio
+  (b699232) was taken out again. Measured on the cv33 emulator (API 33): the TTS framework's AudioTrack has a
+  4096-frame (186 ms) buffer and AudioFlinger starts it only once that is full (or the utterance has ended),
+  so the engine's small first pieces never ran dry: 0 underruns with and without it, for Samantha, Daniel
+  enhanced, Aaron (Siri 7) and Lion Daniel, and the head start cost ~1 ms of first audio. Every voice's first
+  sound is 5-6 ms in (PREROLL_FRAMES). SelfTest --ez play true now speaks through the speaker; while it plays,
+  adb shell dumpsys media.audio_flinger lists each track's Underruns.
 - English r and aspiration (Nico, 2026-11-15): in English X-SAMPA, r is now the English r (what r\ is; r\
   still works), since the trill doesn't exist there and the flap has its own symbol, 4 (kLang en 'r').
   Convert to Phonemes writes r for it. Aspiration: the L&H+ engine ignores a written one (t{ and t%{ sound
